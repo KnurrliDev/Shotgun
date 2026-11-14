@@ -1,9 +1,10 @@
 import { appendFileSync, existsSync, mkdirSync, readdirSync } from 'fs';
 import { EventEmitter } from 'events';
 import * as path from 'path';
+import { BRIEF_FILE, briefTemplate, PartId } from './brief';
 import {
 	ACTIVE_FILE, ActiveFile, Decision, DECISIONS_FILE, decisionLine, DecisionInput, FILE_VERSION, jsonText, parseActive, parseDecisions,
-	parseTask, readText, SHOTGUN_DIR, TASK_FILE, TASK_ID, TaskFile, taskIdOf, writeTextAtomic,
+	parseQuestions, parseTask, Question, QUESTIONS_FILE, readText, SHOTGUN_DIR, TASK_FILE, TASK_ID, TaskFile, taskIdOf, writeTextAtomic,
 } from './files';
 import { Gate, passGate, Stage, START } from './stages';
 
@@ -25,7 +26,15 @@ export interface Snapshot {
 	readonly isPaused: boolean;
 	readonly tasks: readonly TaskSummary[]; // all tasks, the newest first
 	readonly decisions: readonly Decision[]; // the last decisions of the active task, the newest last
+	readonly questions: readonly Question[]; // the questions of Claude about the brief of the active task
 	readonly problems: readonly string[]; // the stage files that Shotgun cannot read
+}
+
+// A question of Claude before Shotgun gives it an id
+export interface QuestionInput {
+	readonly text: string;
+	readonly part?: PartId;
+	readonly quote?: string;
 }
 
 // The maximum number of decisions in memory. The file keeps all decisions
@@ -37,7 +46,12 @@ export class SessionStore {
 	private readonly events = new EventEmitter();
 
 	constructor(private readonly root: string | undefined, private readonly now: () => Date = () => new Date()) {
-		this.state = { root, task: undefined, isPaused: false, tasks: [], decisions: [], problems: [] };
+		this.state = { root, task: undefined, isPaused: false, tasks: [], decisions: [], questions: [], problems: [] };
+	}
+
+	// The file brief.md of a task, by default of the active task. undefined: no folder, or no active task
+	briefFile(id = this.state.task?.id): string | undefined {
+		return this.dir && id ? path.join(this.dir, id, BRIEF_FILE) : undefined;
 	}
 
 	get snapshot(): Snapshot {
@@ -91,11 +105,20 @@ export class SessionStore {
 			problems.push(`${ACTIVE_FILE} names the task ${active.task}, but its folder has no correct ${TASK_FILE}.`);
 		}
 		let decisions: Decision[] = [];
+		let questions: readonly Question[] = [];
 		if (task && dir) {
 			const parsed = parseDecisions(readText(path.join(dir, task.id, DECISIONS_FILE)) ?? '');
 			decisions = parsed.decisions.slice(-MAX_DECISIONS);
 			if (parsed.invalid > 0) {
 				problems.push(`${task.id}/${DECISIONS_FILE} has ${parsed.invalid} lines that are not correct. Shotgun ignores them.`);
+			}
+			const questionsText = readText(path.join(dir, task.id, QUESTIONS_FILE));
+			if (questionsText !== undefined) {
+				try {
+					questions = parseQuestions(questionsText, task.id).questions;
+				} catch (error) {
+					problems.push(messageOf(error));
+				}
 			}
 		}
 		this.set({
@@ -104,12 +127,15 @@ export class SessionStore {
 			isPaused: task ? active.isPaused : false,
 			tasks: tasks.map(({ id, title, stage, isDone, created }) => ({ id, title, stage, isDone, created })),
 			decisions,
+			questions,
 			problems,
 		});
 	}
 
-	// Makes a new task in stage 1 and makes it the active task. by: the user with the command, or Claude with a tool
-	newTask(title: string, by: 'user' | 'claude' = 'user'): TaskFile {
+	// Makes a new task in stage 1 and makes it the active task, with brief.md from the template. by: the user with the
+	// command, or Claude with a tool. brief: the brief that Claude gives from the chat, with the number of the lines of
+	// the user, in the place of the template
+	newTask(title: string, by: 'user' | 'claude' = 'user', brief?: { text: string; lines: number }): TaskFile {
 		const dir = this.requireDir();
 		const text = title.trim().replace(/\s+/g, ' ');
 		if (!text) {
@@ -122,10 +148,55 @@ export class SessionStore {
 		const id = taskIdOf(text, taken);
 		const task: TaskFile = { version: FILE_VERSION, id, title: text, created: this.time(), ...START };
 		writeTextAtomic(path.join(dir, id, TASK_FILE), jsonText(task));
+		writeTextAtomic(path.join(dir, id, BRIEF_FILE), brief?.text ?? briefTemplate(text));
 		this.append(id, { kind: 'task', by, title: text });
+		if (brief) {
+			this.append(id, { kind: 'brief', by: 'claude', lines: brief.lines });
+		}
 		writeTextAtomic(path.join(dir, ACTIVE_FILE), jsonText({ version: FILE_VERSION, task: id, isPaused: false } satisfies ActiveFile));
 		this.load();
 		return task;
+	}
+
+	// Writes the brief that Claude gives from the chat into the active task. lines: the number of the lines of the user
+	writeBrief(text: string, lines: number): void {
+		const task = this.requireTask();
+		writeTextAtomic(this.briefFile(task.id)!, text);
+		this.append(task.id, { kind: 'brief', by: 'claude', lines });
+		this.load();
+	}
+
+	// Gives the questions of Claude about the brief to the active task. The new questions replace the open questions.
+	// The closed questions stay. The result: the new questions with their ids
+	setQuestions(inputs: readonly QuestionInput[]): Question[] {
+		const dir = this.requireDir();
+		const task = this.requireTask();
+		const old = this.state.questions;
+		let next = old.reduce((max, q) => Math.max(max, Number.parseInt(q.id.slice(1), 10) || 0), 0) + 1;
+		const created = this.time();
+		const added: Question[] = inputs.map((q) => ({
+			id: `q${next++}`, text: q.text, ...(q.part ? { part: q.part } : {}), ...(q.quote ? { quote: q.quote } : {}), state: 'open', created,
+		}));
+		const questions = [...old.filter((q) => q.state === 'closed'), ...added];
+		writeTextAtomic(path.join(dir, task.id, QUESTIONS_FILE), jsonText({ version: FILE_VERSION, questions }));
+		this.append(task.id, { kind: 'questions', by: 'claude', count: added.length });
+		this.load();
+		return added;
+	}
+
+	// The user closes a question of Claude, for example after the answer in the brief
+	closeQuestion(id: string): void {
+		const dir = this.requireDir();
+		const task = this.requireTask();
+		const question = this.state.questions.find((q) => q.id === id && q.state === 'open');
+		if (!question) {
+			throw new Error(`The active task has no open question ${id}.`);
+		}
+		const closed = this.time();
+		const questions = this.state.questions.map((q) => (q === question ? { ...q, state: 'closed' as const, closed } : q));
+		writeTextAtomic(path.join(dir, task.id, QUESTIONS_FILE), jsonText({ version: FILE_VERSION, questions }));
+		this.append(task.id, { kind: 'question', by: 'user', id, text: question.text });
+		this.load();
 	}
 
 	// Makes a task of the workspace the active task. The guard is on for it

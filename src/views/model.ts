@@ -1,10 +1,11 @@
 import * as path from 'path';
 import type { ClaudeState } from '../claude/connection';
 import { MIN_DATAFLOW } from '../dataflow/version';
-import type { Decision } from '../session/files';
-import { GATE_LABEL, GATE_OF, STAGE_INFO, STAGES, stageText } from '../session/stages';
+import { parseBrief, partName, partSummary, questionLine } from '../session/brief';
+import type { Decision, TaskFile } from '../session/files';
+import { GATE_LABEL, STAGE_INFO, STAGES, stageText } from '../session/stages';
 import type { Snapshot } from '../session/store';
-import type { DecisionView, SetupRow, StageView, TaskView, ViewModel } from './protocol';
+import type { BriefView, DecisionView, GateView, SetupRow, StageView, TaskView, ViewModel } from './protocol';
 
 // The view model of the page and of the panel, from the session, the state of DataFlow and the connection to Claude
 // Code. These functions use no VS Code API, so the unit tests can call them directly.
@@ -24,6 +25,8 @@ export interface ModelInput {
 	readonly snapshot: Snapshot;
 	readonly dataflow: DataFlowView;
 	readonly claude: ClaudeState;
+	// the brief of the active task: the text of the open text editor, else of the file
+	readonly brief?: { readonly file: string; readonly text: string; readonly isDirty: boolean };
 }
 
 // The maximum number of decisions in the views
@@ -41,7 +44,48 @@ export function decisionText(decision: Decision): string {
 			return 'You continued the task. The guard is on.';
 		case 'deny':
 			return `The guard stopped ${decision.tool} of ${decision.file}.`;
+		case 'brief':
+			return `Claude gave your brief from the chat: ${decision.lines === 1 ? '1 line' : `${decision.lines} lines`} of your words.`;
+		case 'questions':
+			return `Claude asked ${decision.count === 1 ? '1 question' : `${decision.count} questions`} about the brief.`;
+		case 'question':
+			return `You closed the question "${decision.text}".`;
 	}
+}
+
+// Stage 1: the parts of the brief and the open questions of Claude
+function briefView(snapshot: Snapshot, brief: NonNullable<ModelInput['brief']>): BriefView {
+	const parsed = parseBrief(brief.text);
+	const open = snapshot.questions.filter((q) => q.state === 'open');
+	return {
+		file: brief.file,
+		parts: parsed.parts.map((p) => ({ id: p.id, name: p.name, hasText: p.hasText, summary: partSummary(p), ...(p.line ? { line: p.line } : {}) })),
+		complete: parsed.parts.filter((p) => p.hasText).length,
+		isComplete: parsed.isComplete,
+		isDirty: brief.isDirty,
+		questions: open.map((q) => {
+			const line = questionLine(brief.text, parsed.parts, q);
+			return { id: q.id, text: q.text, ...(q.part ? { partName: partName(q.part) } : {}), ...(line ? { line } : {}) };
+		}),
+		closed: snapshot.questions.length - open.length,
+	};
+}
+
+// The gate of the stage. This version of Shotgun has only the gate of stage 1
+function gateView(task: TaskFile, brief: BriefView | undefined): GateView | undefined {
+	if (task.isDone || task.stage !== 'brief' || !brief) {
+		return undefined;
+	}
+	const missing = brief.parts.filter((p) => !p.hasText).map((p) => p.name);
+	const open = brief.questions.length;
+	return {
+		label: GATE_LABEL['brief-ready'],
+		note: 'Your gate. It starts the scan of the call graph.',
+		isEnabled: missing.length === 0,
+		...(missing.length > 0 ? { reason: `Write ${missing.join(', ')} in brief.md first.` } : {}),
+		...(open > 0 ? { warning: `${open === 1 ? '1 question' : `${open} questions`} of Claude ${open === 1 ? 'is' : 'are'} open.` } : {}),
+		...(STAGE_INFO.survey.request ? { after: STAGE_INFO.survey.request } : {}),
+	};
 }
 
 function dataflowRow(dataflow: DataFlowView): SetupRow {
@@ -130,11 +174,13 @@ function stageViews(snapshot: Snapshot): StageView[] {
 	});
 }
 
-function taskView(snapshot: Snapshot): TaskView | null {
+function taskView(snapshot: Snapshot, briefInput: ModelInput['brief']): TaskView | null {
 	const task = snapshot.task;
 	if (!task) {
 		return null;
 	}
+	const brief = task.stage === 'brief' && !task.isDone && briefInput ? briefView(snapshot, briefInput) : undefined;
+	const gate = gateView(task, brief);
 	const info = STAGE_INFO[task.stage];
 	const isActive = !task.isDone && !snapshot.isPaused;
 	let next = info.next;
@@ -158,7 +204,8 @@ function taskView(snapshot: Snapshot): TaskView | null {
 		next,
 		guard,
 		...(isActive && info.request ? { request: info.request } : {}),
-		...(task.isDone ? {} : { gate: GATE_LABEL[GATE_OF[task.stage]] }),
+		...(brief ? { brief } : {}),
+		...(gate ? { gate } : {}),
 		isDone: task.isDone,
 		isPaused: snapshot.isPaused,
 	};
@@ -172,7 +219,7 @@ export function buildModel(input: ModelInput): ViewModel {
 	return {
 		version: input.version,
 		stages: stageViews(snapshot),
-		task: taskView(snapshot),
+		task: taskView(snapshot, input.brief),
 		tasks: snapshot.tasks.map((t) => ({
 			id: t.id, title: t.title, stageNumber: STAGE_INFO[t.stage].number, stageName: STAGE_INFO[t.stage].name, isDone: t.isDone,
 			isActive: t.id === snapshot.task?.id,

@@ -1,8 +1,12 @@
 // The test of Shotgun with Claude Code. It starts the test build of VS Code with DataFlow and Shotgun from their
 // repository folders. In VS Code, it makes a task with "Shotgun: New Task", and connects DataFlow and Shotgun to Claude
-// Code with their commands. Then it runs 2 prompts with the CLI of Claude Code in print mode:
-// 1. Claude reads the session with the tool shotgun_get_session.
-// 2. Claude tries to change a file of the project in stage 1, and the guard denies the change.
+// Code with their commands. Then 2 tasks go from the brief to stage 2 (the condition of phase 2), with 3 prompts of the
+// CLI of Claude Code in print mode:
+// 1. Task 1: the test writes the brief into brief.md, as the user does. "Ask me questions about my brief." loads the
+//    skill shotgun, and Claude gives its questions with shotgun_submit_questions. The test closes the questions.
+// 2. Claude tries to change a file of the project in stage 1, and the guard denies the change (phase 1).
+// 3. The test passes the gate of task 1. Then the user gives a brief in the chat, and Claude gives it to Shotgun with
+//    shotgun_submit_brief. Shotgun makes task 2, and the test passes its gate.
 // The commands write the settings of proposal P15, and the test checks these files. The CLI loads the 2 plugins with
 // --plugin-dir from the folders that the commands wrote. The CLI uses the login and thus the config folder of the user,
 // and a marketplace from settings would go into the plugin data of the user.
@@ -15,6 +19,7 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -25,7 +30,27 @@ const PORT = 9361;
 // The port of the MCP server of DataFlow in the test build. A different window of DataFlow can have the default 47321
 const MCP_PORT = 47391;
 const TITLE = 'A cycle limit for the solver';
+const TASK_1 = 'a-cycle-limit-for-the-solver';
 const GET_SESSION = 'mcp__plugin_dataflow_dataflow__shotgun_get_session';
+const SUBMIT_BRIEF = 'mcp__plugin_dataflow_dataflow__shotgun_submit_brief';
+const SUBMIT_QUESTIONS = 'mcp__plugin_dataflow_dataflow__shotgun_submit_questions';
+// The brief of task 1, as the user writes it in brief.md
+const BRIEF_1 = [
+	`# Brief: ${TITLE}`, '',
+	'## Goal', '', 'The controller must not wait without end for a solver that does not converge.', '',
+	'## Facts', '', '- process() runs one time in each cycle of the main loop.', '- The solver runs on a worker thread of the executor.',
+	'- In the planning state, the controller waits until the solver is done.', '',
+	'## Specs', '', '- After a limit of cycles, the controller goes to the next price slot.', '- The limit is a setting. The default is 8 cycles.', '',
+	'## Not in scope', '', '- A time limit in seconds.', '',
+	'## Done when', '', '- A test with a solver that does not converge passes.', '',
+].join('\n');
+// The brief of task 2, as the user gives it in the chat
+const CHAT_PROMPT = 'Here is my brief for a new Shotgun task, a log line for the preset. Goal: The controller writes which preset it selects. '
+	+ 'Facts: best_preset() selects the preset in src/battery.cpp. log_info() writes a line to the log. '
+	+ 'Specs: The controller writes 1 log line for each selected preset. The line has the name of the preset. '
+	+ 'Not in scope: A new log file. Done when: A test reads the log line. Give this brief to Shotgun.';
+// The parser of the brief of Shotgun, from the build. The test runs after "npm run compile"
+const { foreignLines, parseBrief } = createRequire(import.meta.url)(path.join(repo, 'out', 'session', 'brief.js'));
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const newest = (dir, prefix) => fs.readdirSync(dir).filter((d) => d.startsWith(prefix))
@@ -257,6 +282,60 @@ async function quickInput(wb, text, title) {
 	throw new Error(`The quick input for "${text}" did not open.`);
 }
 
+// Selects the first item of the visible quick pick with this title
+async function quickPickFirst(wb, title) {
+	for (let i = 0; i < 40; i++) {
+		const isReady = await wb.evaluate(`(() => {
+			const w = document.querySelector('.quick-input-widget');
+			if (!w || getComputedStyle(w).display === 'none') { return false; }
+			return (w.querySelector('.quick-input-title')?.textContent ?? '').includes(${JSON.stringify(title)}) && !!w.querySelector('.monaco-list-row');
+		})()`);
+		if (isReady) {
+			await wb.key('Enter', 'Enter', 13);
+			return;
+		}
+		await sleep(250);
+	}
+	throw new Error(`The quick pick "${title}" did not open.`);
+}
+
+// The value of fn when it has one, or undefined after the time. fn can be async
+async function poll(fn, seconds) {
+	for (let waited = 0; waited < seconds * 1000; waited += 300) {
+		const value = await fn();
+		if (value) {
+			return value;
+		}
+		await sleep(300);
+	}
+	return undefined;
+}
+
+// The text of the logs of Shotgun in the test build
+function shotgunLog() {
+	const found = [];
+	const walk = (folder) => {
+		for (const entry of fs.readdirSync(folder, { withFileTypes: true })) {
+			const file = path.join(folder, entry.name);
+			if (entry.isDirectory()) {
+				walk(file);
+			} else if (entry.name === 'Shotgun.log') {
+				found.push(file);
+			}
+		}
+	};
+	try {
+		walk(path.join(p.userData, 'logs'));
+	} catch {
+		return '';
+	}
+	return found.map((f) => fs.readFileSync(f, 'utf8')).join('\n');
+}
+
+const taskFile = (id, name) => path.join(p.project, '.shotgun', id, name);
+const ledgerOf = (id) => (fs.existsSync(taskFile(id, 'decisions.jsonl'))
+	? fs.readFileSync(taskFile(id, 'decisions.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
+
 // Runs a command with the Command Palette. A click on the editor area first takes the focus from a webview, for example
 // from the panel of Shotgun after "Shotgun: New Task"
 async function command(wb, text) {
@@ -354,7 +433,7 @@ function runClaude(name, prompt) {
 		// no settings of the user, and the 2 plugins from the folders that the commands wrote
 		'--setting-sources', 'project', '--plugin-dir', dataflowPlugin, '--plugin-dir', shotgunPlugin,
 		'--permission-mode', 'acceptEdits', '--permission-prompts', 'none',
-		'--allowedTools', GET_SESSION,
+		'--allowedTools', [GET_SESSION, SUBMIT_BRIEF, SUBMIT_QUESTIONS, 'Skill'].join(','),
 		'--max-turns', '8', '--no-session-persistence',
 		'--debug-file', path.join(dir, `claude-${name}.debug.log`),
 	];
@@ -454,22 +533,53 @@ async function main() {
 		}
 		results.bridge = bridge;
 		const windows = windowFiles().map((n) => readJson(path.join(p.registry, n)));
-		check('The bridge of DataFlow lists the 3 tools of Shotgun', bridge.shotgun?.length === 3,
-			{ ...bridge, windows, listeners: bridge.shotgun?.length === 3 ? undefined : listenersOf(MCP_PORT) });
-		if (bridge.shotgun?.length !== 3) {
+		check('The bridge of DataFlow lists the 5 tools of Shotgun', bridge.shotgun?.length === 5,
+			{ ...bridge, windows, listeners: bridge.shotgun?.length === 5 ? undefined : listenersOf(MCP_PORT) });
+		if (bridge.shotgun?.length !== 5) {
 			throw new Error('The bridge does not work, so the test does not run Claude Code.');
 		}
 
-		// 1: Claude reads the session
-		const session = await runClaude('session', 'Read my Shotgun session with the Shotgun tool. Then tell me the title of the task and its stage.');
-		const isPlugin = (name, folder) => session.plugins.some((x) => x.name === name && path.resolve(x.path) === path.resolve(folder));
+		// task 1: the brief in a file. "Shotgun: New Task" made brief.md from the template and opened it
+		const brief1 = taskFile(TASK_1, 'brief.md');
+		const tab = await wb.evaluate("document.querySelector('.part.editor .tab.active')?.textContent ?? ''");
+		check('"Shotgun: New Task" makes brief.md from the template and opens it',
+			fs.readFileSync(brief1, 'utf8').startsWith(`# Brief: ${TITLE}\n\n## Goal\n`) && String(tab).includes('brief.md'), tab);
+		let text = await poll(async () => (await panelText())?.includes('0 of 5') && true, 15);
+		check('The panel shows the parts of the empty brief', !!text, await panelText());
+		fs.writeFileSync(brief1, BRIEF_1);
+		text = await poll(async () => (await panelText())?.includes('5 of 5') && true, 15);
+		check('The panel shows the 5 parts of the brief of the user', !!text, await panelText());
+
+		// 1: Claude asks questions about the brief
+		const asked = await runClaude('questions', 'Ask me questions about my brief.');
+		const names = asked.toolUses.map((t) => t.name);
+		const isPlugin = (name, folder) => asked.plugins.some((x) => x.name === name && path.resolve(x.path) === path.resolve(folder));
 		check('Claude Code loads the plugins that DataFlow and Shotgun wrote', isPlugin('dataflow', dataflowPlugin) && isPlugin('shotgun', shotgunPlugin),
-			session.plugins);
-		check('The MCP server of DataFlow is connected', session.servers.some((s) => s.name === 'plugin:dataflow:dataflow' && s.status === 'connected'), session.servers);
-		const context = session.hooks.find((h) => h.hook === 'UserPromptSubmit');
-		check('The context hook gives the task to Claude', String(context?.output).includes(`the active task is \\"${TITLE}\\"`) || String(context?.output).includes(`the active task is "${TITLE}"`), context);
-		check('Claude reads the session with shotgun_get_session', session.toolUses.some((t) => t.name === GET_SESSION), session.toolUses.map((t) => t.name));
-		check('The answer of Claude has the title and the stage', session.result.includes(TITLE.slice(2)) && /brief|stage 1/i.test(session.result), session.result);
+			asked.plugins);
+		check('The MCP server of DataFlow is connected', asked.servers.some((s) => s.name === 'plugin:dataflow:dataflow' && s.status === 'connected'), asked.servers);
+		const context = asked.hooks.find((h) => h.hook === 'UserPromptSubmit');
+		check('The context hook gives the task to Claude', String(context?.output).includes(`the active task is \\"${TITLE}\\"`)
+			|| String(context?.output).includes(`the active task is "${TITLE}"`), context);
+		check('The request loads the skill shotgun', asked.toolUses.some((t) => t.name === 'Skill' && String(t.input?.skill).includes('shotgun')), names);
+		check('Claude reads the session with shotgun_get_session', names.includes(GET_SESSION), names);
+		check('Claude gives its questions with shotgun_submit_questions', names.includes(SUBMIT_QUESTIONS), names);
+		const open = (readJson(taskFile(TASK_1, 'questions.json'))?.questions ?? []).filter((q) => q.state === 'open');
+		check('questions.json has the open questions of Claude', open.length >= 1 && open.length <= 10, open);
+		text = await poll(async () => open.length > 0 && (await panelText())?.includes(open[0].text) && true, 15);
+		check('The panel shows the questions of Claude', !!text, await panelText());
+		check('Claude did not change the brief', fs.readFileSync(brief1, 'utf8') === BRIEF_1);
+		await wb.shot('panel-questions.png');
+
+		// the user closes the questions
+		for (let i = 0; i < open.length; i++) {
+			await command(wb, 'Shotgun: Close Question');
+			await quickPickFirst(wb, 'Shotgun: Close Question');
+			await sleep(600);
+		}
+		const closed = readJson(taskFile(TASK_1, 'questions.json'))?.questions ?? [];
+		check('"Shotgun: Close Question" closes each question', closed.length > 0 && closed.every((q) => q.state === 'closed'), closed.map((q) => q.state));
+		check('The ledger records each closed question', ledgerOf(TASK_1).filter((d) => d.kind === 'question').length === open.length,
+			ledgerOf(TASK_1).map((d) => d.kind));
 
 		// 2: the guard denies a change in stage 1
 		const file = path.join(p.project, 'src', 'battery.cpp');
@@ -481,16 +591,49 @@ async function main() {
 			&& String(guard?.output).includes('stage 1 of 5, the brief'), guard);
 		check('Claude gets the reason of the deny', edit.toolResults.some((r) => r.isError && r.text.includes('stage 1 of 5, the brief')), edit.toolResults);
 		check('The file did not change', hashOf(file) === hash);
-		const ledger = fs.readFileSync(path.join(p.project, '.shotgun', 'a-cycle-limit-for-the-solver', 'decisions.jsonl'), 'utf8')
-			.split('\n').filter(Boolean).map((l) => JSON.parse(l));
-		const deny = ledger.find((d) => d.kind === 'deny');
+		const deny = ledgerOf(TASK_1).find((d) => d.kind === 'deny');
 		check('The ledger records the deny', deny?.tool === 'Edit' && deny?.file === path.join('src', 'battery.cpp'), deny);
+		text = await poll(async () => (await panelText())?.includes(`The guard stopped Edit of ${path.join('src', 'battery.cpp')}.`) && true, 15);
+		check('The panel shows the deny', !!text, await panelText());
 
-		// the panel and the page show the deny
+		// the gate of task 1
+		await command(wb, 'Shotgun: Pass the Gate');
+		const task1 = await poll(() => (readJson(taskFile(TASK_1, 'task.json'))?.stage === 'survey' ? readJson(taskFile(TASK_1, 'task.json')) : undefined), 20);
+		check('The gate "The brief is ready" takes task 1 to stage 2', task1?.gates?.[0]?.gate === 'brief-ready', readJson(taskFile(TASK_1, 'task.json')));
+		const scan = await poll(() => shotgunLog().includes('The scan of the call graph started'), 20);
+		check('The gate starts the scan of the call graph', !!scan, shotgunLog().slice(-1000));
+
+		// 3: task 2, the brief from the chat
+		const chat = await runClaude('chat', CHAT_PROMPT);
+		const chatNames = chat.toolUses.map((t) => t.name);
+		check('The brief in the chat loads the skill shotgun', chat.toolUses.some((t) => t.name === 'Skill' && String(t.input?.skill).includes('shotgun')), chatNames);
+		check('Claude gives the brief with shotgun_submit_brief', chatNames.includes(SUBMIT_BRIEF), chatNames);
+		const refused = chat.toolResults.filter((r) => r.isError && r.text.includes('did not take the brief')).length;
+		if (refused > 0) {
+			results.notes = [...(results.notes ?? []), `Shotgun refused ${refused} brief of Claude before it took the brief.`];
+			console.log(`NOTE Shotgun refused ${refused} brief of Claude before it took the brief.`);
+		}
+		const task2 = readJson(path.join(p.project, '.shotgun', 'active.json'))?.task;
+		check('Shotgun makes task 2 for the brief from the chat', !!task2 && task2 !== TASK_1, task2);
+		const brief2 = task2 && fs.existsSync(taskFile(task2, 'brief.md')) ? fs.readFileSync(taskFile(task2, 'brief.md'), 'utf8') : '';
+		const body2 = brief2.split('\n').slice(1).join('\n');
+		check('Each line of brief 2 is in the words of the user', !!body2.trim() && foreignLines(body2.replace(/<!--[^>]*-->/g, ''), [CHAT_PROMPT]).length === 0,
+			{ foreign: foreignLines(body2.replace(/<!--[^>]*-->/g, ''), [CHAT_PROMPT]), brief2 });
+		check('Each part of brief 2 has text', parseBrief(brief2).isComplete, brief2);
+		check('The ledger of task 2 records the brief of Claude', ledgerOf(task2).some((d) => d.kind === 'brief' && d.by === 'claude'),
+			ledgerOf(task2).map((d) => `${d.kind}:${d.by}`));
+
+		// the gate of task 2
+		await command(wb, 'Shotgun: Pass the Gate');
+		const done2 = await poll(() => (readJson(taskFile(task2, 'task.json'))?.stage === 'survey' ? readJson(taskFile(task2, 'task.json')) : undefined), 20);
+		check('The gate "The brief is ready" takes task 2 to stage 2', done2?.gates?.[0]?.gate === 'brief-ready', readJson(taskFile(task2, 'task.json')));
+		check('2 new tasks went from the brief to stage 2: 1 from a file and 1 from the chat', task1?.stage === 'survey' && done2?.stage === 'survey');
+
+		// the panel and the page
 		await command(wb, 'Focus on Shotgun View');
 		await sleep(1500);
-		const text = await panelText();
-		check('The panel shows the deny', !!text?.includes(`The guard stopped Edit of ${path.join('src', 'battery.cpp')}.`), text);
+		text = await panelText();
+		check('The panel shows stage 2 of task 2 with its request', !!text?.includes('Survey my brief.') && !!text?.includes('Claude gave your brief from the chat'), text);
 		await wb.shot('panel.png');
 		await command(wb, 'Shotgun: Show Page');
 		await sleep(2000);

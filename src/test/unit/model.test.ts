@@ -2,7 +2,7 @@ import * as assert from 'assert';
 import * as path from 'path';
 import type { ClaudeState } from '../../claude/connection';
 import { compareVersions } from '../../dataflow/version';
-import type { Decision, TaskFile } from '../../session/files';
+import type { Decision, Question, TaskFile } from '../../session/files';
 import type { Snapshot } from '../../session/store';
 import { buildModel, DataFlowView, decisionText, statusOf } from '../../views/model';
 import { isFromView } from '../../views/views';
@@ -16,7 +16,7 @@ suite('View model', () => {
 		version: 1, id: 'fix', title: 'Fix', created: '2026-11-14T10:00:00.000Z', stage: 'survey', isDone: false, gates: [], ...over,
 	});
 	const snapshot = (over: Partial<Snapshot> = {}): Snapshot => ({
-		root, task: undefined, isPaused: false, tasks: [], decisions: [], problems: [], ...over,
+		root, task: undefined, isPaused: false, tasks: [], decisions: [], questions: [], problems: [], ...over,
 	});
 	const model = (s: Snapshot, claude = connected, dataflow = ready) => buildModel({ version: '0.1.0', snapshot: s, dataflow, claude });
 
@@ -42,7 +42,8 @@ suite('View model', () => {
 		assert.deepStrictEqual(m.stages.map((s) => s.writer), ['user', 'claude', 'user', 'claude', 'both']);
 		assert.strictEqual(m.task?.stageName, 'Survey');
 		assert.strictEqual(m.task?.request, 'Survey my brief.');
-		assert.strictEqual(m.task?.gate, 'Order the tasks');
+		// this version of Shotgun has only the gate of stage 1
+		assert.strictEqual(m.task?.gate, undefined);
 		assert.strictEqual(m.tasks[0].isActive, true);
 		// with a task, the plugin must be on in the folder
 		const off = model(snapshot({ task: task(), tasks: [{ id: 'fix', title: 'Fix', stage: 'survey', isDone: false, created: '' }] }),
@@ -72,6 +73,43 @@ suite('View model', () => {
 			'Claude started the task "Fix".',
 		]);
 		assert.strictEqual(decisionText({ version: 1, time: 't', kind: 'pause', by: 'user' }), 'You paused the guard for work outside of the task.');
+		assert.strictEqual(decisionText({ version: 1, time: 't', kind: 'brief', by: 'claude', lines: 5 }), 'Claude gave your brief from the chat: 5 lines of your words.');
+		assert.strictEqual(decisionText({ version: 1, time: 't', kind: 'questions', by: 'claude', count: 1 }), 'Claude asked 1 question about the brief.');
+		assert.strictEqual(decisionText({ version: 1, time: 't', kind: 'question', by: 'user', id: 'q1', text: 'Why?' }), 'You closed the question "Why?".');
+	});
+
+	test('Stage 1: the parts of the brief, the open questions and the gate', () => {
+		const brief = { file: path.join(root, 'brief.md'), text: '# Brief: Fix\n\n## Goal\nA goal.\n\n## Facts\n- One.\n- Two.\n', isDirty: true };
+		const questions: Question[] = [
+			{ id: 'q1', text: 'Why?', part: 'facts', quote: 'Two.', state: 'open', created: 't' },
+			{ id: 'q2', text: 'Old?', state: 'closed', created: 't', closed: 't2' },
+		];
+		const m = buildModel({ version: '0.1.0', snapshot: snapshot({ task: task({ stage: 'brief' }), questions }), dataflow: ready, claude: connected, brief });
+		const view = m.task!.brief!;
+		assert.deepStrictEqual(view.parts.map((p) => [p.name, p.hasText, p.summary, p.line]), [
+			['Goal', true, '1 sentence', 3], ['Facts', true, '2 items', 6], ['Specs', false, 'no heading', undefined],
+			['Not in scope', false, 'no heading', undefined], ['Done when', false, 'no heading', undefined],
+		]);
+		assert.deepStrictEqual([view.complete, view.isComplete, view.isDirty, view.closed], [2, false, true, 1]);
+		assert.deepStrictEqual(view.questions, [{ id: 'q1', text: 'Why?', partName: 'Facts', line: 8 }]);
+		assert.deepStrictEqual(m.task!.gate, {
+			label: 'The brief is ready',
+			note: 'Your gate. It starts the scan of the call graph.',
+			isEnabled: false,
+			reason: 'Write Specs, Not in scope, Done when in brief.md first.',
+			warning: '1 question of Claude is open.',
+			after: 'Survey my brief.',
+		});
+		// a complete brief with no open question enables the gate
+		const done = buildModel({
+			version: '0.1.0', snapshot: snapshot({ task: task({ stage: 'brief' }) }), dataflow: ready, claude: connected,
+			brief: { ...brief, text: `${brief.text}## Specs\nS.\n## Not in scope\nN.\n## Done when\nD.\n` },
+		});
+		assert.deepStrictEqual([done.task!.gate!.isEnabled, done.task!.gate!.reason, done.task!.gate!.warning], [true, undefined, undefined]);
+		// this version has no view and no gate for the stages 2 to 5
+		const survey = buildModel({ version: '0.1.0', snapshot: snapshot({ task: task({ stage: 'survey' }) }), dataflow: ready, claude: connected, brief });
+		assert.strictEqual(survey.task!.brief, undefined);
+		assert.strictEqual(survey.task!.gate, undefined);
 	});
 
 	test('The status bar', () => {

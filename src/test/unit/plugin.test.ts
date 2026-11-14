@@ -22,6 +22,8 @@ function cliEnv(): NodeJS.ProcessEnv {
 // The plugin of Shotgun for Claude Code
 suite('Plugin of Shotgun', () => {
 	const manifestPath = path.join('plugins', 'shotgun', '.claude-plugin', 'plugin.json');
+	// the folder of the repository: the tests run from out/test/unit
+	const repo = path.resolve(__dirname, '..', '..', '..');
 	let dir: string;
 
 	setup(() => {
@@ -48,7 +50,8 @@ suite('Plugin of Shotgun', () => {
 		assert.strictEqual(guard[1].hooks[0].input.file, '${tool_input.notebook_path}');
 		const context = manifest.hooks.UserPromptSubmit[0].hooks[0];
 		assert.strictEqual(context.tool, 'shotgun_session_context');
-		assert.deepStrictEqual(context.input, { event: '${hook_event_name}', cwd: '${cwd}' });
+		// the prompt is for the check of a brief from the chat (decision 12)
+		assert.deepStrictEqual(context.input, { event: '${hook_event_name}', cwd: '${cwd}', prompt: '${prompt}' });
 		// Claude Code does not run a hook of type mcp_tool at SessionStart (phase 0, S4)
 		assert.ok(!('SessionStart' in manifest.hooks));
 		assert.strictEqual(files[path.join('plugins', 'shotgun', 'skills', 'shotgun', 'SKILL.md')], '---\nname: shotgun\n---\n');
@@ -70,13 +73,25 @@ suite('Plugin of Shotgun', () => {
 		assert.deepStrictEqual(readSkills(dir), { shotgun: 'text' });
 	});
 
-	test('Claude Code accepts the plugin and the marketplace', function () {
+	test('The extension has the skill shotgun', () => {
+		const skills = readSkills(repo);
+		assert.deepStrictEqual(Object.keys(skills), ['shotgun']);
+		assert.match(skills.shotgun, /^---\r?\nname: shotgun\r?\ndescription: '.*Ask me questions about my brief.*'\r?\n---/);
+		// the skill gives the full names of the tools, because MCP tools are deferred tools in Claude Code
+		for (const tool of ['get_session', 'submit_brief', 'submit_questions']) {
+			assert.ok(skills.shotgun.includes(`shotgun_${tool}`), tool);
+		}
+		assert.ok(skills.shotgun.includes('mcp__plugin_dataflow_dataflow__shotgun_'));
+	});
+
+	test('Claude Code accepts the plugin with its skills, and the marketplace', function () {
 		this.timeout(120000);
 		const cli = claudeCli();
 		if (!cli) {
 			this.skip(); // no CLI of Claude Code: set CLAUDE_EXE to run this test
 		}
-		writePlugin(dir, pluginFiles('0.1.0'));
+		writePlugin(dir, pluginFiles('0.1.0', readSkills(repo)));
+		assert.ok(existsSync(path.join(dir, 'plugins', 'shotgun', 'skills', 'shotgun', 'SKILL.md')));
 		for (const folder of [path.join(dir, 'plugins', 'shotgun'), dir]) {
 			assert.ok(existsSync(folder));
 			const result: SpawnSyncReturns<string> = spawnSync(cli!, ['plugin', 'validate', folder], { encoding: 'utf8', windowsHide: true, env: cliEnv() });

@@ -2,7 +2,7 @@ import * as assert from 'assert';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { jsonText, parseActive, parseDecisions, parseTask, TASK_ID, taskIdOf, writeTextAtomic } from '../../session/files';
+import { jsonText, parseActive, parseDecisions, parseQuestions, parseTask, TASK_ID, taskIdOf, writeTextAtomic } from '../../session/files';
 
 // The formats of the stage files
 suite('Stage files', () => {
@@ -52,10 +52,29 @@ suite('Stage files', () => {
 			'{"version":1,"time":"t3","kind":"deny","by":"guard","tool":"Edit","file":"a.cpp","reason":"no"}',
 			'{"version":1,"time":"t4","kind":"pause","by":"claude"}',
 			'{"version":1,"time":"t5","kind":"continue","by":"user"}',
+			'{"version":1,"time":"t6","kind":"brief","by":"claude","lines":5}',
+			'{"version":1,"time":"t7","kind":"questions","by":"claude","count":2}',
+			'{"version":1,"time":"t8","kind":"question","by":"user","id":"q1","text":"Why?"}',
+			'{"version":1,"time":"t9","kind":"brief","by":"user","lines":5}',
 		].join('\r\n');
 		const { decisions, invalid } = parseDecisions(text);
-		assert.deepStrictEqual(decisions.map((d) => d.kind), ['task', 'gate', 'deny', 'continue']);
-		assert.strictEqual(invalid, 2);
+		assert.deepStrictEqual(decisions.map((d) => d.kind), ['task', 'gate', 'deny', 'continue', 'brief', 'questions', 'question']);
+		assert.strictEqual(invalid, 3);
+	});
+
+	test('questions.json: the questions of Claude, and the errors of a wrong file', () => {
+		const file = {
+			version: 1,
+			questions: [
+				{ id: 'q1', text: 'Why?', part: 'goal', state: 'closed', created: 't1', closed: 't2' },
+				{ id: 'q2', text: 'How?', quote: 'A goal.', state: 'open', created: 't1' },
+			],
+		};
+		assert.deepStrictEqual(parseQuestions(jsonText(file), 'fix'), file);
+		assert.throws(() => parseQuestions(jsonText({ ...file, questions: [{ id: 'q1', text: 'Why?', state: 'done', created: 't' }] }), 'fix'),
+			/A question of fix\/questions\.json needs the fields/);
+		assert.throws(() => parseQuestions(jsonText({ ...file, questions: [{ ...file.questions[0], part: 'other' }] }), 'fix'), /A question of/);
+		assert.throws(() => parseQuestions(jsonText({ version: 1 }), 'fix'), /needs the field questions/);
 	});
 
 	test('writeTextAtomic makes the folders and leaves no temporary file', () => {

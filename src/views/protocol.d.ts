@@ -25,9 +25,44 @@ export interface TaskView {
 	next: string; // the next work
 	guard: string; // the rule of the guard
 	request?: string; // a request in words for Claude Code
-	gate?: string; // the text of the gate of the stage
+	brief?: BriefView; // stage 1: the brief and the questions
+	gate?: GateView; // the gate of the stage, if this version of Shotgun has it
 	isDone: boolean;
 	isPaused: boolean;
+}
+
+export interface BriefPartView {
+	id: string;
+	name: string;
+	hasText: boolean;
+	summary: string; // for example "4 items" or "no text"
+	line?: number; // the line of the heading in brief.md
+}
+
+export interface QuestionView {
+	id: string;
+	text: string;
+	partName?: string;
+	line?: number; // the line of brief.md that the question is about
+}
+
+export interface BriefView {
+	file: string;
+	parts: BriefPartView[];
+	complete: number; // the number of the parts with text
+	isComplete: boolean;
+	isDirty: boolean; // the text editor has changes that are not saved
+	questions: QuestionView[]; // the open questions of Claude
+	closed: number; // the number of the closed questions
+}
+
+export interface GateView {
+	label: string; // the text of the button
+	note: string;
+	isEnabled: boolean;
+	reason?: string; // why the button is not enabled
+	warning?: string; // a fact that the user must know before the gate, for example open questions
+	after?: string; // the request in words after the gate
 }
 
 export interface DecisionView {
@@ -72,4 +107,7 @@ export type FromView =
 	| { type: 'ready' }
 	| { type: 'command'; command: ViewCommand }
 	| { type: 'selectTask'; id: string }
-	| { type: 'copy'; text: string };
+	| { type: 'copy'; text: string }
+	| { type: 'openBrief'; line?: number }
+	| { type: 'closeQuestion'; id: string }
+	| { type: 'gate' };

@@ -16,7 +16,12 @@ A button of Shotgun records a decision of the user. It never starts Claude: you 
 
 ## Status
 
-Shotgun is in development. Phase 1 of 10 is complete: the tasks, the stages, the panel, the page, the guard and the connection to Claude Code. `implementation-plan.md` gives the phases, and `CHANGELOG.md` gives the content of each phase.
+Shotgun is in development. The phases 1 and 2 of 10 are complete:
+
+- Phase 1: the tasks, the stages, the panel, the page, the guard and the connection to Claude Code.
+- Phase 2: the brief, the questions of Claude about the brief, and the gate of stage 1.
+
+`implementation-plan.md` gives the phases, and `CHANGELOG.md` gives the content of each phase.
 
 ## Prerequisites
 
@@ -29,14 +34,20 @@ Shotgun is in development. Phase 1 of 10 is complete: the tasks, the stages, the
 ## Use
 
 1. Run **Shotgun: Connect to Claude Code**.
-2. Run **Shotgun: New Task**, and give the title of the task.
+2. Run **Shotgun: New Task**, and give the title of the task. Shotgun opens `brief.md` with its 5 parts.
 3. Start a new session of Claude Code in the project. Claude gets the context of the task with each prompt.
-4. Follow the panel of Shotgun in the secondary side bar. It shows the next work and the requests for Claude Code.
+4. Write the brief in `brief.md`. Or give the brief to Claude in the chat, and tell Claude to give it to Shotgun.
+5. Optionally, tell Claude "Ask me questions about my brief." Answer each question in the brief, and then close it in the panel.
+6. When each part has text, select **The brief is ready** in the panel.
+7. Follow the panel of Shotgun in the secondary side bar. It shows the next work and the requests for Claude Code.
 
 | Command | Function |
 | --- | --- |
-| Shotgun: New Task | Makes a task in stage 1. The new task becomes the active task. |
+| Shotgun: New Task | Makes a task in stage 1 with `brief.md`. The new task becomes the active task. |
 | Shotgun: Open Task | Selects a different task of the folder. |
+| Shotgun: Open Brief | Opens the brief of the active task. |
+| Shotgun: Close Question | Closes a question of Claude about the brief. |
+| Shotgun: Pass the Gate | Records the gate of the stage, for example "The brief is ready". |
 | Shotgun: Pause | Stops the guard for work outside of the task. The ledger records the pause. |
 | Shotgun: Continue | Starts the guard again. |
 | Shotgun: Show Page | Opens the page of Shotgun in the editor area. |
@@ -50,12 +61,20 @@ Before each file change of Claude Code, the plugin of Shotgun asks the guard. In
 - If VS Code does not run, Claude Code continues the change.
 - The guard does not see a change through a shell command.
 
+## A brief from the chat
+
+Claude gives your brief to Shotgun with your words. Claude can add only the headings of the 5 parts and list marks. Shotgun refuses each line that is not in one of your recent prompts. Thus the brief stays your text.
+
+For this check, the plugin of Shotgun gives each prompt to Shotgun. Shotgun keeps your last 20 prompts only in memory, and only for its window. No file gets them.
+
 ## Files
 
 | File | Content |
 | --- | --- |
 | `.shotgun/active.json` | The active task, and the pause of the guard. |
 | `.shotgun/<task>/task.json` | The title of the task, its stage and its gates. |
+| `.shotgun/<task>/brief.md` | The brief, with the 5 parts. |
+| `.shotgun/<task>/questions.json` | The questions of Claude about the brief. |
 | `.shotgun/<task>/decisions.jsonl` | The ledger: 1 line for each decision of the user and for each deny of the guard. |
 | `~/.shotgun/claude` | The plugin of Shotgun for Claude Code, in a local marketplace. |
 | `.claude/settings.local.json` | The local settings of Claude Code in the project. The connection turns the plugin of Shotgun on there. |
@@ -70,12 +89,16 @@ You decide if git keeps the folder `.shotgun`.
 
 The second window needs DataFlow 0.6.0 or a later version.
 
+To open the second window with no debugger, run `open-editor.bat` in the folder of the repository. The script compiles Shotgun, and opens VS Code with Shotgun. If VS Code has the second window already, it loads the window again with the new code. To open a folder in the window, give the folder as an argument, for example `open-editor.bat C:\Projects\App`.
+
+The window uses the DataFlow extension of VS Code. To use DataFlow from its repository, set the environment variable `DATAFLOW_REPO` to its folder. The script then compiles DataFlow too. If VS Code runs as administrator, run the script as administrator.
+
 | Command | Tests |
 | --- | --- |
 | `npm test` | The unit tests in a test build of VS Code. The tests load DataFlow from `../DataFlow`, or from the folder of the environment variable `DATAFLOW_REPO`. If the environment variable `CLAUDE_EXE` gives the CLI of Claude Code, a test also checks the plugin with `claude plugin validate`. |
-| `node scripts/test-claude.mjs <run folder>` | The test with Claude Code. Claude reads the session, and the guard denies a change in stage 1. Use a new run folder outside of the repository. |
+| `node scripts/test-claude.mjs <run folder>` | The test with Claude Code. 2 tasks go from the brief to stage 2. Task 1 has a brief in a file, and task 2 has a brief from the chat. The guard denies a change in stage 1. Use a new run folder outside of the repository. |
 
-NOTE: `scripts/test-claude.mjs` uses the Claude subscription of the user for 2 short runs of Claude Code. It does not change the settings of the user.
+NOTE: `scripts/test-claude.mjs` uses the Claude subscription of the user for 3 short runs of Claude Code. It does not change the settings of the user.
 
 ## License
 

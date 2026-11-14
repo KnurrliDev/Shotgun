@@ -17,3 +17,4 @@ tsconfig.webview.json
 **/.vscode-test.*
 implementation-plan.md
 dataflow-gaps*.md
+open-editor.bat

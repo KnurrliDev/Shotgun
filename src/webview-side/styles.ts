@@ -63,6 +63,21 @@ h1, h2 { margin: 0; font-weight: 600; }
 .btn.small { padding: 0 8px; font-size: 11px; }
 .btn:focus-visible, .tell:focus-visible, summary:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
 
+.btn:disabled { opacity: 0.5; cursor: default; }
+.small { font-size: 11px; }
+/* a text button, for example a part of the brief or the line of a question */
+.link { padding: 0; border: 0; background: none; color: var(--vscode-textLink-foreground); font: inherit; text-align: left; cursor: pointer; }
+.link:hover { color: var(--vscode-textLink-activeForeground); text-decoration: underline; }
+.link.part { color: inherit; }
+
+/* stage 1: the parts of the brief, the questions of Claude and the gate */
+.row-head { display: flex; align-items: baseline; gap: 6px; margin: 12px 0 2px; }
+.row-head > .muted { margin-left: auto; }
+.mark.q { color: var(--sg-claude); }
+.notice { margin: 8px 0; padding: 4px 8px; border-left: 3px solid var(--sg-warn); }
+.gate { margin: 14px 0 0; padding-top: 10px; border-top: 1px solid color-mix(in srgb, var(--sg-border) 60%, transparent); }
+.gate > .btn.primary { padding: 3px 14px; }
+
 /* lists: the setup, the decisions and the tasks */
 .list { margin: 4px 0 0; padding: 0; list-style: none; }
 .list li { display: flex; align-items: baseline; gap: 6px; padding: 3px 0; }

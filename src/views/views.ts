@@ -26,6 +26,12 @@ export function isFromView(value: unknown): value is FromView {
 			return typeof m.id === 'string';
 		case 'copy':
 			return typeof m.text === 'string' && m.text.length <= 2000;
+		case 'openBrief':
+			return m.line === undefined || (Number.isInteger(m.line) && (m.line as number) > 0);
+		case 'closeQuestion':
+			return typeof m.id === 'string';
+		case 'gate':
+			return true;
 		default:
 			return false;
 	}

@@ -48,8 +48,9 @@ These items are not in the scope of version 1:
 9. Only the user can change a risk level. Shotgun records each change.
 10. Shotgun uses the Claude Code extension of VS Code as DataFlow does. The user tells Claude what to do. A button of Shotgun records a decision of the user, and it does not start an action of Claude.
 11. The user can give the brief in a file, or directly to Claude in the chat of Claude Code.
+12. For a brief from the chat, Claude can add only the headings of the 5 parts and list marks. The context hook gives each prompt of the user to Shotgun. Shotgun keeps the last prompts only in memory, and `submit_brief` refuses each line that is not in the words of the user.
 
-The user gave decision 10 on 13 November 2026, and decision 11 on 14 November 2026. Decision 10 changes the buttons of the canvas that started Claude. Section 12 lists these changes.
+The user gave decision 10 on 13 November 2026, and the decisions 11 and 12 on 14 November 2026. Decision 10 changes the buttons of the canvas that started Claude. Section 12 lists these changes.
 
 ## 3. Proposals of this plan
 
@@ -162,8 +163,8 @@ The MCP name of each tool starts with `shotgun_`. In Claude Code, the full name 
 | `get_step` | read | 5 | The current step, its scope, its kind, and the marks and notes of its receipt. |
 | `get_callouts` | read | 5 | The open callouts with their facts. |
 | `get_commit_message` | read | 5 | The commit message and the summary of the ledger. |
-| `submit_brief` | submit | 1 | The brief that the user wrote in the chat, unchanged, and a short title of the task. |
-| `submit_questions` | submit | 1 | The questions of Claude about the brief. |
+| `submit_brief` | submit | 1 | The brief that the user wrote in the chat, and a short title of the task. Each line must be in a recent prompt of the user (decision 12). The brief goes into a new task, or into the active task in stage 1 if its brief has no text. |
+| `submit_questions` | submit | 1 | 1 to 10 questions of Claude about the brief, each with a part and a quote of the brief. A new list replaces the open questions. |
 | `submit_survey` | submit | 2 | The facts, the tasks, the hooks and the questions. |
 | `submit_task_survey` | submit | 3 | The hooks and the needs of a rewritten task or of a new task. |
 | `submit_plan` | submit | 4 | The steps of the plan. |
@@ -186,7 +187,7 @@ A submit tool changes no file if its data has a problem. It also checks the stag
 - **Skills:** `shotgun`, `shotgun-survey`, `shotgun-plan`, `shotgun-errand`, `shotgun-frame` and `shotgun-explain`. The description of each skill names the requests of the user that load it. Each skill gives the full names of its tools.
 - **PreToolUse hook:** a handler of type `mcp_tool` that calls `shotgun_guard` on the server `plugin:dataflow:dataflow`. The matcher is `Edit|MultiEdit|Write`. `NotebookEdit` has its own handler, because its path is in the field `notebook_path`.
 - **Time limit:** each handler has a time limit of 10 seconds. The default of Claude Code is 600 seconds.
-- **UserPromptSubmit hook:** a handler of type `mcp_tool` that calls `shotgun_session_context` (P14). Its text tells Claude about the active task, the stage and the gates.
+- **UserPromptSubmit hook:** a handler of type `mcp_tool` that calls `shotgun_session_context` (P14). Its text tells Claude about the active task, the stage and the gates. The hook also gives the prompt of the user to Shotgun, for the check of a brief from the chat (decision 12).
 - **Check:** the panel shows if Claude Code has the plugins of DataFlow and of Shotgun on. Shotgun reads this from the settings of Claude Code.
 
 This example shows the hooks in `plugin.json`, with no handler for `NotebookEdit`. Phase 0 and phase 1 tested this form with Claude Code 2.1.323:
@@ -215,7 +216,7 @@ This example shows the hooks in `plugin.json`, with no handler for `NotebookEdit
             "type": "mcp_tool",
             "server": "plugin:dataflow:dataflow",
             "tool": "shotgun_session_context",
-            "input": { "event": "${hook_event_name}", "cwd": "${cwd}" },
+            "input": { "event": "${hook_event_name}", "cwd": "${cwd}", "prompt": "${prompt}" },
             "timeout": 10
           }
         ]
@@ -294,7 +295,7 @@ Each phase ends with its tests, its documents and an item of the changelog. The 
 | --- | --- | --- | --- |
 | 0 Spikes | 6 short tests of the parts with the most risk. Done on 14 November 2026. | Small | DataFlow from `master` |
 | 1 Foundation | Repository, tasks, stages, views, connection to Claude Code, guard. Done on 14 November 2026. | Large | Phase 0 |
-| 2 Brief | The brief, the questions of Claude, the first gate | Small | Phase 1 |
+| 2 Brief | The brief, the questions of Claude, the first gate. Done on 14 November 2026. | Small | Phase 1 |
 | 3 Survey | `submit_survey` with its checks, the survey page, the hooks in the text editor | Large | Phase 2 |
 | 4 Order | The order page, the survey of changed tasks, the order check | Medium | Phase 3 |
 | 5 Plan | The rules, `submit_plan`, the plan page, the steps in the text editor | Large | Phase 4, D1 |
@@ -352,6 +353,19 @@ If S2 fails, the guard is a hook of type `command` with a small script. The scri
 - **Gate:** **The brief is ready**, when each part has text. The gate starts the scan of the call graph.
 - **Skill:** `shotgun`: the stages, the contract, the tools, and the rule that Claude writes no text in the brief. Claude gives a brief from the chat unchanged.
 - **Done when:** 2 new tasks go from the brief to stage 2. The first task has a brief in a file, and the second task has a brief from the chat.
+
+**Status, 14 November 2026:** done. `scripts/test-claude.mjs` passed all 37 checks with 3 prompts of Claude Code:
+
+- Task 1: the test wrote the brief into `brief.md`. "Ask me questions about my brief." loaded the skill `shotgun`. Claude read the code and gave 8 questions with their parts and quotes. Claude did not change the brief.
+- The test closed the questions with **Shotgun: Close Question**. The gate took task 1 to stage 2, and the scan of the call graph started.
+- Task 2: the user gave a brief in the chat. Claude gave it with `submit_brief`, and Shotgun took it at the first call. Each line was in the words of the user, and the gate took task 2 to stage 2.
+
+Differences from the plan:
+
+- `submit_brief` makes a new task if no task is active, if the active task is after stage 1, or if Claude gives `"isNewTask": true`. It fills the brief of the active task in stage 1 only if that brief has no text. It never changes a brief with text.
+- New commands for the keyboard: **Shotgun: Open Brief**, **Shotgun: Close Question** and **Shotgun: Pass the Gate**.
+- The gate saves `brief.md` first. With open questions, a modal message asks the user before the gate.
+- The ledger also records the brief of Claude, the questions of Claude, and each question that the user closes.
 
 ### Phase 3: survey
 
@@ -526,3 +540,5 @@ The gates stay buttons, because they record decisions of the user. A click on th
 | A format breaks a hole marker. | Shotgun loses a hole. | The parser accepts a marker on more than 1 line (S5). |
 | DataFlow gives its server a different token at the first start (gap 42). | A new user has no tools of DataFlow and no guard of Shotgun in Claude Code. | Gap 42. Until the fix, the user starts the MCP server of DataFlow again. |
 | A test with the CLI of Claude Code changes the data of Claude Code of the user. | A marketplace or a folder of a test stays in the setup of the user. | The rule for the hook tests in section 9. |
+| Shotgun keeps the prompts of the user (decision 12). | A prompt can have private data. | Shotgun keeps only the last 20 prompts or 200,000 characters, only in memory, and only for its window. No file gets them. |
+| A version of Claude Code does not fill `${prompt}` in the input of the hook. | `submit_brief` refuses each brief from the chat. | The tool tells Claude that it has no prompt. `scripts/test-claude.mjs` checks the brief from the chat. |

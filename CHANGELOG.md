@@ -4,6 +4,22 @@
 
 This version has no release yet. Each phase of `implementation-plan.md` adds its items.
 
+### Phase 2: brief
+
+- **Shotgun: New Task** makes `brief.md` from a template with 5 parts: Goal, Facts, Specs, Not in scope and Done when. It opens the brief in the text editor.
+- The panel checks the parts of the brief while the user writes. It shows the number of the sentences or of the items of each part. A click on a part opens the brief at the line of the part.
+- The new tool `shotgun_submit_brief` gives a brief from the chat to Shotgun. Claude can add only the headings of the parts and list marks.
+- Shotgun refuses each line of such a brief that is not in a recent prompt of the user (decision 12 of the plan). The context hook gives each prompt to Shotgun, and Shotgun keeps the last 20 prompts only in memory.
+- A brief from the chat goes into a new task, or into the active task in stage 1 if its brief has no text. Shotgun never changes a brief with text.
+- The new tool `shotgun_submit_questions` gives the questions of Claude about the brief. The panel shows each question with its line in the brief.
+- The user closes a question with its button in the panel, or with **Shotgun: Close Question**.
+- The gate **The brief is ready** has a button in the panel and the command **Shotgun: Pass the Gate**. Each part of the brief must have text. With open questions, a modal message asks the user first.
+- The gate starts the scan of the call graph of DataFlow.
+- The plugin of Shotgun has the skill `shotgun`: the contract, the stages, the brief from the chat, and the questions about the brief.
+- `shotgun_get_session` also gives the brief with its parts and the open questions. **Shotgun: Open Brief** opens the brief of the active task.
+- The ledger records the brief of Claude, the questions of Claude, and each question that the user closes.
+- Tests: 55 unit tests. `scripts/test-claude.mjs` takes 2 tasks from the brief to stage 2. Task 1 has a brief in a file, and task 2 has a brief from the chat.
+
 ### Phase 1: foundation
 
 - Shotgun is a VS Code extension. It needs DataFlow 0.6.0 or a later version, and VS Code 1.143 or a later version.

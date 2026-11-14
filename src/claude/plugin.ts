@@ -45,9 +45,10 @@ export function pluginFiles(version: string, skills: Readonly<Record<string, str
 					{ matcher: 'Edit|MultiEdit|Write', hooks: [toolHook('shotgun_guard', { tool: '${tool_name}', file: '${tool_input.file_path}', cwd: '${cwd}' })] },
 					{ matcher: 'NotebookEdit', hooks: [toolHook('shotgun_guard', { tool: '${tool_name}', file: '${tool_input.notebook_path}', cwd: '${cwd}' })] },
 				],
-				// the context of the active task for each prompt (proposal P14)
+				// the context of the active task for each prompt (proposal P14). Shotgun keeps the prompt in memory for the check
+				// of a brief from the chat (decision 12)
 				UserPromptSubmit: [
-					{ hooks: [toolHook('shotgun_session_context', { event: '${hook_event_name}', cwd: '${cwd}' })] },
+					{ hooks: [toolHook('shotgun_session_context', { event: '${hook_event_name}', cwd: '${cwd}', prompt: '${prompt}' })] },
 				],
 			},
 		}),

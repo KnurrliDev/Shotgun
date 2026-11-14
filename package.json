@@ -67,6 +67,21 @@
 				"category": "Shotgun"
 			},
 			{
+				"command": "shotgun.openBrief",
+				"title": "Open Brief",
+				"category": "Shotgun"
+			},
+			{
+				"command": "shotgun.closeQuestion",
+				"title": "Close Question",
+				"category": "Shotgun"
+			},
+			{
+				"command": "shotgun.passGate",
+				"title": "Pass the Gate",
+				"category": "Shotgun"
+			},
+			{
 				"command": "shotgun.connectClaude",
 				"title": "Connect to Claude Code",
 				"category": "Shotgun"
@@ -86,6 +101,18 @@
 				{
 					"command": "shotgun.continue",
 					"when": "shotgun.hasTask && shotgun.isPaused"
+				},
+				{
+					"command": "shotgun.openBrief",
+					"when": "shotgun.hasTask"
+				},
+				{
+					"command": "shotgun.closeQuestion",
+					"when": "shotgun.hasQuestions"
+				},
+				{
+					"command": "shotgun.passGate",
+					"when": "shotgun.hasTask"
 				}
 			]
 		}

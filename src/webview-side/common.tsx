@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
-import type { DecisionView, SetupRow, StageView, TaskItem, TaskView, ToView, ViewCommand, ViewModel, WriterName } from '../views/protocol';
+import type {
+	BriefView, DecisionView, GateView, SetupRow, StageView, TaskItem, TaskView, ToView, ViewCommand, ViewModel, WriterName,
+} from '../views/protocol';
 import { post } from './vscode';
 
 // The parts that the page and the panel share
@@ -93,7 +95,8 @@ export function SetupList({ rows }: { rows: SetupRow[] }) {
 	);
 }
 
-// The stage of the active task: its writers, the work of the stage, the next work and the rule of the guard
+// The stage of the active task: its writers, the work of the stage, the next work, the gate and the rule of the guard.
+// Stage 1 shows the parts of the brief and the questions of Claude
 export function TaskSummary({ task, hasTitle = true }: { task: TaskView; hasTitle?: boolean }) {
 	return (
 		<div>
@@ -104,14 +107,98 @@ export function TaskSummary({ task, hasTitle = true }: { task: TaskView; hasTitl
 			{hasTitle && <p class="title">{task.title}</p>}
 			{!task.isDone && <p>{task.text}</p>}
 			{task.isPaused && <p class="banner">The guard is off for work outside of the task. Claude Code applies only its own permissions.</p>}
-			<p><span class="muted">Next: </span>{task.next}</p>
-			{task.request && (
+			{task.brief ? <BriefStage brief={task.brief} request={task.request} /> : (
 				<>
-					<p class="muted">In Claude Code:</p>
-					<TellClaude text={task.request} />
+					<p><span class="muted">Next: </span>{task.next}</p>
+					{task.request && (
+						<>
+							<p class="muted">In Claude Code:</p>
+							<TellClaude text={task.request} />
+						</>
+					)}
 				</>
 			)}
+			{task.gate && <GateBlock gate={task.gate} />}
 			<p class="rule"><span class="muted">Guard: </span>{task.guard}</p>
+		</div>
+	);
+}
+
+// Stage 1: the parts of the brief and the open questions of Claude. A click on a part or on the line of a question
+// opens brief.md at that line
+function BriefStage({ brief, request }: { brief: BriefView; request?: string }) {
+	return (
+		<>
+			<div class="row-head">
+				<span class="name">Parts of the brief</span>
+				<span class="muted">{brief.complete} of {brief.parts.length}</span>
+			</div>
+			<ul class="list">
+				{brief.parts.map((p) => (
+					<li class={p.hasText ? 'ok' : 'todo'}>
+						<span class="mark" aria-label={p.hasText ? 'Has text' : 'No text'}>{p.hasText ? '✓' : '!'}</span>
+						<button type="button" class="link part grow" title={`Open brief.md at the part ${p.name}`}
+							onClick={() => post({ type: 'openBrief', ...(p.line ? { line: p.line } : {}) })}>
+							{p.name}
+						</button>
+						<span class="muted">{p.summary}</span>
+					</li>
+				))}
+			</ul>
+			{brief.isDirty && <p class="muted small">brief.md has changes that are not saved.</p>}
+			<div class="buttons">
+				<button type="button" class="btn secondary small" onClick={() => post({ type: 'openBrief' })}>Open brief</button>
+			</div>
+			<div class="row-head">
+				<span class="name">Questions of Claude</span>
+				<span class="badge claude" title="The words of a language model">Model</span>
+			</div>
+			{request && <TellClaude text={request} />}
+			{brief.questions.length === 0 ? (
+				<p class="muted">No open questions.{brief.closed > 0 ? ` You closed ${brief.closed}.` : ''}</p>
+			) : (
+				<ul class="list">
+					{brief.questions.map((q) => (
+						<li>
+							<span class="mark q" aria-hidden="true">?</span>
+							<span class="grow">
+								{q.text}
+								{q.line && (
+									<>
+										{' '}
+										<button type="button" class="link" title="Open brief.md at this line" onClick={() => post({ type: 'openBrief', line: q.line })}>
+											line {q.line}
+										</button>
+									</>
+								)}
+							</span>
+							<button type="button" class="btn secondary small" title="The brief answers the question now"
+								onClick={() => post({ type: 'closeQuestion', id: q.id })}>
+								Close
+							</button>
+						</li>
+					))}
+				</ul>
+			)}
+			<p class="muted small">Claude asks only. It writes nothing in your brief. Its tool puts the questions into this panel.</p>
+		</>
+	);
+}
+
+// The gate of the stage: a decision of the user. The button records it, and it never starts Claude
+function GateBlock({ gate }: { gate: GateView }) {
+	return (
+		<div class="gate">
+			{gate.warning && <p class="notice">{gate.warning}</p>}
+			<button type="button" class="btn primary" disabled={!gate.isEnabled} onClick={() => post({ type: 'gate' })}>{gate.label}</button>
+			<p class="muted small">{gate.isEnabled ? gate.note : gate.reason}</p>
+			{gate.after && (
+				<>
+					<p class="muted">Then, in Claude Code:</p>
+					<TellClaude text={gate.after} />
+				</>
+			)}
+			<p class="muted small">A button of Shotgun records your decision. It never starts Claude.</p>
 		</div>
 	);
 }

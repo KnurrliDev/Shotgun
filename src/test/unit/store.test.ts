@@ -2,7 +2,7 @@ import * as assert from 'assert';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { parseActive, parseDecisions, parseTask } from '../../session/files';
+import { parseActive, parseDecisions, parseQuestions, parseTask } from '../../session/files';
 import { SessionStore } from '../../session/store';
 
 // The session store with the stage files in a temporary folder
@@ -87,6 +87,28 @@ suite('Session store', () => {
 		// a deny with no active task changes nothing
 		store.recordDeny('Edit', 'a.cpp', 'No.');
 		assert.deepStrictEqual(store.snapshot.decisions, []);
+	});
+
+	test('A new task gets brief.md from the template, and Claude gives the brief and the questions', () => {
+		const store = new SessionStore(root, clock());
+		store.newTask('Fix');
+		assert.ok(readFileSync(store.briefFile()!, 'utf8').startsWith('# Brief: Fix\n\n## Goal\n'));
+		store.writeBrief('# Brief: Fix\n\n## Goal\nA goal.\n', 1);
+		assert.strictEqual(file('fix', 'brief.md'), '# Brief: Fix\n\n## Goal\nA goal.\n');
+		const added = store.setQuestions([{ text: 'Why?', part: 'goal' }, { text: 'How?', quote: 'A goal.' }]);
+		assert.deepStrictEqual(added.map((q) => [q.id, q.part, q.quote]), [['q1', 'goal', undefined], ['q2', undefined, 'A goal.']]);
+		store.closeQuestion('q1');
+		assert.throws(() => store.closeQuestion('q1'), /no open question q1/);
+		// a new list replaces the open questions, and the ids go on
+		assert.deepStrictEqual(store.setQuestions([{ text: 'New?' }]).map((q) => q.id), ['q3']);
+		assert.deepStrictEqual(store.snapshot.questions.map((q) => [q.id, q.state]), [['q1', 'closed'], ['q3', 'open']]);
+		assert.deepStrictEqual(parseQuestions(file('fix', 'questions.json'), 'fix').questions.map((q) => q.id), ['q1', 'q3']);
+		assert.deepStrictEqual(store.snapshot.decisions.map((d) => d.kind), ['task', 'brief', 'questions', 'question', 'questions']);
+		// a task that Claude makes with the brief from the chat
+		store.newTask('Second', 'claude', { text: '# Brief: Second\n', lines: 3 });
+		assert.strictEqual(file('second', 'brief.md'), '# Brief: Second\n');
+		assert.deepStrictEqual(store.snapshot.decisions.map((d) => [d.kind, d.by]), [['task', 'claude'], ['brief', 'claude']]);
+		assert.deepStrictEqual(store.snapshot.questions, []);
 	});
 
 	test('A wrong stage file is a problem, and no task is active', () => {
