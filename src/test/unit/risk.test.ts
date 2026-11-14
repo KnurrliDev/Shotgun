@@ -106,7 +106,7 @@ suite('Risk rules', () => {
 
 	test('Each level has a name, a writer and a text', () => {
 		assert.deepStrictEqual(LEVELS.map((l) => [LEVEL_INFO[l].name, LEVEL_INFO[l].writer]), [
-			['Very low', 'claude'], ['Low', 'claude'], ['Medium', 'user'], ['High', 'user'], ['Very high', 'user'],
+			['Very low', 'claude'], ['Low', 'claude'], ['Medium', 'frame'], ['High', 'user'], ['Very high', 'user'],
 		]);
 	});
 });

@@ -4,6 +4,23 @@
 
 This version has no release yet. Each phase of `implementation-plan.md` adds its items.
 
+### Phase 7: frames and hints
+
+- A step of level 3 gets a frame of Claude. Claude writes the lines with no decision, and a marker `/*@hole N: question */` in the place of each decision of the user. Decision 15 ends.
+- A step of level 4 gets a frame only after the button **I want a frame** (decision 16). The command **Shotgun: I Want a Frame** does the same. The ledger records the decision.
+- `shotgun_start_step` opens a frame with the kind `frame`. The new tool `shotgun_submit_frame` gives the holes, each with its question and 4 hints. The hints are a nudge, a pointer with places, an example with a place and its code, and the answer. Shotgun checks each marker and each place, and gives all problems in 1 list.
+- The panel shows the note of Claude, the holes with their state, and the ladder of the 4 hints of the selected hole. The hints came with the frame, so a click sends no request to Claude. The hole also shows the facts of DataFlow at its line: the function, the threads and the locks.
+- **4 Show me**, after a modal message, puts the answer of Claude into the place of the marker. Its lines are lines of Claude.
+- The text editor shows each open hole in a dashed box. Its hover shows its question, the hints and a link to the next hint. A filled hole gets a line at the left side, with the color of its writer.
+- Tab and Shift+Tab go to the next open hole and to the hole before it, while the cursor is in the frame. With no open hole, the keys indent as usual. **Shotgun: Show the Next Hint** opens the next hint of the hole at the cursor.
+- A hole is done when code is in the place of its marker. Shotgun finds the place with the text around the marker, also after the user fills a different hole. The gate **The step is done** needs each hole filled.
+- The frame lines get the tag "Claude · frame" in the gutter, and no receipt (decision 18).
+- In stage 5, the user can change the level of each step that Claude did not start (decision 17). This includes the current step of the user. The plan page and **Shotgun: Set Risk Level** show the steps with a level that can change.
+- "Give me a different frame for step N." opens the step again. The step keeps its base.
+- The plugin of Shotgun has the new skill `shotgun-frame`.
+- DataFlow gives no names in scope at a line: gap 45 of `dataflow-gaps-2.md`.
+- Tests: 110 unit tests. `scripts/test-claude.mjs` adds a level change in stage 5, a frame on request, Tab, the hints and the gate of the frame.
+
 ### Phase 6: build
 
 - In stage 5, the steps of the plan go in sequence. The current step is the first step that is not done. The risk level of a step selects its writer: Claude at the levels 1 and 2, the user at the levels 3, 4 and 5. Until the frames of phase 7, the user writes a step of level 3 (decision 15 of the plan). The plan page, the CodeLens lines and the tools show this writer.

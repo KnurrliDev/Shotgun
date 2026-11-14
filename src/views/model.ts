@@ -7,6 +7,7 @@ import { changedTasks, factsOf, MAX_TASK_TEXT, orderOf, orderWarnings } from '..
 import {
 	buildNext, buildWriterOf, currentStep, diffLines, MAX_CHANGE_NOTE, receiptCounts, stateOf, walkText,
 } from '../session/build';
+import { findMarkers, Hole, holeNow, isHoleDone } from '../session/frame';
 import { absolutePath } from '../session/paths';
 import { levelOf, MAX_LEVEL_NOTE, placeName } from '../session/plan';
 import { LEVEL_INFO } from '../session/risk';
@@ -14,8 +15,8 @@ import { GATE_LABEL, STAGE_INFO, STAGES, stageText } from '../session/stages';
 import type { Snapshot } from '../session/store';
 import { excerptOf, findHook, Lines } from '../session/survey';
 import type {
-	BriefView, BuildStepView, BuildView, CurrentStepView, DecisionView, GateView, HookView, OrderTaskView, OrderView, PlanPlaceView, PlanStepView, PlanView,
-	ReceiptView, SetupRow, StageView, SurveyView, TaskView, ViewModel,
+	BriefView, BuildStepView, BuildView, CurrentStepView, DecisionView, GateView, HoleView, HookView, OrderTaskView, OrderView, PlanPlaceView, PlanStepView,
+	PlanView, ReceiptView, SetupRow, StageView, SurveyView, TaskView, ViewModel,
 } from './protocol';
 
 // The view model of the page and of the panel, from the session, the state of DataFlow and the connection to Claude
@@ -113,6 +114,13 @@ export function decisionText(decision: Decision): string {
 			return decision.gate === 'accept-receipt'
 				? `You accepted the receipt of step ${decision.step}.${decision.notWalked > 0 ? ` ${count(decision.notWalked, 'change')} not walked.` : ''}`
 				: `You ended step ${decision.step}: "The step is done".`;
+		case 'frame-request':
+			return `You asked for a frame of Claude for step ${decision.step}.`;
+		case 'frame':
+			return `Claude gave the frame of step ${decision.step}: ${count(decision.holes, 'hole')}.`;
+		case 'hint':
+			return decision.level >= 4 ? `The answer of Claude filled hole ${decision.hole} of step ${decision.step}.`
+				: `You opened hint ${decision.level} of hole ${decision.hole} of step ${decision.step}.`;
 	}
 }
 
@@ -276,6 +284,8 @@ function planView(snapshot: Snapshot, readLines: ModelInput['readLines']): PlanV
 			...(info ? { writer: info.writer, writerText: info.text } : {}),
 			reasons: [...(stepRisk?.reasons ?? ['Shotgun did not check the step with DataFlow yet.'])],
 			userNote: levels?.levels[s.id]?.note ?? '',
+			isLevelEditable: !task.isDone && (task.stage === 'plan' || (task.stage === 'build' && (stateOf(snapshot.build, s.id) === 'todo'
+				|| (stateOf(snapshot.build, s.id) === 'open' && snapshot.build?.steps[s.id]?.writer === 'user')))),
 			...(hottest?.heat ? { heat: { ...hottest.heat, signals: [...(hottest.heat.signals ?? [])] } } : {}),
 		};
 	});
@@ -292,11 +302,46 @@ function planView(snapshot: Snapshot, readLines: ModelInput['readLines']): PlanV
 	};
 }
 
-const WRITER_TEXT = { claude: 'Claude writes it', user: 'You write it' } as const;
+const WRITER_TEXT = { claude: 'Claude writes it', user: 'You write it', frame: 'Claude writes the frame, and you fill its holes' } as const;
+
+// The holes of a frame with their state in the text now, and the hints that the user opened
+function holeViews(holes: readonly Hole[], root: string, readLines: ModelInput['readLines']): HoleView[] {
+	const files = new Map<string, readonly string[]>();
+	const linesOf = (file: string) => {
+		if (!files.has(file)) {
+			files.set(file, readLines?.(absolutePath(file, root)) ?? []);
+		}
+		return files.get(file)!;
+	};
+	const link = (file: string, lines: readonly [number, number]) => ({
+		name: placeName({ file, lines: [lines[0], lines[1]] }), path: absolutePath(file, root), line: lines[0],
+	});
+	return holes.map((h) => {
+		const lines = linesOf(h.file);
+		const now = holeNow(lines, h, findMarkers(lines.join('\n')));
+		const isDone = now.state === 'done';
+		return {
+			n: h.n,
+			question: h.question,
+			place: `${h.file}:${now.line}`,
+			path: absolutePath(h.file, root),
+			line: now.line,
+			state: now.state,
+			...(isDone ? { by: h.shown >= 4 ? 'claude' as const : 'user' as const } : {}),
+			...(now.content ? { content: now.content } : {}),
+			shown: h.shown,
+			...(h.shown >= 1 ? { nudge: h.hints.nudge } : {}),
+			...(h.shown >= 2 ? { pointer: { text: h.hints.pointer.text, places: h.hints.pointer.places.map((p) => link(p.file, p.lines)) } } : {}),
+			...(h.shown >= 3 ? { example: { text: h.hints.example.text, place: link(h.hints.example.file, h.hints.example.lines), code: h.hints.example.code } } : {}),
+			...(h.shown >= 4 ? { answer: h.hints.answer } : {}),
+			...(h.facts ? { facts: { ...(h.facts.function ? { function: h.facts.function } : {}), threads: [...h.facts.threads], locks: [...h.facts.locks] } } : {}),
+		};
+	});
+}
 
 // Stage 5: the steps in sequence, and the current step with its receipt. plan: the steps of the plan view, with their
 // places at the lines now
-function buildView(snapshot: Snapshot, plan: PlanView): BuildView | undefined {
+function buildView(snapshot: Snapshot, plan: PlanView, readLines: ModelInput['readLines']): BuildView | undefined {
 	const { task, risk, levels, build, root } = snapshot;
 	if (!task || !snapshot.plan || !root) {
 		return undefined;
@@ -313,7 +358,7 @@ function buildView(snapshot: Snapshot, plan: PlanView): BuildView | undefined {
 			level,
 			levelName: level ? `${LEVEL_INFO[level].name}, level ${level} of 5` : 'No level',
 			writer,
-			writerText: writer === 'user' && level === 3 ? 'You write it. A frame of Claude comes in a later version of Shotgun.' : WRITER_TEXT[writer],
+			writerText: writer === 'frame' && b?.isFrameRequested ? `You asked for a frame. ${WRITER_TEXT.frame}` : WRITER_TEXT[writer],
 			state: stateOf(build, s.id),
 			isCurrent: current?.step.id === s.id,
 			...(b?.receipt ? { walked: walkText(b.receipt) } : {}),
@@ -380,6 +425,13 @@ function buildView(snapshot: Snapshot, plan: PlanView): BuildView | undefined {
 			...(b?.baseError ? { baseError: b.baseError } : {}),
 			...(receiptView ? { receipt: receiptView } : {}),
 			isEditable: current.state === 'receipt' && !task.isDone,
+			...(b?.holes ? (() => {
+				const holes = holeViews(b.holes, root, readLines);
+				return { holes, holesDone: holes.filter((h) => isHoleDone(h.state)).length };
+			})() : {}),
+			...(b?.frameNote ? { frameNote: b.frameNote } : {}),
+			canRequestFrame: !task.isDone && current.writer === 'user' && current.level === 4 && (current.state === 'todo' || current.state === 'open'),
+			isFrameRequested: !!b?.isFrameRequested,
 		};
 	}
 	return {
@@ -421,6 +473,29 @@ function buildGate(build: BuildView): GateView {
 			note: 'Your gate. Shotgun records your lines, and the next step of the plan starts.',
 			isEnabled: current.state === 'open',
 			...(current.state === 'open' ? {} : { reason: 'Shotgun opens the step first.' }),
+		};
+	}
+	if (current.writer === 'frame') {
+		if (current.state !== 'holes') {
+			return {
+				label: 'The step is done',
+				note: '',
+				isEnabled: false,
+				reason: current.state === 'open' ? 'Claude writes the frame. The holes come when Claude closes the step.'
+					: `Claude writes the frame first. Tell Claude: "Give me a frame for step ${current.n}."`,
+			};
+		}
+		const total = current.holes?.length ?? 0;
+		const done = current.holesDone ?? 0;
+		const changed = (current.holes ?? []).filter((h) => h.state === 'changed').map((h) => h.n);
+		return {
+			label: 'The step is done',
+			note: 'Your gate. Shotgun records your lines, and the next step of the plan starts.',
+			isEnabled: done === total,
+			...(done < total ? { reason: `Fill the holes first: ${done} of ${count(total, 'hole')} done.` } : {}),
+			...(changed.length > 0 ? {
+				warning: `Shotgun cannot find the place of hole ${changed.join(', ')}, because the lines around it changed. It counts as done.`,
+			} : {}),
 		};
 	}
 	const receipt = current.receipt;
@@ -619,7 +694,7 @@ function taskView(snapshot: Snapshot, briefInput: ModelInput['brief'], readLines
 	const survey = task.stage !== 'brief' ? surveyView(snapshot, readLines) : undefined;
 	const order = orderView(snapshot, survey);
 	const plan = task.stage === 'plan' || task.stage === 'build' ? planView(snapshot, readLines) : undefined;
-	const build = task.stage === 'build' && plan ? buildView(snapshot, plan) : undefined;
+	const build = task.stage === 'build' && plan ? buildView(snapshot, plan, readLines) : undefined;
 	const gate = gateView(task, brief, survey, order, plan, build);
 	const info = STAGE_INFO[task.stage];
 	const isActive = !task.isDone && !snapshot.isPaused;

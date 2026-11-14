@@ -116,8 +116,8 @@ suite('Build', () => {
 		rmSync(root, { recursive: true, force: true });
 	});
 
-	test('The level selects the writer. Until the frames of phase 7, the user writes a step of level 3', () => {
-		assert.deepStrictEqual([1, 2, 3, 4, 5].map((l) => buildWriterOf(l as 1 | 2 | 3 | 4 | 5)), ['claude', 'claude', 'user', 'user', 'user']);
+	test('The level selects the writer: Claude at the levels 1 and 2, a frame at level 3, and the user at the levels 4 and 5', () => {
+		assert.deepStrictEqual([1, 2, 3, 4, 5].map((l) => buildWriterOf(l as 1 | 2 | 3 | 4 | 5)), ['claude', 'claude', 'frame', 'user', 'user']);
 		assert.strictEqual(buildWriterOf(null), 'user');
 		const plan = { steps: [{ id: 'S1' }, { id: 'S2' }] } as unknown as Parameters<typeof findStep>[0];
 		assert.strictEqual(findStep(plan, 'S2')?.n, 2);

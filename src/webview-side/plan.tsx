@@ -155,7 +155,7 @@ function StepDetail({ step, view, build }: { step: PlanStepView; view: PlanView;
 				</span>
 			</div>
 			<ul class="reasons muted small">{step.reasons.map((r) => <li>{r}</li>)}</ul>
-			{view.isEditable && (
+			{step.isLevelEditable && (
 				<div class="buttons" role="group" aria-label="Change the risk level">
 					{step.level === null ? LEVEL_NUMBERS.map((n) => <button type="button" class="pill" onClick={() => setLevel(n)}>Level {n}</button>) : (
 						<>
@@ -166,7 +166,7 @@ function StepDetail({ step, view, build }: { step: PlanStepView; view: PlanView;
 					)}
 				</div>
 			)}
-			{view.isEditable ? <NoteField step={step} maxNote={view.maxNote} />
+			{step.isLevelEditable ? <NoteField step={step} maxNote={view.maxNote} />
 				: step.userNote && <p><span class="badge user">You</span> {step.userNote}</p>}
 		</section>
 	);

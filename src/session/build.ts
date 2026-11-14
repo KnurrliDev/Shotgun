@@ -1,3 +1,4 @@
+import type { Hole } from './frame';
 import { absolutePath, isInside, projectPath } from './paths';
 import { levelOf, LevelsFile, Plan, PlanStep, RiskFile } from './plan';
 import type { Level } from './risk';
@@ -5,15 +6,17 @@ import type { Band, Lines } from './survey';
 
 // Stage 5: the build. The steps of the plan go in sequence, and the risk level of a step selects its writer. Claude
 // writes a step of level 1 or 2 as an errand: it opens the step, changes only the files of its scope, and gives a
-// receipt with a note for each change. The user walks the receipt and puts a mark on each change. The user writes a
-// step of level 3, 4 or 5 (decision 15: until the frames of phase 7, also level 3). build.json keeps the state of each
-// step and its receipt. These functions use no VS Code API, so the unit tests can call them directly.
+// receipt with a note for each change. The user walks the receipt and puts a mark on each change. At level 3, Claude
+// writes a frame with a hole for each decision of the user (frame.ts). The user writes a step of level 4 or 5, and can
+// ask for a frame at level 4 (decision 16). build.json keeps the state of each step, its receipt and its holes. These
+// functions use no VS Code API, so the unit tests can call them directly.
 
 export const BUILD_FILE = 'build.json';
 
-// todo: not started. open: Claude writes the step, or the user writes it. receipt: the user walks the receipt of Claude.
-// done: the user accepted the receipt, or the user selected "The step is done"
-export const STEP_STATES = ['todo', 'open', 'receipt', 'done'] as const;
+// todo: not started. open: Claude writes the step or its frame, or the user writes it. receipt: the user walks the receipt
+// of Claude. holes: the user fills the holes of the frame. done: the user accepted the receipt, or the user selected "The
+// step is done"
+export const STEP_STATES = ['todo', 'open', 'receipt', 'holes', 'done'] as const;
 export type StepState = (typeof STEP_STATES)[number];
 
 // The mark of the user on a change of a receipt. todo: the user did not walk the change yet
@@ -21,10 +24,19 @@ export const CHANGE_MARKS = ['todo', 'ok', 'issue', 'question'] as const;
 export type ChangeMark = (typeof CHANGE_MARKS)[number];
 export const isChangeMark = (value: unknown): value is ChangeMark => typeof value === 'string' && (CHANGE_MARKS as readonly string[]).includes(value);
 
-export type BuildWriter = 'claude' | 'user';
+// claude: an errand of Claude. frame: Claude writes the frame, and the user fills its holes. user: the user writes the step
+export type BuildWriter = 'claude' | 'user' | 'frame';
 
-// The writer of a step in the build. Decision 15: until the frames of phase 7, the user writes a step of level 3
-export const buildWriterOf = (level: Level | null): BuildWriter => (level !== null && level <= 2 ? 'claude' : 'user');
+// The writer of a step in the build. isFrameRequested: the user selected "I want a frame" for a step of level 4
+export function buildWriterOf(level: Level | null, isFrameRequested = false): BuildWriter {
+	if (level === null) {
+		return 'user';
+	}
+	if (level <= 2) {
+		return 'claude';
+	}
+	return level === 3 || (level === 4 && isFrameRequested) ? 'frame' : 'user';
+}
 
 const MAX_CHANGES = 50;
 const MAX_LOOSE_ENDS = 20;
@@ -93,6 +105,9 @@ export interface BuildStep {
 	readonly round: number; // the number of the times that Claude opened the step. 0 for a step of the user
 	readonly opened?: string; // the time of the last start
 	readonly receipt?: Receipt;
+	readonly holes?: readonly Hole[]; // the holes of the frame of Claude
+	readonly frameNote?: string; // the note of Claude for the frame
+	readonly isFrameRequested?: boolean; // the user selected "I want a frame" for a step of level 4
 	readonly done?: string;
 }
 
@@ -385,11 +400,30 @@ export function buildNext(current: CurrentStep | undefined): { next: string; req
 	}
 	const name = stepName(current);
 	if (current.writer === 'user') {
-		const frame = current.level === 3 ? ' A frame of Claude for risk level 3 comes in a later version of Shotgun.' : '';
+		const frame = current.level === 4 ? ' For a frame of Claude, the user selects "I want a frame" first.' : '';
 		return {
 			next: `The user writes ${name}, at risk level ${current.level ?? '?'}, and then selects "The step is done". Claude changes no file in a step `
 				+ `of the user.${frame} Claude can answer questions in the chat.`,
 		};
+	}
+	if (current.writer === 'frame') {
+		switch (current.state) {
+			case 'todo':
+				return {
+					next: `Claude writes the frame of ${name}, at risk level ${current.level ?? '?'}: the lines with no decision, and a hole for each decision `
+						+ 'of the user. The user asks Claude for it. Claude opens the step with shotgun_start_step and the kind frame first.',
+					request: `Give me a frame for step ${current.n}.`,
+				};
+			case 'open':
+				return { next: `Claude writes the frame of ${name}. Then Claude gives the holes with their hints with shotgun_submit_frame.` };
+			default: {
+				const n = current.build?.holes?.length ?? 0;
+				return {
+					next: `The user fills the ${n === 1 ? 'hole' : `${n} holes`} of the frame of ${name}, and then selects "The step is done". The hints came `
+						+ 'with the frame. For a different frame, the user asks Claude, and Claude opens the step again with shotgun_start_step.',
+				};
+			}
+		}
 	}
 	switch (current.state) {
 		case 'todo':
@@ -428,6 +462,14 @@ export function buildGuard(current: CurrentStep | undefined, startTool: string):
 	const name = stepName(current);
 	if (current.writer === 'user') {
 		return { step: name, closed: `The current step is ${name}, and the user writes it. Claude changes no file in a step of the user.` };
+	}
+	if (current.writer === 'frame' && current.state !== 'open') {
+		return {
+			step: name,
+			closed: current.state === 'holes'
+				? `The user fills the holes of the frame of ${name}. For a different frame, the user asks, and Claude opens the step again with ${startTool}.`
+				: `The current step is ${name}, a frame of Claude. Open it with ${startTool} and the kind frame first: then the guard opens its scope.`,
+		};
 	}
 	switch (current.state) {
 		case 'open':
@@ -470,8 +512,11 @@ export function parseBuild(text: string, id: string): BuildFile {
 	if (typeof value.version === 'number' && value.version > 1) {
 		throw new Error(`${name} has the version ${value.version}. This version of Shotgun reads only version 1. Install a newer version of Shotgun.`);
 	}
-	const isStep = (s: unknown) => isObject(s) && (STEP_STATES as readonly unknown[]).includes(s.state) && (s.writer === 'claude' || s.writer === 'user')
-		&& isStrings(s.scope) && typeof s.round === 'number' && (s.receipt === undefined || isReceipt(s.receipt));
+	const isHole = (h: unknown) => isObject(h) && typeof h.n === 'number' && typeof h.question === 'string' && typeof h.file === 'string'
+		&& typeof h.line === 'number' && isObject(h.anchor) && isObject(h.hints) && typeof h.shown === 'number';
+	const isStep = (s: unknown) => isObject(s) && (STEP_STATES as readonly unknown[]).includes(s.state)
+		&& (s.writer === 'claude' || s.writer === 'user' || s.writer === 'frame') && isStrings(s.scope) && typeof s.round === 'number'
+		&& (s.receipt === undefined || isReceipt(s.receipt)) && (s.holes === undefined || (Array.isArray(s.holes) && s.holes.every(isHole)));
 	if (value.version !== 1 || !isObject(value.steps) || !Object.values(value.steps).every(isStep)) {
 		throw new Error(`${name} needs the fields version and steps, and each step needs its fields.`);
 	}

@@ -16,7 +16,7 @@ const COLORS = ['#7f8794', '#8a97a8', '#a3adba', '#d9a36a', '#f0835a', '#ff5c6c'
 
 const WRITER_TEXT = { claude: 'Claude writes', frame: 'frame of Claude, you write each decision', user: 'you write' } as const;
 // The state of a step in stage 5
-const STATE_TEXT = { todo: 'to do', open: 'open', receipt: 'receipt to walk', done: 'done' } as const;
+const STATE_TEXT = { todo: 'to do', open: 'open', receipt: 'receipt to walk', holes: 'holes to fill', done: 'done' } as const;
 
 export interface StepPlace {
 	readonly step: PlanStep;
@@ -114,8 +114,8 @@ export class StepDecorations implements vscode.Disposable {
 		const s = this.snapshot;
 		const isBuild = s?.task?.stage === 'build';
 		return this.placesOf(doc).map((p) => {
-			// decision 15: in the build, the user writes a step of level 3 until the frames of phase 7
-			const writer = !p.level ? '' : isBuild ? WRITER_TEXT[buildWriterOf(p.level)] : WRITER_TEXT[LEVEL_INFO[p.level].writer];
+			// in the build, the user can ask for a frame of a step of level 4 (decision 16)
+			const writer = !p.level ? '' : isBuild ? WRITER_TEXT[s?.build?.steps[p.step.id]?.writer ?? buildWriterOf(p.level)] : WRITER_TEXT[LEVEL_INFO[p.level].writer];
 			const state = isBuild ? ` · ${STATE_TEXT[stateOf(s?.build, p.step.id)]}` : '';
 			const level = p.level ? `risk ${p.level} of 5, ${LEVEL_INFO[p.level].name.toLowerCase()} · ${writer}${state}` : 'no level yet';
 			const range = new vscode.Range(p.lines[0] - 1, 0, p.lines[0] - 1, 0);

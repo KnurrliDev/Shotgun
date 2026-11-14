@@ -10,7 +10,7 @@ import { GATE_LABEL, GATE_OF, STAGE_INFO, STAGES } from '../session/stages';
 import type { Snapshot, SessionStore } from '../session/store';
 import { SIZES } from '../session/survey';
 import { submitBrief, submitQuestions } from './brief';
-import { BaseApi, getStep, START_STEP_TOOL, startStep, StepChanges, submitErrand } from './build';
+import { BaseApi, getStep, START_STEP_TOOL, startStep, StepChanges, submitErrand, submitFrame } from './build';
 import { contextOutput, contextText } from './context';
 import { decide, GuardInput, hookOutput, isInside, targetOf } from './guard';
 import { orderData, submitTaskSurvey } from './order';
@@ -23,7 +23,8 @@ export { IS_CASE_SENSITIVE };
 // The tools of Shotgun for the MCP server of DataFlow. DataFlow puts "shotgun_" before each name, so Claude Code sees
 // for example mcp__plugin_dataflow_dataflow__shotgun_get_session. Phase 1 has the read tool get_session and the 2 tools
 // of the hooks. Phase 2 adds submit_brief and submit_questions, phase 3 submit_survey, phase 4 get_order and
-// submit_task_survey, phase 5 get_plan and submit_plan, and phase 6 get_step, start_step and submit_errand.
+// submit_task_survey, phase 5 get_plan and submit_plan, phase 6 get_step, start_step and submit_errand, and phase 7
+// submit_frame.
 
 // A hook in the survey of stage 2 and in the survey of a task in stage 3
 const HOOK_SCHEMA = {
@@ -271,14 +272,15 @@ export function shotgunTools(deps: ToolDeps): ExtensionTool[] {
 		{
 			name: 'start_step',
 			title: 'Shotgun: open a step',
-			description: 'Opens the current step of the build for your errand, in stage 5, before you change a file. Shotgun saves the files of '
-				+ 'its scope, keeps their text as the base of the step, and the guard opens the scope. Call it again after the receipt to fix '
-				+ 'the issues of the user: the step keeps its base. Only for the steps of risk level 1 and 2.',
+			description: 'Opens the current step of the build for your errand or your frame, in stage 5, before you change a file. Shotgun saves '
+				+ 'the files of its scope, keeps their text as the base of the step, and the guard opens the scope. An errand is for risk level 1 '
+				+ 'and 2. A frame is for level 3, and for level 4 after the user selects "I want a frame". Call it again after the receipt to '
+				+ 'fix the issues of the user, or for a different frame: the step keeps its base.',
 			inputSchema: {
 				type: 'object',
 				properties: {
 					step: { type: 'string', description: 'The id of the step, for example S5, or its number.' },
-					kind: { type: 'string', enum: ['errand'], description: 'Default: errand. Frames come in a later version.' },
+					kind: { type: 'string', enum: ['errand', 'frame'], description: 'errand: you write the step. frame: you write the frame with holes for the user.' },
 				},
 				required: ['step'],
 			},
@@ -326,6 +328,61 @@ export function shotgunTools(deps: ToolDeps): ExtensionTool[] {
 				required: ['step', 'changes'],
 			},
 			call: (args) => submitErrand(deps, args),
+		},
+		{
+			name: 'submit_frame',
+			title: 'Shotgun: give the frame',
+			description: 'Closes the open frame step after you wrote the frame, in stage 5. The frame has the lines with no decision, and a marker '
+				+ '/*@hole N: question */ in the place of each decision of the user. Give each hole with its number, its question and 4 hints: '
+				+ 'a nudge with no code, a pointer to the facts with places, an example from the project with its place and code, and the '
+				+ 'answer. Shotgun checks each marker and each place. Do not give the answers in the chat.',
+			inputSchema: {
+				type: 'object',
+				properties: {
+					step: { type: 'string', description: 'The id of the open step, or its number.' },
+					holes: {
+						type: 'array',
+						items: {
+							type: 'object',
+							properties: {
+								n: { type: 'integer', description: 'The number of the marker /*@hole N: question */.' },
+								question: { type: 'string', description: 'The question of the marker, the same text.' },
+								nudge: { type: 'string', description: 'Hint 1: a question that shows the way, with no code.' },
+								pointer: {
+									type: 'object',
+									properties: {
+										text: { type: 'string', description: 'Hint 2: where the facts for the decision are.' },
+										places: {
+											type: 'array',
+											items: {
+												type: 'object',
+												properties: { file: { type: 'string' }, lines: { type: 'array', items: { type: 'integer' }, minItems: 2, maxItems: 2 } },
+												required: ['file', 'lines'],
+											},
+										},
+									},
+									required: ['text', 'places'],
+								},
+								example: {
+									type: 'object',
+									properties: {
+										text: { type: 'string', description: 'Hint 3: why this code of the project is a good example.' },
+										file: { type: 'string' },
+										lines: { type: 'array', items: { type: 'integer' }, minItems: 2, maxItems: 2 },
+										code: { type: 'string', description: 'The code of the example, copied exactly from its lines.' },
+									},
+									required: ['text', 'file', 'lines', 'code'],
+								},
+								answer: { type: 'string', description: 'Hint 4: the code in the place of the marker.' },
+							},
+							required: ['n', 'question', 'nudge', 'pointer', 'example', 'answer'],
+						},
+					},
+					note: { type: 'string', description: 'A short note for the user: what the frame has, and the decisions that are holes.' },
+				},
+				required: ['step', 'holes'],
+			},
+			call: (args) => submitFrame(deps, args),
 		},
 		{
 			name: 'submit_survey',

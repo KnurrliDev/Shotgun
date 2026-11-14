@@ -86,6 +86,9 @@ export interface QuestionsFile {
 // - mark: the user put a mark on a change of a receipt. todo: the user removed the mark
 // - change-note: the note of the user for a change of a receipt. An empty text removes the note
 // - step-gate: the user accepted a receipt, or the user ended a step of the user. notWalked: the changes with no mark
+// - frame-request: the user selected "I want a frame" for a step of level 4 (decision 16)
+// - frame: Claude gave the frame of a step, with the number of its holes
+// - hint: the user opened a hint of a hole. level 4: the answer of Claude filled the hole
 export type Decision =
 	| { readonly version: 1; readonly time: string; readonly kind: 'task'; readonly by: 'user' | 'claude'; readonly title: string }
 	| { readonly version: 1; readonly time: string; readonly kind: 'gate'; readonly by: 'user'; readonly gate: Gate; readonly stage: Stage }
@@ -126,7 +129,10 @@ export type Decision =
 	| {
 		readonly version: 1; readonly time: string; readonly kind: 'step-gate'; readonly by: 'user'; readonly step: string;
 		readonly gate: StepGate; readonly notWalked: number;
-	};
+	}
+	| { readonly version: 1; readonly time: string; readonly kind: 'frame-request'; readonly by: 'user'; readonly step: string }
+	| { readonly version: 1; readonly time: string; readonly kind: 'frame'; readonly by: 'claude'; readonly step: string; readonly round: number; readonly holes: number }
+	| { readonly version: 1; readonly time: string; readonly kind: 'hint'; readonly by: 'user'; readonly step: string; readonly hole: number; readonly level: number };
 
 // The gates of a step: the gate of an errand, and the gate of a step of the user
 export const STEP_GATES = ['accept-receipt', 'step-done'] as const;
@@ -298,6 +304,14 @@ function parseDecision(value: unknown): Decision | undefined {
 		case 'change-note':
 			return value.by === 'user' && isText(value.step) && isText(value.change) && typeof value.text === 'string'
 				? { version: FILE_VERSION, time, kind: 'change-note', by: 'user', step: value.step, change: value.change, text: value.text } : undefined;
+		case 'frame-request':
+			return value.by === 'user' && isText(value.step) ? { version: FILE_VERSION, time, kind: 'frame-request', by: 'user', step: value.step } : undefined;
+		case 'frame':
+			return value.by === 'claude' && isText(value.step) && typeof value.round === 'number' && typeof value.holes === 'number'
+				? { version: FILE_VERSION, time, kind: 'frame', by: 'claude', step: value.step, round: value.round, holes: value.holes } : undefined;
+		case 'hint':
+			return value.by === 'user' && isText(value.step) && typeof value.hole === 'number' && typeof value.level === 'number'
+				? { version: FILE_VERSION, time, kind: 'hint', by: 'user', step: value.step, hole: value.hole, level: value.level } : undefined;
 		case 'step-gate':
 			return value.by === 'user' && isText(value.step) && (STEP_GATES as readonly unknown[]).includes(value.gate) && typeof value.notWalked === 'number'
 				? {

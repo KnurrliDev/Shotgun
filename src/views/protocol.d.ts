@@ -205,6 +205,7 @@ export interface PlanStepView {
 	reasons: string[]; // the rules that gave the level of the rules
 	userNote: string;
 	heat?: PlanHeatView;
+	isLevelEditable: boolean; // stage 4, or a step in stage 5 that Claude did not start (decision 17)
 }
 
 export interface PlanView {
@@ -225,9 +226,9 @@ export interface BuildStepView {
 	title: string;
 	level: number | null;
 	levelName: string; // for example "Low, level 2 of 5"
-	writer: 'claude' | 'user';
+	writer: 'claude' | 'user' | 'frame';
 	writerText: string; // for example "Claude writes it"
-	state: 'todo' | 'open' | 'receipt' | 'done';
+	state: 'todo' | 'open' | 'receipt' | 'holes' | 'done';
 	isCurrent: boolean;
 	walked?: string; // the marks of the receipt, for example "2 of 3 changes walked: 1 issue"
 }
@@ -275,6 +276,31 @@ export interface ReceiptView {
 	notice?: string;
 }
 
+// A place of a hint, as a link
+export interface HintPlaceView {
+	name: string; // for example "src/battery.cpp:59-78"
+	path: string;
+	line: number;
+}
+
+// A hole of a frame: its state in the text now, and the hints that the user opened (P9: they came with the frame)
+export interface HoleView {
+	n: number;
+	question: string;
+	place: string; // for example "src/battery.cpp:129"
+	path: string;
+	line: number;
+	state: 'open' | 'done' | 'empty' | 'changed';
+	by?: 'user' | 'claude'; // a filled hole: the user, or the answer of Claude
+	content?: string; // the code in the place of the marker
+	shown: number; // the hints that the user opened, from 0 to 4
+	nudge?: string;
+	pointer?: { text: string; places: HintPlaceView[] };
+	example?: { text: string; place: HintPlaceView; code: string };
+	answer?: string;
+	facts?: { function?: string; threads: string[]; locks: string[] }; // the facts of DataFlow at the line of the hole
+}
+
 // The current step of the build, with its text, its places and its receipt
 export interface CurrentStepView extends BuildStepView {
 	total: number;
@@ -286,6 +312,11 @@ export interface CurrentStepView extends BuildStepView {
 	baseError?: string; // why the step has no base
 	receipt?: ReceiptView;
 	isEditable: boolean; // the user can put marks on the receipt now
+	holes?: HoleView[]; // the holes of the frame of Claude
+	holesDone?: number; // the holes with code, or with a place that Shotgun cannot find
+	frameNote?: string; // the note of Claude for the frame
+	canRequestFrame: boolean; // a step of level 4 of the user: the button "I want a frame" (decision 16)
+	isFrameRequested: boolean;
 }
 
 export interface BuildView {
@@ -368,4 +399,6 @@ export type FromView =
 	| { type: 'setLevelNote'; step: string; note: string }
 	| { type: 'checkLevels' }
 	| { type: 'setMark'; step: string; change: string; mark: 'todo' | 'ok' | 'issue' | 'question' } // todo: no mark
-	| { type: 'setChangeNote'; step: string; change: string; note: string };
+	| { type: 'setChangeNote'; step: string; change: string; note: string }
+	| { type: 'requestFrame'; step: string } // the button "I want a frame"
+	| { type: 'showHint'; step: string; hole: number; level: number }; // level 4: the answer of Claude fills the hole

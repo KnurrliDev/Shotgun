@@ -206,10 +206,13 @@ suite('Plan', () => {
 		// a new plan with the same id keeps the level of the user
 		await call('submit_plan', { steps: [PLAN.steps[0], PLAN.steps[2]] });
 		assert.deepStrictEqual(levels(), [3, 2]);
-		// after the gate, no level changes
+		// after the gate, a level changes only for a step that Claude did not start (decision 17)
 		store.acceptPlan();
 		assert.strictEqual(store.snapshot.task?.stage, 'build');
-		assert.throws(() => store.setLevel('S1', 4), /only in stage 4/);
+		store.setLevel('S1', 4);
+		assert.deepStrictEqual(levels(), [4, 2]);
+		store.passGate('task-done');
+		assert.throws(() => store.setLevel('S1', 3), /only in stage 4, the plan, and in stage 5, the build/);
 		await assert.rejects(call('submit_plan', PLAN), /The user accepted the plan already/);
 		await assert.rejects(call('submit_task_survey', { task: 'T1', text: 'A cycle limit', hooks: ['H1'], needs: [] }), /The user accepted the plan already/);
 	});

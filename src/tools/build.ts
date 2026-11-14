@@ -3,23 +3,26 @@ import {
 	addedLines, buildNext, buildWriterOf, checkErrand, CurrentStep, FileHunk, findStep, hunkKey, keepMarks, markName, Receipt, receiptChanges, receiptCounts, scopeOf,
 	stateOf, walkText,
 } from '../session/build';
+import { checkFrame, findMarkers, Hole, holeNow } from '../session/frame';
 import type { LineStore } from '../session/lines';
 import { hashLines } from '../session/lines';
-import { absolutePath, IS_CASE_SENSITIVE, isInside, projectPath } from '../session/paths';
+import { absolutePath, IS_CASE_SENSITIVE, isCppFile, isInside, projectPath } from '../session/paths';
 import { levelOf, placeName, PlanStep } from '../session/plan';
 import { STAGE_INFO, stageText } from '../session/stages';
 import type { Snapshot } from '../session/store';
 import { placeNow } from './plan';
 import type { SurveyDeps } from './survey';
 
-// The tools of stage 5. start_step opens the current step for an errand of Claude: Shotgun saves the files of its scope,
-// makes the base of the step with markBase of DataFlow, and opens the scope for the guard. submit_errand closes the
-// scope, and makes the receipt from getDiff since the base, with a note of Claude for each change. get_step gives the
-// step, and the marks and the notes of the user on its receipt.
+// The tools of stage 5. start_step opens the current step for an errand or a frame of Claude: Shotgun saves the files of
+// its scope, makes the base of the step with markBase of DataFlow, and opens the scope for the guard. submit_errand
+// closes the scope, and makes the receipt from getDiff since the base, with a note of Claude for each change.
+// submit_frame closes the scope, and gives the holes of the frame with their hints. get_step gives the step, the marks
+// and the notes of the user on its receipt, and the state of its holes.
 
 // The full names of the tools in Claude Code, for the texts for Claude
 export const START_STEP_TOOL = 'mcp__plugin_dataflow_dataflow__shotgun_start_step';
 const SUBMIT_ERRAND_TOOL = 'mcp__plugin_dataflow_dataflow__shotgun_submit_errand';
+const SUBMIT_FRAME_TOOL = 'mcp__plugin_dataflow_dataflow__shotgun_submit_frame';
 
 // The base and the diff of DataFlow
 export interface BaseApi {
@@ -68,7 +71,19 @@ function requireBuild(snapshot: Snapshot): { root: string } {
 }
 
 const writerText = (current: Pick<CurrentStep, 'writer' | 'level'>): string => (current.writer === 'claude' ? 'Claude writes it'
-	: current.level === 3 ? 'the user writes it (risk level 3: a frame of Claude comes in a later version of Shotgun)' : 'the user writes it');
+	: current.writer === 'frame' ? 'Claude writes the frame, and the user fills its holes' : 'the user writes it');
+
+// The holes of a frame with their state in the text now
+function holesData(holes: readonly Hole[], root: string, readLines: (file: string) => readonly string[] | undefined): Record<string, unknown>[] {
+	return holes.map((h) => {
+		const lines = readLines(absolutePath(h.file, root)) ?? [];
+		const now = holeNow(lines, h, findMarkers(lines.join('\n')));
+		return {
+			n: h.n, question: h.question, place: `${h.file}:${now.line}`, state: now.state, hintsShown: h.shown,
+			...(h.shown >= 4 ? { filledBy: 'the answer of Claude' } : {}), ...(now.content ? { content: now.content } : {}),
+		};
+	});
+}
 
 // A step for the result of a tool: its place in the plan, its text, its places now, its level and writer, its state,
 // and its receipt with the marks and the notes of the user
@@ -98,6 +113,7 @@ export function stepData(snapshot: Snapshot, ref: { step: PlanStep; n: number },
 		state: stateOf(build, step.id),
 		isCurrent: current?.step.id === step.id,
 		...(b?.round ? { round: b.round } : {}),
+		...(b?.holes && root ? { frame: { ...(b.frameNote ? { note: b.frameNote } : {}), holes: holesData(b.holes, root, readLines) } } : {}),
 		...(receipt ? {
 			receipt: {
 				round: receipt.round,
@@ -139,8 +155,9 @@ export async function startStep(deps: BuildDeps, args: Record<string, unknown>):
 	const store = deps.store;
 	const { root } = requireBuild(store.snapshot);
 	const { task, plan } = store.snapshot;
-	if (args.kind !== undefined && args.kind !== 'errand') {
-		throw new Error('Frames come in a later version of Shotgun. Give "kind": "errand", or no kind.');
+	const kind = args.kind === undefined || args.kind === '' ? undefined : String(args.kind);
+	if (kind !== undefined && kind !== 'errand' && kind !== 'frame') {
+		throw new Error('Give "kind": "errand" for an errand, "frame" for a frame, or no kind.');
 	}
 	const found = findStep(plan, args.step);
 	if (!found) {
@@ -154,15 +171,23 @@ export async function startStep(deps: BuildDeps, args: Record<string, unknown>):
 		throw new Error(`Step ${found.n} is not the current step. The steps go in sequence. The current step is step ${current.n}, "${current.step.title}", `
 			+ `and ${writerText(current)}. Tell the user.`);
 	}
-	if (current.writer !== 'claude') {
-		throw new Error(`Step ${current.n} has risk level ${current.level ?? '?'}, so the user writes it. Claude writes only the steps of risk level 1 and 2. `
-			+ 'Do not change its files. Tell the user, and answer the questions of the user in the chat.');
+	if (current.writer === 'user') {
+		const frame = current.level === 4 ? ' For a frame of Claude, the user selects "I want a frame" in the panel of Shotgun first, and then asks you.' : '';
+		throw new Error(`Step ${current.n} has risk level ${current.level ?? '?'}, so the user writes it.${frame} Do not change its files. Tell the user, and `
+			+ 'answer the questions of the user in the chat.');
 	}
+	const isFrame = current.writer === 'frame';
+	if (kind && kind !== (isFrame ? 'frame' : 'errand')) {
+		throw new Error(isFrame
+			? `Step ${current.n} is a frame: write only the lines with no decision, and a hole for each decision of the user. Give "kind": "frame".`
+			: `Step ${current.n} has risk level ${current.level ?? '?'}, so it is an errand with no holes. Give "kind": "errand".`);
+	}
+	const submitTool = isFrame ? SUBMIT_FRAME_TOOL : SUBMIT_ERRAND_TOOL;
 	const readLines = (file: string) => deps.readText(file)?.split(/\r?\n/);
 	if (current.state === 'open') {
 		return {
 			...stepData(store.snapshot, found, current, readLines),
-			next: `The step is open already. Change only the files of its scope. Then call ${SUBMIT_ERRAND_TOOL} with a change for each change.`,
+			next: `The step is open already. Change only the files of its scope. Then call ${submitTool}.`,
 		};
 	}
 	const scope = current.build?.scope ?? scopeOf(found.step);
@@ -187,7 +212,7 @@ export async function startStep(deps: BuildDeps, args: Record<string, unknown>):
 		}
 	}
 	deps.changes.start();
-	store.startStep(found.step.id, { writer: 'claude', level: current.level, scope, ...(newFiles ? { newFiles } : {}), ...(base ? { base } : {}) });
+	store.startStep(found.step.id, { writer: current.writer, level: current.level, scope, ...(newFiles ? { newFiles } : {}), ...(base ? { base } : {}) });
 	// the lines of the writers in the scope move to the text now, before Claude changes it
 	scope.forEach((f, i) => {
 		const text = deps.readText(absolute[i]);
@@ -196,6 +221,15 @@ export async function startStep(deps: BuildDeps, args: Record<string, unknown>):
 		}
 	});
 	const again = store.current?.build?.receipt;
+	if (isFrame) {
+		const isAgain = !!store.current?.build?.holes;
+		return {
+			...stepData(store.snapshot, found, store.current, readLines),
+			next: `The step is open${isAgain ? ' again for a different frame' : ''}. Change only the files of its scope, with the file tools, not with Bash. `
+				+ 'Write only the lines with no decision. In the place of each decision of the user, write a marker /*@hole N: question */. Then call '
+				+ `${SUBMIT_FRAME_TOOL} with the 4 hints of each hole: the nudge, the pointer, the example and the answer.`,
+		};
+	}
 	return {
 		...stepData(store.snapshot, found, store.current, readLines),
 		next: again
@@ -255,6 +289,58 @@ async function hunksOf(deps: BuildDeps, root: string, step: NonNullable<CurrentS
 		});
 	}
 	return { hunks, deleted, ...(notice ? { notice } : {}) };
+}
+
+// Closes the open frame step of Claude, and gives its holes with their hints to the user
+export async function submitFrame(deps: BuildDeps, args: Record<string, unknown>): Promise<Record<string, unknown>> {
+	const store = deps.store;
+	const { root } = requireBuild(store.snapshot);
+	const found = findStep(store.snapshot.plan, args.step);
+	const current = store.current;
+	if (!found || !current || current.step.id !== found.step.id || current.state !== 'open' || current.writer !== 'frame' || !current.build) {
+		const open = current && current.state === 'open' && current.writer === 'frame' ? ` The open frame step is step ${current.n}.` : ' No frame step is open.';
+		throw new Error(`Step ${String(args.step ?? '')} is not open for a frame.${open} Open the current step with ${START_STEP_TOOL} and the kind frame first.`);
+	}
+	const step = current.build;
+	const readLines = (file: string) => deps.readText(file)?.split(/\r?\n/);
+	const checked = checkFrame(args, { root, scope: step.scope, folders: deps.folders(), isCaseSensitive: IS_CASE_SENSITIVE, readLines });
+	const { hunks } = await hunksOf(deps, root, step);
+	const problems = [...checked.problems];
+	if (hunks.length === 0) {
+		problems.push('The files of the scope have no change since the base of the step. Write the frame with its hole markers first.');
+	}
+	if (problems.length > 0) {
+		throw new Error(`Shotgun did not take the frame. Correct these problems, and call the tool again:\n${problems.map((p) => `- ${p}`).join('\n')}`);
+	}
+	// the facts of DataFlow at the line of each hole. A frame with open holes can stop the parse, so a hole can have no facts
+	const engine = deps.engine();
+	const holes = await Promise.all(checked.holes.map(async (h) => {
+		if (!engine || !isCppFile(h.file)) {
+			return h;
+		}
+		const facts = await engine.place(absolutePath(h.file, root), h.line).catch(() => undefined);
+		return facts ? {
+			...h, facts: { ...(facts.function ? { function: facts.function.name } : {}), threads: facts.threads.map((t) => t.label), locks: [...facts.locks] },
+		} : h;
+	}));
+	store.writeFrame(found.step.id, holes, checked.note);
+	// the added lines since the base are the lines of the frame of Claude, also the lines of the markers
+	for (const file of step.scope) {
+		const text = deps.readText(absolutePath(file, root));
+		if (text === undefined) {
+			continue;
+		}
+		const lines = hunks.filter((h) => h.file === file).flatMap((h) => addedLines(h));
+		deps.lines.replaceStep(file, linesOfText(text), 'claude', found.step.id, lines.length > 0 ? [{ lines, change: 'frame' }] : []);
+	}
+	deps.lines.flush();
+	return {
+		step: { n: found.n, id: found.step.id, title: found.step.title },
+		holes: holes.map((h) => ({ n: h.n, question: h.question, place: `${h.file}:${h.line}` })),
+		frameLines: hunks.reduce((n, h) => n + h.added, 0),
+		next: 'The panel of Shotgun shows the holes with their hints. The scope is closed now. Tell the user: the user fills each hole, and can open the '
+			+ 'hints in the panel. Then the user selects "The step is done". Do not give the answers in the chat.',
+	};
 }
 
 // Closes the open step of Claude, and makes its receipt

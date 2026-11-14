@@ -315,6 +315,25 @@ export class LineStore {
 		this.saveSoon();
 	}
 
+	// Gives the lines with no writer the writer of a step, after a sync with the text now. A line of a different writer
+	// keeps its writer, for example a line of the frame of Claude in a step of the user
+	fillStep(file: string, text: readonly string[], writer: LineWriter, step: string, lines: readonly number[]): void {
+		const old = this.files.get(file);
+		const now = moveLines(old, text);
+		const owners = ownersOf(now.runs, now.hashes.length / HASH_SIZE);
+		for (const line of lines) {
+			if (line >= 1 && line <= owners.length && !owners[line - 1]) {
+				owners[line - 1] = { writer, step };
+			}
+		}
+		const next: FileLines = { hashes: now.hashes, runs: runsOf(owners) };
+		if (next.runs.length === 0 && !old) {
+			return;
+		}
+		this.files.set(file, next);
+		this.saveSoon();
+	}
+
 	// Writes lines.json now
 	flush(): void {
 		clearTimeout(this.timer);

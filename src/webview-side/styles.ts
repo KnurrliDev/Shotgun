@@ -265,6 +265,29 @@ progress.walk-track::-webkit-progress-value { border-radius: 2px; background: va
 .code-line.add { background: var(--vscode-diffEditor-insertedLineBackground, rgba(155, 185, 85, 0.2)); }
 .code-line.del { background: var(--vscode-diffEditor-removedLineBackground, rgba(255, 0, 0, 0.2)); }
 
+/* stage 5: a frame of Claude. The holes are decisions of the user, so an open hole has the color of the user */
+.holes { display: flex; flex-direction: column; gap: 3px; margin: 6px 0; padding: 0; list-style: none; }
+.hole-row { display: flex; align-items: baseline; gap: 6px; width: 100%; padding: 3px 6px; box-sizing: border-box; border: 1px solid var(--sg-border);
+  border-radius: 4px; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.hole-row:hover { background: var(--vscode-list-hoverBackground, transparent); }
+.hole-row.on { border-color: var(--vscode-focusBorder); background: var(--vscode-list-inactiveSelectionBackground, transparent); }
+.hole-row .grow { overflow-wrap: anywhere; }
+.hole-row:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
+.change-num.h-open, .change-num.h-empty { color: var(--sg-you); background: color-mix(in srgb, var(--sg-you) 16%, transparent); }
+.change-num.h-done.by-user, .change-num.h-changed { color: var(--sg-you); background: color-mix(in srgb, var(--sg-you) 30%, transparent); }
+.change-num.h-done.by-claude { color: var(--sg-claude); background: color-mix(in srgb, var(--sg-claude) 16%, transparent); }
+.hole-state { flex: none; font-size: 11px; color: var(--vscode-descriptionForeground); }
+.hole-state.by-user, .hole-state.h-changed { color: var(--sg-you); }
+.hole-state.by-claude { color: var(--sg-claude); }
+.hole-detail { margin: 8px 0 0; padding: 6px 8px; border: 1px solid var(--sg-border); border-left: 3px dashed var(--sg-you); border-radius: 4px; }
+.hole-detail .row-head { margin-top: 0; }
+.hole-question { margin: 2px 0; font-weight: 600; }
+.hint-btn:disabled { opacity: 1; cursor: default; }
+.hint-btn.on { border-color: var(--vscode-focusBorder); background: var(--vscode-list-inactiveSelectionBackground, transparent); }
+.hint-btn.answer.on { border-color: var(--sg-claude); color: var(--sg-claude); }
+.frame-request { margin: 8px 0 0; }
+.frame-request .btn { margin-bottom: 4px; }
+
 /* lists: the setup, the decisions and the tasks */
 .list { margin: 4px 0 0; padding: 0; list-style: none; }
 .list li { display: flex; align-items: baseline; gap: 6px; padding: 3px 0; }

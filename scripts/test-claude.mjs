@@ -1,6 +1,6 @@
 // The test of Shotgun with Claude Code. It starts the test build of VS Code with DataFlow and Shotgun from their
 // repository folders. In VS Code, it makes a task with "Shotgun: New Task", and connects DataFlow and Shotgun to Claude
-// Code with their commands. Then it runs 8 prompts of the CLI of Claude Code in print mode:
+// Code with their commands. Then it runs 9 prompts of the CLI of Claude Code in print mode:
 // 1. Task 1: the test writes the brief into brief.md, as the user does. "Ask me questions about my brief." loads the
 //    skill shotgun, and Claude gives its questions with shotgun_submit_questions. The test closes the questions.
 // 2. Claude tries to change a file of the project in stage 1, and the guard denies the change (phase 1).
@@ -20,13 +20,17 @@
 //    the marks and an issue with a note on the receipt in the panel.
 // 8. "Fix the issues of step 2." opens the step again, and Claude gives a new receipt. The test marks each change OK,
 //    and passes "Accept the receipt" (the condition of phase 6).
+// 9. In stage 5, the test sets step 3 to level 4, and selects "I want a frame". "Give me a frame for step 3." loads the
+//    skill shotgun-frame, and Claude gives the frame with shotgun_submit_frame. The test goes to the holes with Tab and
+//    types their code. The last hole gets the nudge and then the answer of Claude. The gate "The step is done" ends the
+//    step (the condition of phase 7).
 // The commands write the settings of proposal P15, and the test checks these files. The CLI loads the 2 plugins with
 // --plugin-dir from the folders that the commands wrote. The CLI uses the login and thus the config folder of the user,
 // and a marketplace from settings would go into the plugin data of the user.
 // The settings of the user do not change: the test build has its own user data, MCP registry, folder for the settings
 // of Claude Code and Shotgun folder. The test records the plugin data of Claude Code of the user before the runs, and
 // checks it after them. It removes the empty folders that the CLI makes there.
-// The test uses the Claude subscription of the user for 8 runs of Claude Code, so it runs only on request.
+// The test uses the Claude subscription of the user for 9 runs of Claude Code, so it runs only on request.
 // Usage: node scripts/test-claude.mjs <new run folder>
 // Environment: DATAFLOW_REPO (default: ../DataFlow), CLAUDE_EXE (default: the CLI of the VS Code extension of Claude Code)
 import { execFileSync, spawn } from 'node:child_process';
@@ -55,11 +59,12 @@ const GET_PLAN = 'mcp__plugin_dataflow_dataflow__shotgun_get_plan';
 const GET_STEP = 'mcp__plugin_dataflow_dataflow__shotgun_get_step';
 const START_STEP = 'mcp__plugin_dataflow_dataflow__shotgun_start_step';
 const SUBMIT_ERRAND = 'mcp__plugin_dataflow_dataflow__shotgun_submit_errand';
+const SUBMIT_FRAME = 'mcp__plugin_dataflow_dataflow__shotgun_submit_frame';
 // The read tools of DataFlow for the survey
 const READ_TOOLS = ['list_functions', 'get_outline', 'get_place', 'get_callers', 'get_calls', 'get_threads', 'get_heat', 'get_flow', 'get_logic',
 	'get_structure', 'get_member_sites', 'get_includes', 'get_call_graph', 'get_hidden'].map((t) => `mcp__plugin_dataflow_dataflow__${t}`);
 // The number of the tools of Shotgun in the MCP server of DataFlow
-const SHOTGUN_TOOLS = 13;
+const SHOTGUN_TOOLS = 14;
 // The brief of task 1, as the user writes it in brief.md
 const BRIEF_1 = [
 	`# Brief: ${TITLE}`, '',
@@ -412,6 +417,22 @@ async function command(wb, text) {
 		await wb.key('P', 'KeyP', 80, 10); // ctrl+shift+p
 		if (await poll(() => isQuickInputReady(wb), 4)) {
 			await quickInput(wb, text);
+			await sleep(800);
+			return;
+		}
+	}
+	// a webview can keep the keys, for example the page of Shotgun with no visible text editor. A click on the Command
+	// Center of the title bar opens the quick input, and ">" makes it the Command Palette
+	const center = await wb.evaluate(`(() => {
+		const e = document.querySelector('.command-center .command-center-center') ?? document.querySelector('.command-center');
+		const r = e?.getBoundingClientRect();
+		return r && r.width > 0 ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : undefined; })()`);
+	if (center) {
+		for (const type of ['mousePressed', 'mouseReleased']) {
+			await wb.send('Input.dispatchMouseEvent', { type, x: center.x, y: center.y, button: 'left', clickCount: 1 });
+		}
+		if (await poll(() => isQuickInputReady(wb), 4)) {
+			await quickInput(wb, `>${text}`);
 			await sleep(800);
 			return;
 		}
@@ -1241,6 +1262,159 @@ async function main() {
 		text = await poll(async () => new RegExp(`step 3 of ${steps.length}`, 'i').test((await panelText()) ?? ''), 15);
 		check('The panel shows step 3 after the gate', steps.length < 3 || !!text, await panelText());
 		await wb.shot('panel-build-step-3.png');
+
+		// 9: a frame of Claude for step 3 (phase 7). In stage 5, the user sets step 3 to level 4 (decision 17), and selects
+		// "I want a frame" (decision 16). Then "Give me a frame for step 3." loads the skill shotgun-frame
+		const s3 = steps[2];
+		await command(wb, 'Shotgun: Set Risk Level');
+		await quickPickNth(wb, 'Shotgun: Set Risk Level', 0);
+		await quickPickNth(wb, 'Shotgun: Set Risk Level of', 3);
+		const opened3 = await poll(() => {
+			const b = buildOf()?.steps?.[s3.id];
+			return readJson(taskFile(TASK_1, 'levels.json'))?.levels?.[s3.id]?.level === 4 && b?.state === 'open' && b.writer === 'user' ? b : undefined;
+		}, 30);
+		check('In stage 5, "Shotgun: Set Risk Level" sets step 3 to level 4, and Shotgun opens it for the user', !!opened3,
+			{ levels: readJson(taskFile(TASK_1, 'levels.json')), build: buildOf()?.steps?.[s3.id] });
+		text = await poll(async () => (await panelText())?.includes('I want a frame') && true, 15);
+		check('The panel shows the button "I want a frame" for the step of level 4', !!text, await panelText());
+		await inWebview('.panel', `() => {
+			const b = [...d.querySelectorAll('.frame-request button')].find((x) => x.textContent.includes('I want a frame'));
+			b?.click();
+			return !!b;
+		}`);
+		const requested = await poll(() => {
+			const b = buildOf()?.steps?.[s3.id];
+			return b?.isFrameRequested && b.writer === 'frame' && b.state === 'todo' ? b : undefined;
+		}, 15);
+		check('The button records the decision of the user, and step 3 becomes a frame of Claude', !!requested
+			&& ledgerOf(TASK_1).some((d) => d.kind === 'frame-request' && d.step === s3.id), buildOf()?.steps?.[s3.id]);
+		text = await poll(async () => (await panelText())?.includes('Give me a frame for step 3.') && true, 15);
+		check('The panel shows the request "Give me a frame for step 3."', !!text, await panelText());
+		await wb.shot('panel-frame-request.png');
+
+		const before3 = fileHashes();
+		const frameTools = [GET_SESSION, GET_STEP, START_STEP, SUBMIT_FRAME, GET_PLAN, 'Skill', 'Read', 'Edit', 'Write', 'MultiEdit', ...READ_TOOLS];
+		const frameRun = await runClaude('frame', 'Give me a frame for step 3.', { tools: frameTools, maxTurns: 40, seconds: 900 });
+		const frameNames = frameRun.toolUses.map((t) => t.name);
+		check('The request loads the skill shotgun-frame', frameRun.toolUses.some((t) => t.name === 'Skill' && String(t.input?.skill).includes('shotgun-frame')), frameNames);
+		const firstFrameEdit = frameNames.findIndex((n) => ['Edit', 'Write', 'MultiEdit'].includes(n));
+		check('Claude opens the step with the kind frame before its first file change', frameRun.toolUses.some((t) => t.name === START_STEP && t.input?.kind === 'frame')
+			&& (firstFrameEdit < 0 || frameNames.indexOf(START_STEP) < firstFrameEdit), frameRun.toolUses.filter((t) => t.name === START_STEP));
+		check('Claude gives the frame with shotgun_submit_frame', frameNames.includes(SUBMIT_FRAME), frameNames);
+		const refusedFrames = frameRun.toolResults.filter((r) => r.isError && r.text.includes('did not take the frame')).length;
+		if (refusedFrames > 0) {
+			results.notes = [...(results.notes ?? []), `Shotgun refused ${refusedFrames} frame of Claude before it took the frame.`];
+			console.log(`NOTE Shotgun refused ${refusedFrames} frame of Claude before it took the frame.`);
+		}
+		const step3 = buildOf()?.steps?.[s3.id];
+		const holes3 = step3?.holes ?? [];
+		check('The frame has holes, each with its question and 4 hints', step3?.state === 'holes' && holes3.length > 0 && holes3.every((h) => h.question
+			&& h.hints?.nudge && h.hints?.pointer?.text && h.hints?.pointer?.places?.length > 0 && h.hints?.example?.code && h.hints?.answer), step3);
+		const hasMarker = (h) => new RegExp(`/\\*[ \\t]*@hole[ \\t]+${h.n}\\b`).test(fs.readFileSync(path.join(p.project, h.file), 'utf8'));
+		check('Each hole has its marker in its file', holes3.length > 0 && holes3.every(hasMarker), holes3.map((h) => [h.n, h.file, h.line]));
+		const scope3 = new Set((step3?.scope ?? []).map((f) => f.toLowerCase()));
+		const changed3 = [...fileHashes()].filter(([f, h]) => before3.get(f) !== h).map(([f]) => f);
+		check('Claude changed only the files of the scope of step 3', changed3.length > 0 && changed3.every((f) => scope3.has(f.toLowerCase())), { changed3, scope: step3?.scope });
+		const runsOfStep3 = () => Object.entries(readJson(taskFile(TASK_1, 'lines.json'))?.files ?? {})
+			.flatMap(([f, x]) => x.runs.filter((r) => r.step === s3.id).map((r) => ({ file: f, lines: r.lines, writer: r.writer, change: r.change })));
+		check('lines.json records the frame lines of Claude', runsOfStep3().some((r) => r.writer === 'claude' && r.change === 'frame'), runsOfStep3());
+		results.frame = {
+			step: s3.id, note: step3?.frameNote, frameLines: runsOfStep3(),
+			holes: holes3.map((h) => ({ n: h.n, question: h.question, place: `${h.file}:${h.line}`, nudge: h.hints.nudge, pointer: h.hints.pointer.text,
+				example: `${h.hints.example.file}:${h.hints.example.lines.join('-')} ${h.hints.example.code}`, answer: h.hints.answer, facts: h.facts })),
+		};
+		console.log(`INFO The frame of step 3: ${JSON.stringify(results.frame.holes.map((h) => `${h.n} ${h.place} ${h.question} = ${h.answer}`))}`);
+		text = await poll(async () => {
+			const t = await panelText();
+			return t && /your decisions/i.test(t) && t.includes(holes3[0]?.question ?? '?') ? t : undefined;
+		}, 15);
+		const gateOff = () => inWebview('.panel', `() => {
+			const b = [...d.querySelectorAll('.gate button')].find((x) => x.textContent.includes('The step is done'));
+			return b ? String(b.disabled) : undefined;
+		}`);
+		check('The panel shows the holes, and the gate "The step is done" waits for them', !!text && (await gateOff()) === 'true', await panelText());
+		await wb.shot('panel-frame.png');
+
+		// Tab in the text editor selects the next open hole. The user types the code of each hole but the last one
+		const selection = () => wb.evaluate(`[...document.querySelectorAll('.statusbar-item')].map((e) => e.textContent).find((x) => /Ln \\d+, Col \\d+/.test(x)) ?? ''`);
+		const toFill = holes3.length > 1 ? holes3.slice(0, -1) : holes3;
+		await inWebview('.panel', `() => {
+			const b = d.querySelector('.hole-detail .change-place .link');
+			b?.click();
+			return !!b;
+		}`);
+		await sleep(1500);
+		const tabs = [];
+		for (const h of toFill) {
+			await wb.key('Tab', 'Tab', 9);
+			await sleep(700);
+			const at = await selection();
+			tabs.push({ hole: h.n, line: h.line, at });
+			if (!new RegExp(`Ln ${h.line},`).test(at) || !/selected/.test(at)) {
+				break;
+			}
+			await wb.send('Input.insertText', { text: h.hints.answer.split('\n').map((l) => l.trim()).join(' ') });
+			await sleep(700);
+		}
+		check('Tab selects each open hole in the text editor, and the user types its code', tabs.length === toFill.length
+			&& tabs.every((t) => new RegExp(`Ln ${t.line},`).test(t.at) && /selected/.test(t.at)), tabs);
+		await wb.shot('editor-frame-tab.png');
+		const filledByUser = await poll(async () => {
+			const t = await panelText();
+			return t && (t.match(/\byours\b/g) ?? []).length >= toFill.length ? t : undefined;
+		}, 15);
+		check('The panel shows the holes of the user as yours', !!filledByUser, await panelText());
+
+		// the hint ladder of the last hole: the nudge, and then the answer of Claude
+		const last = holes3[holes3.length - 1];
+		if (holes3.length > 1) {
+			await inWebview('.panel', `() => {
+				const rows = d.querySelectorAll('.hole-row');
+				rows[rows.length - 1].click();
+				return true;
+			}`);
+			await sleep(500);
+			const clickHint = (label) => inWebview('.panel', `() => {
+				const b = [...d.querySelectorAll('.hole-detail .hint-btn')].find((x) => x.textContent.includes(${JSON.stringify(label)}));
+				b?.click();
+				return !!b;
+			}`);
+			await clickHint('Nudge');
+			const nudged = await poll(() => (buildOf()?.steps?.[s3.id]?.holes?.find((h) => h.n === last.n)?.shown === 1 ? true : undefined), 15);
+			text = await poll(async () => (await panelText())?.includes(last.hints.nudge.slice(0, 40)) && true, 15);
+			check('A click on "1 Nudge" shows the nudge of the hole, with no request to Claude', !!nudged && !!text, await panelText());
+			await clickHint('Show me');
+			const dialog = await poll(() => clickDialog(wb, 'Fill the Hole'), 10);
+			// the answer goes into the text editor, and the file on the disk changes at the save. The panel shows the hole with the
+			// text of the text editor
+			const answered = await poll(async () => (buildOf()?.steps?.[s3.id]?.holes?.find((h) => h.n === last.n)?.shown === 4
+				&& await inWebview('.panel', `() => {
+					const rows = d.querySelectorAll('.hole-row .hole-state');
+					return rows[rows.length - 1]?.textContent === 'Claude' ? true : undefined;
+				}`) ? true : undefined), 15);
+			check('"4 Show me" puts the answer of Claude into the hole after a modal message', !!dialog && !!answered,
+				{ dialog, hole: buildOf()?.steps?.[s3.id]?.holes?.find((h) => h.n === last.n) });
+			const answerRun = await poll(() => runsOfStep3().find((r) => r.writer === 'claude' && r.change === `H${last.n}`), 15);
+			check('lines.json records the answer of Claude as lines of Claude', !!answerRun, runsOfStep3());
+			await wb.shot('panel-frame-answer.png');
+		}
+
+		// the gate "The step is done": each hole has code
+		const gateOn = await poll(async () => ((await gateOff()) === 'false' ? true : undefined), 20);
+		await inWebview('.panel', `() => {
+			const b = [...d.querySelectorAll('.gate button')].find((x) => x.textContent.includes('The step is done'));
+			b?.click();
+			return !!b;
+		}`);
+		const done3 = await poll(() => (buildOf()?.steps?.[s3.id]?.state === 'done' ? buildOf() : undefined), 20);
+		check('With each hole filled, the gate "The step is done" ends step 3', !!gateOn && !!done3, buildOf()?.steps?.[s3.id]);
+		const userRuns3 = await poll(() => runsOfStep3().filter((r) => r.writer === 'user').length > 0 ? runsOfStep3() : undefined, 15);
+		check('lines.json records the lines of the user in the holes', !!userRuns3, runsOfStep3());
+		results.frame.lines = runsOfStep3();
+		const kinds3 = ledgerOf(TASK_1).map((d) => d.kind);
+		check('The ledger records the frame request, the frame, the hints and the gate of step 3', ['frame-request', 'frame', 'hint'].every((k) => kinds3.includes(k))
+			&& kinds3.filter((k) => k === 'step-gate').length === 3, kinds3);
+		await wb.shot('panel-build-step-4.png');
 
 		wb.ws.close();
 	} catch (error) {

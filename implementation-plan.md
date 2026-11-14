@@ -1,7 +1,7 @@
 # Shotgun: implementation plan
 
 - Date: 13 November 2026, changed on 14 November 2026
-- Status: the phases 0 to 6 are done. Section 8 gives the status of each phase.
+- Status: the phases 0 to 7 are done. Section 8 gives the status of each phase.
 - Sources:
   - the design canvas: https://claude.ai/artifact/Sxm9DJ8WPE6LAFqW8PVD6z
   - `dataflow-gaps.md` and `dataflow-gaps-2.md` in this folder
@@ -53,8 +53,11 @@ These items are not in the scope of version 1:
 13. In the survey, a fact that Claude writes gets the badge "Model", with the DataFlow tool that Claude names and the place as a link. The facts that Shotgun gets from DataFlow for each hook (the function, the threads, the locks, the frame path and the heat) get the badge "Engine".
 14. The risk rules of D1: before the end of the scan of the call graph, a step gets no level. After a stopped scan or a failed scan, the level is 3 or higher. A frame path past the limit, or a line in the main loop, gives level 4 or higher. A lock at the line gives 1 level more. A change of a data member gets the level of the hottest function that uses it. A file that is not C or C++ gets level 2, with the label "no facts".
 15. Until the frames of phase 7, the user writes a step of risk level 3, as a step of level 4. Claude never writes a step of level 3 with no frame.
+16. A frame at level 4: the panel of a level-4 step has the button "I want a frame". The ledger records this decision. Then the user tells Claude "Give me a frame for step N." Shotgun opens a frame at level 4 only after the button.
+17. In stage 5, the user can change the level of each step that Claude did not start, also the current step of the user. The ledger records each change, and a new writer applies at once.
+18. The frame lines of Claude get no receipt. They get the tag "Claude · frame" in the text editor, and the user reads them while the user fills the holes. The gate "The step is done" needs each hole filled.
 
-The user gave decision 10 on 13 November 2026, and the decisions 11 to 15 on 14 November 2026. Decision 10 changes the buttons of the canvas that started Claude. Section 12 lists these changes.
+The user gave decision 10 on 13 November 2026, and the decisions 11 to 18 on 14 November 2026. Decision 10 changes the buttons of the canvas that started Claude. Section 12 lists these changes.
 
 ## 3. Proposals of this plan
 
@@ -153,7 +156,7 @@ The other stages of Claude run in the same way: the user asks, Claude reads, and
 | `plan.json` | Claude | The steps of the plan: the task, the hooks, the places, the text and the checks of each step. |
 | `risk.json` | Shotgun | The facts of DataFlow and the level of the rules for each step. |
 | `levels.json` | User | The levels and the notes of the user for the steps. A level stays with the id of its step. |
-| `build.json` | Shotgun | The state of each step, its scope and its base, and its receipt with the notes and the loose ends of Claude and the marks and the notes of the user. Phase 7 adds the holes. |
+| `build.json` | Shotgun | The state of each step, its scope and its base. The receipt of an errand, with the notes and the loose ends of Claude and the marks and the notes of the user. The holes of a frame with their hints, and the hints that the user opened. |
 | `lines.json` | Shotgun | The writer of each changed line, with a hash of each line of the file. |
 | `decisions.jsonl` | Shotgun | The ledger: 1 line for each decision of the user and for each deny of the guard. |
 
@@ -507,6 +510,28 @@ Differences from the plan:
 - **Done holes:** Shotgun counts a hole as done when its marker is not there and its line has code.
 - **Skill:** `shotgun-frame`: write only the lines with no decision, put each decision into a hole, and give the 4 hints.
 - **Done when:** step 4 of the fixture has a frame with 3 holes, their hints, and Tab.
+
+**Status, 14 November 2026:** done. `scripts/test-claude.mjs` passed 123 of 124 checks with 9 prompts of Claude Code. The 1 failure was a fault of the check, not of Shotgun:
+
+- In stage 5, the test set step 3 to level 4 with **Shotgun: Set Risk Level** (decision 17). Shotgun opened the step for the user again with a new base. The panel showed the button "I want a frame", and the click recorded the decision (decision 16).
+- "Give me a frame for step 3." loaded the skill `shotgun-frame`. Claude opened the step with the kind frame, changed only the file of the scope, and gave the frame with `shotgun_submit_frame`. Shotgun took the frame at the first call.
+- The frame had 2 holes in `src/battery.cpp`. Hole 1 was a marker in the condition of a new `else if` branch. Hole 2 was a marker alone on its line, for the reset of the counter. Each hole had its 4 hints, and the facts of DataFlow at its line.
+- The text editor showed the open holes, and the frame lines with the tag "Claude · frame". Tab selected hole 1, the test typed its code, and the panel showed the hole as yours.
+- A click on "1 Nudge" showed the nudge of hole 2. "4 Show me" and the modal message put the answer of Claude into hole 2. `lines.json` recorded its line as a line of Claude.
+- The gate "The step is done" ended step 3. `lines.json` recorded the line of the user in hole 1. The ledger recorded the frame request, the frame, the hints and the gate.
+- The failure: the check of "4 Show me" read the file on the disk before the save, so it found the marker. The text editor had the answer: the gate needs each hole filled. Also, the file after the gate has the answer in the place of the marker. The check now reads the state of the hole in the panel. The test with Claude Code did not run again after this change.
+- Done when: the design canvas has a frame in step 4 with 3 holes. The plan of Claude had a different step 3, and its frame had 2 holes.
+
+Differences from the plan:
+
+- The decisions 16, 17 and 18 came in this phase. Decision 15 ends: a step of level 3 gets a frame.
+- After the user fills a hole, Shotgun finds its place with the text before and after the marker on its line. For a marker alone on its line, Shotgun uses the lines around it. A marker of a different hole in this text agrees with each text. Section 6.7 gives a different rule: the text of the first and the last line.
+- A hole shows the function, the threads and the locks at its line. The design canvas shows the names in scope: gap 45 of `dataflow-gaps-2.md`.
+- The pointer and the example are words of Claude, so they have the badge "Model". The design canvas has the badge "Engine" on the pointer.
+- The button "Remove the frame" of the design canvas is not in Shotgun. The user asks Claude for a different frame, or uses the undo of the text editor.
+- New commands: **Shotgun: I Want a Frame**, **Shotgun: Go to the Next Hole**, **Shotgun: Go to the Hole Before** and **Shotgun: Show the Next Hint**.
+- With no open hole, Tab and Shift+Tab indent as usual. Tab does not take the place of a suggestion, an inline suggestion or a snippet.
+- The test script clicks the Command Center of the title bar when a webview keeps the keys of the Command Palette.
 
 ### Phase 8: callouts
 

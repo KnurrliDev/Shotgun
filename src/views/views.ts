@@ -52,6 +52,11 @@ export function isFromView(value: unknown): value is FromView {
 		case 'setChangeNote':
 			return typeof m.step === 'string' && m.step.length <= 64 && typeof m.change === 'string' && m.change.length <= 16 && typeof m.note === 'string'
 				&& m.note.length <= 2000;
+		case 'requestFrame':
+			return typeof m.step === 'string' && m.step.length <= 64;
+		case 'showHint':
+			return typeof m.step === 'string' && m.step.length <= 64 && Number.isInteger(m.hole) && (m.hole as number) >= 1 && Number.isInteger(m.level)
+				&& (m.level as number) >= 1 && (m.level as number) <= 4;
 		default:
 			return false;
 	}

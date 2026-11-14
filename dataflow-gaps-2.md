@@ -19,6 +19,7 @@ The first analysis found 29 gaps in DataFlow 0.5.0. Then DataFlow got 9 commits 
 - Phase 1 of Shotgun found item 42 on 14 November 2026: a fault of the token of the MCP server at the first start.
 - Phase 3 of Shotgun found item 43 on 14 November 2026: an extension cannot see the tool calls of an MCP client.
 - Phase 6 of Shotgun found item 44 on 14 November 2026: a mark cannot keep a path that is not there.
+- Phase 7 of Shotgun found item 45 on 14 November 2026: no fact gives the names in scope at a line.
 
 No open gap stops the start of the work on Shotgun.
 
@@ -160,7 +161,7 @@ Do the groups in this sequence. Do not do the items 34 to 40 for Shotgun.
 | --- | --- | --- |
 | 1 | 42 | A new user gets no tools of DataFlow and no guard of Shotgun in Claude Code. |
 | 2 | 30, 31, 32 | The heat can be too low. Then the model gets a wrong permission. |
-| 3 | 11, 33, 41, 43, 44 | Shotgun has a procedure, but it needs more code or it gives less accuracy. |
+| 3 | 11, 33, 41, 43, 44, 45 | Shotgun has a procedure, but it needs more code or it gives less accuracy. |
 
 ## Heat
 
@@ -253,6 +254,13 @@ The items 36 and 37 are differences between the code and `docs/api-gaps-strategy
 - **Use in Shotgun:** Decision 13 of the plan of Shotgun: a fact of Claude shows the read tool of DataFlow that gave the fact. Shotgun must refuse a fact with a tool that Claude did not call.
 - **Until the fix:** The skill `shotgun-survey` tells Claude to give a fact only from a call of a read tool. Shotgun cannot check this. The badge "Model" shows that the fact is a text of Claude. A hook of the plugin of Shotgun after each tool call can record the calls, but only in Claude Code with this plugin.
 - **Possible fix:** Add the event `onDidCallTool` to the API. The event gives the client, the tool, the arguments and the time of each call of a read tool. Or add a method that gives the tool calls since a time.
+
+### 45. No fact gives the names in scope at a line
+
+- **Data:** `get_place` gives the function, the statements around the line, the locks and the threads. It gives no local variable, no parameter and no data member that the code at the line can use.
+- **Use in Shotgun:** The design canvas shows the names in scope for each hole of a frame, with their types and the badge "Engine", for example `home_battery_ctl.planning_cycles : int`. The user then sees the facts for the decision.
+- **Until the fix:** The hole shows the function, the threads and the locks at its line. The pointer hint of Claude names the places of the facts.
+- **Possible fix:** Add `inScope` to `get_place`. It gives the parameters, the local variables before the line, and the data members of the class, with their types.
 
 ## Marks
 

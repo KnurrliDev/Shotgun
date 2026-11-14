@@ -1,16 +1,17 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import type { BuildStepView, CurrentStepView, ReceiptChangeView, ReceiptView, TaskView } from '../views/protocol';
+import type { BuildStepView, CurrentStepView, HintPlaceView, HoleView, ReceiptChangeView, ReceiptView, TaskView } from '../views/protocol';
 import { GateBlock, TellClaude, WriterBadges } from './common';
 import { post } from './vscode';
 
 // Stage 5: the build in the panel beside the text editor. The steps go in sequence. The current step shows its writer:
-// for a step of Claude the request for Claude Code and then the receipt, for a step of the user its places, its text and
-// its checks. The user walks the receipt and puts a mark on each change. A mark or a note records a decision of the
-// user, and it never starts Claude.
+// for a step of Claude the request for Claude Code and then the receipt, for a frame its holes and their hints, and for
+// a step of the user its places, its text and its checks. The user walks the receipt and puts a mark on each change. A
+// mark, a note, a hint or a button records a decision of the user, and it never starts Claude.
 
 const count = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
-const STATE_TEXT = { todo: 'to do', open: 'open', receipt: 'receipt', done: 'done' } as const;
+const STATE_TEXT = { todo: 'to do', open: 'open', receipt: 'receipt', holes: 'holes', done: 'done' } as const;
+const HINTS = ['Nudge', 'Pointer', 'Example', 'Show me'];
 const MARKS = [
 	{ mark: 'ok', glyph: '✓', label: 'OK' },
 	{ mark: 'issue', glyph: '!', label: 'Issue' },
@@ -30,7 +31,10 @@ function StepList({ steps }: { steps: BuildStepView[] }) {
 					<span class={`state-glyph st-${s.state}`} aria-hidden="true">{s.state === 'done' ? '✓' : s.isCurrent ? '●' : '○'}</span>
 					<span class={`step-num lv-${s.level ?? 0}`}>{s.n}</span>
 					<span class="grow">{s.title}</span>
-					<span class={`dot ${s.writer}`} title={s.writerText} />
+					<span class="dots" title={s.writerText}>
+						{s.writer !== 'user' && <span class="dot claude" />}
+						{s.writer !== 'claude' && <span class="dot user" />}
+					</span>
 				</li>
 			))}
 		</ol>
@@ -183,6 +187,106 @@ function Receipt({ step, receipt, maxNote }: { step: CurrentStepView; receipt: R
 	);
 }
 
+function PlaceLink({ place }: { place: HintPlaceView }) {
+	return (
+		<button type="button" class="link mono small" title="Open in the text editor" onClick={() => post({ type: 'openPlace', path: place.path, line: place.line })}>
+			{place.name}
+		</button>
+	);
+}
+
+const holeStatus = (h: HoleView): string => (h.state === 'open' ? 'open' : h.state === 'empty' ? 'empty' : h.state === 'changed' ? 'changed'
+	: h.by === 'claude' ? 'Claude' : 'yours');
+
+// The selected hole: its question, its place, the facts of DataFlow, and the ladder of its 4 hints
+function HoleDetail({ step, hole }: { step: string; hole: HoleView }) {
+	return (
+		<div class="hole-detail">
+			<div class="row-head"><span class="name">Hole {hole.n}</span><span class={`hole-state h-${hole.state}`}>{holeStatus(hole)}</span></div>
+			<p class="hole-question">{hole.question}</p>
+			<p class="change-place"><PlaceLink place={{ name: hole.place, path: hole.path, line: hole.line }} /></p>
+			{hole.facts && (hole.facts.function || hole.facts.threads.length > 0 || hole.facts.locks.length > 0) && (
+				<div class="order-note">
+					<span class="badge engine">Engine</span>
+					<span>
+						{hole.facts.function ? `In ${hole.facts.function}.` : ''}
+						{hole.facts.threads.length > 0 ? ` The thread ${hole.facts.threads.join(', ')} runs the line.` : ''}
+						{hole.facts.locks.length > 0 ? ` The line holds the lock ${hole.facts.locks.join(', ')}.` : ''}
+					</span>
+				</div>
+			)}
+			{hole.content && <div class="code small"><div class="code-line"><span class="tx">{hole.content}</span></div></div>}
+			<div class="row-head"><span class="name">Hint ladder</span></div>
+			<div class="marks" role="group" aria-label={`The hints of hole ${hole.n}`}>
+				{HINTS.map((label, i) => (
+					<button type="button" class={`mark-btn hint-btn${hole.shown > i ? ' on' : ''}${i === 3 ? ' answer' : ''}`} aria-pressed={hole.shown > i}
+						disabled={hole.shown > i || hole.state !== 'open' && i === 3}
+						onClick={() => post({ type: 'showHint', step, hole: hole.n, level: i + 1 })}>
+						{i + 1} {label}
+					</button>
+				))}
+			</div>
+			{hole.shown === 0 && (
+				<p class="muted small">
+					No hint yet. The hints came with the frame, so a click sends no request to Claude. Each step of the ladder gives more help. Step 4 fills
+					the hole with the answer of Claude, and its lines are lines of Claude.
+				</p>
+			)}
+			{hole.nudge && <div class="order-note claude"><span class="badge claude">Model</span><span>{hole.nudge}</span></div>}
+			{hole.pointer && (
+				<div class="order-note claude">
+					<span class="badge claude">Model</span>
+					<span>{hole.pointer.text} {hole.pointer.places.map((p) => <PlaceLink place={p} />)}</span>
+				</div>
+			)}
+			{hole.example && (
+				<>
+					<div class="order-note claude"><span class="badge claude">Model</span><span>{hole.example.text} <PlaceLink place={hole.example.place} /></span></div>
+					<div class="code small">{hole.example.code.split('\n').map((l) => <div class="code-line"><span class="tx">{l || ' '}</span></div>)}</div>
+				</>
+			)}
+			{hole.answer && (
+				<p class="muted small">
+					<span class="badge claude">Claude</span> The answer of Claude filled the hole. The ledger counts its lines as lines of Claude.
+				</p>
+			)}
+		</div>
+	);
+}
+
+// The frame of Claude: its note, the holes with their state, and the selected hole with its hints
+function Frame({ step }: { step: CurrentStepView }) {
+	const holes = step.holes ?? [];
+	const [selected, setSelected] = useState<number | undefined>(undefined);
+	const firstOpen = holes.find((h) => h.state === 'open')?.n ?? holes[0]?.n;
+	const hole = holes.find((h) => h.n === (selected ?? firstOpen));
+	return (
+		<div class="receipt">
+			{step.frameNote && <div class="order-note claude"><span class="badge claude">Model</span><span>{step.frameNote}</span></div>}
+			<p class="muted">For a different frame, tell Claude:</p>
+			<TellClaude text={`Give me a different frame for step ${step.n}.`} />
+			<div class="row-head">
+				<span class="name">Your decisions</span>
+				<span class="muted">{step.holesDone ?? 0} of {holes.length}</span>
+			</div>
+			<progress class="walk-track" value={step.holesDone ?? 0} max={holes.length} aria-label={`${step.holesDone ?? 0} of ${count(holes.length, 'hole')} done`} />
+			<ol class="holes">
+				{holes.map((h) => (
+					<li>
+						<button type="button" class={`hole-row${h.n === hole?.n ? ' on' : ''}`} aria-pressed={h.n === hole?.n} onClick={() => setSelected(h.n)}>
+							<span class={`change-num h-${h.state}${h.by ? ` by-${h.by}` : ''}`}>{h.n}</span>
+							<span class="grow">{h.question}</span>
+							<span class={`hole-state h-${h.state}${h.by ? ` by-${h.by}` : ''}`}>{holeStatus(h)}</span>
+						</button>
+					</li>
+				))}
+			</ol>
+			<p class="muted small">In the text editor, Tab goes to the next hole, and Shift+Tab to the hole before it.</p>
+			{hole && <HoleDetail step={step.id} hole={hole} />}
+		</div>
+	);
+}
+
 function CurrentStep({ step, request, maxNote }: { step: CurrentStepView; request?: string; maxNote: number }) {
 	return (
 		<section class={`current-step lv-${step.level ?? 0}`} aria-label={`Step ${step.n} of ${step.total}`}>
@@ -206,18 +310,28 @@ function CurrentStep({ step, request, maxNote }: { step: CurrentStepView; reques
 					<ul class="checks">{step.checks.map((c) => <li><span aria-hidden="true">☐</span> {c}</li>)}</ul>
 				</>
 			)}
-			{step.writer === 'claude' && step.state === 'todo' && request && (
+			{step.writer !== 'user' && step.state === 'todo' && request && (
 				<>
 					<p class="muted">In Claude Code:</p>
 					<TellClaude text={request} />
 				</>
 			)}
-			{step.writer === 'claude' && step.state === 'open' && (
+			{step.writer !== 'user' && step.state === 'open' && (
 				<p class="banner">
-					Claude writes the step{step.round > 1 ? ` again, round ${step.round}` : ''}. The guard opens only the scope: <span class="mono">{step.scope.join(', ')}</span>.
-					Do not change these files now.
+					Claude writes the {step.writer === 'frame' ? 'frame' : 'step'}{step.round > 1 ? ` again, round ${step.round}` : ''}. The guard opens only the scope:{' '}
+					<span class="mono">{step.scope.join(', ')}</span>. Do not change these files now.
 				</p>
 			)}
+			{step.canRequestFrame && (
+				<div class="frame-request">
+					<button type="button" class="btn secondary small" onClick={() => post({ type: 'requestFrame', step: step.id })}>I want a frame</button>
+					<p class="muted small">
+						Claude writes the lines with no decision, and each decision is a hole for you. Your click records the decision. Then tell Claude:
+						"Give me a frame for step {step.n}."
+					</p>
+				</div>
+			)}
+			{step.holes && step.state === 'holes' && <Frame step={step} />}
 			{step.writer === 'user' && step.state === 'open' && (
 				<p class="muted small">
 					You write this step. Claude changes no file now, but it can answer your questions in the chat.

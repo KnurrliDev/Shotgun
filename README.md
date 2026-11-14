@@ -16,7 +16,7 @@ A button of Shotgun records a decision of the user. It never starts Claude: you 
 
 ## Status
 
-Shotgun is in development. The phases 1 to 6 of 10 are complete:
+Shotgun is in development. The phases 1 to 7 of 10 are complete:
 
 - Phase 1: the tasks, the stages, the panel, the page, the guard and the connection to Claude Code.
 - Phase 2: the brief, the questions of Claude about the brief, and the gate of stage 1.
@@ -24,6 +24,7 @@ Shotgun is in development. The phases 1 to 6 of 10 are complete:
 - Phase 4: your order of the tasks, the survey of the changed tasks, and the gate of stage 3.
 - Phase 5: the plan of Claude, the risk level of each step from the facts of DataFlow, and the gate of stage 4.
 - Phase 6: the build: the steps in sequence, the errands of Claude with receipts, the steps of the user, and the writer of each line.
+- Phase 7: the frames of Claude with a hole for each decision of the user, the hints of each hole, and Tab between the holes.
 
 `implementation-plan.md` gives the phases, and `CHANGELOG.md` gives the content of each phase.
 
@@ -57,9 +58,10 @@ Shotgun is in development. The phases 1 to 6 of 10 are complete:
 18. Walk the receipt in the panel. Put a mark on each change: **OK**, **Issue** or **Question**. Write a note for Claude if necessary.
 19. For an issue or a question, tell Claude "Fix the issues of step N." Then walk the new receipt.
 20. Select **Accept the receipt**.
-21. For a step of yours, write its code. Then select **The step is done**.
-22. After the last step, select **The task is done**.
-23. Follow the panel of Shotgun in the secondary side bar. It shows the next work and the requests for Claude Code.
+21. For a step of level 3, tell Claude "Give me a frame for step N." Fill each hole of the frame. Then select **The step is done**.
+22. For a step of yours, write its code. Then select **The step is done**. At level 4, you can select **I want a frame** first.
+23. After the last step, select **The task is done**.
+24. Follow the panel of Shotgun in the secondary side bar. It shows the next work and the requests for Claude Code.
 
 | Command | Function |
 | --- | --- |
@@ -69,9 +71,13 @@ Shotgun is in development. The phases 1 to 6 of 10 are complete:
 | Shotgun: Close Question | Closes a question of Claude about the brief. |
 | Shotgun: Answer Question | Gives your answer to a question of the survey. An empty answer removes the answer. |
 | Shotgun: Check the Hooks Again | Gets the facts of DataFlow for the hooks of the survey again, at their lines now. |
-| Shotgun: Set Risk Level | Sets your level for a step of the plan, or sets the level of the rules again. |
+| Shotgun: Set Risk Level | Sets your level for a step of the plan, or sets the level of the rules again. In stage 5, only for a step that Claude did not start. |
 | Shotgun: Check the Levels Again | Gets the facts of DataFlow and the levels of the rules for the steps of the plan again. |
 | Shotgun: Mark a Change | Puts your mark on a change of the receipt of the current step, with a note for Claude. |
+| Shotgun: I Want a Frame | Gives the current step of level 4 to Claude as a frame. Then tell Claude "Give me a frame for step N." |
+| Shotgun: Go to the Next Hole | Selects the next open hole of the frame. In a frame, Tab does the same. |
+| Shotgun: Go to the Hole Before | Selects the open hole before the cursor. In a frame, Shift+Tab does the same. |
+| Shotgun: Show the Next Hint | Shows the next hint of the hole at the cursor. The last hint puts the answer of Claude into the hole. |
 | Shotgun: Pass the Gate | Records the gate of the stage, for example "The brief is ready". |
 | Shotgun: Pause | Stops the guard for work outside of the task. The ledger records the pause. |
 | Shotgun: Continue | Starts the guard again. |
@@ -149,7 +155,7 @@ More rules make a level only higher:
 - A data member of a type: level 2, or level 3 if threads share a member or a member is on a frame path. A change of a data member gets the level of the hottest function that uses it.
 - Before the end of the scan of the call graph, a function with an incomplete reach has no level. After a stopped scan or a failed scan, the level is 3 or higher.
 
-In stage 5, the level selects the writer of the step. At the levels 1 and 2, Claude writes. At the levels 3, 4 and 5, you write. A later version of Shotgun gives you a frame of Claude with holes at level 3. Only you change a level. The ledger records each level and each note of yours.
+In stage 5, the level selects the writer of the step. At the levels 1 and 2, Claude writes. At level 3, Claude writes a frame with a hole for each decision, and you fill the holes. At the levels 4 and 5, you write, and at level 4 you can ask for a frame. Only you change a level: in stage 4, and in stage 5 for a step that Claude did not start. The ledger records each level and each note of yours.
 
 In the stages 4 and 5, the text editor shows each place of a step with the color of its level, and a CodeLens line. A click on the CodeLens line shows the step on the page.
 
@@ -171,6 +177,20 @@ The gate **Accept the receipt** deletes the base of the step. If a change has no
 
 You write a step of the levels 3, 4 and 5. Shotgun keeps the text of the files of its places as the base of the step. Write the code of the step, and select **The step is done**. Shotgun records your lines since the base. Claude changes no file in your step, but it can answer your questions in the chat.
 
+## Frames
+
+A step of level 3 gets a frame. A step of level 4 gets a frame only after you select **I want a frame** in the panel.
+
+1. You tell Claude "Give me a frame for step N." Claude opens the step with the tool `shotgun_start_step` and the kind `frame`.
+2. Claude writes the lines of the step that have no decision. In the place of each decision, Claude writes a marker in a comment, for example `/*@hole 1: When is the plan too late? */`.
+3. Claude gives the holes with the tool `shotgun_submit_frame`. Each hole has 4 hints: a nudge, a pointer to the facts, an example from the project, and the answer. Shotgun checks each marker and each place.
+
+The panel shows the holes and the state of each hole. Select a hole to see its question and the facts of DataFlow at its line. The hint ladder shows the hints one at a time. The hints came with the frame, so a click sends no request to Claude. **4 Show me** puts the answer of Claude into the hole, after a modal message. Its lines are lines of Claude.
+
+In the text editor, an open hole has a dashed box. Tab goes to the next open hole and selects its marker, and Shift+Tab goes to the hole before it. Type your code in the place of the marker. With no open hole, Tab and Shift+Tab indent as usual. The hover of a hole shows its question, the hints that you opened, and a link to the next hint.
+
+When each hole has code, select **The step is done**. The frame lines have the tag "Claude · frame" in the gutter, and they get no receipt. For a different frame, tell Claude "Give me a different frame for step N."
+
 `lines.json` keeps the writer of each changed line. The text editor shows a mark in the gutter for each line of Claude. The mark is dashed until you walk its change, and then it has the color of your mark. A line of Claude that you change becomes your line. If you change a file of the scope while Claude writes the step, Shotgun shows a warning.
 
 ## Files
@@ -188,7 +208,7 @@ You write a step of the levels 3, 4 and 5. Shotgun keeps the text of the files o
 | `.shotgun/<task>/plan.json` | The steps of the plan of Claude. |
 | `.shotgun/<task>/risk.json` | The facts of DataFlow and the level of the rules for each step. |
 | `.shotgun/<task>/levels.json` | Your levels and your notes for the steps. |
-| `.shotgun/<task>/build.json` | The state of each step of the build, its scope and its base, and the receipt with the notes of Claude and your marks. |
+| `.shotgun/<task>/build.json` | The state of each step of the build, its scope and its base. Also the receipt with the notes of Claude and your marks, and the holes of a frame with their hints. |
 | `.shotgun/<task>/lines.json` | The writer of each changed line, with a hash of each line of the file. |
 | `.shotgun/<task>/decisions.jsonl` | The ledger: 1 line for each decision of the user and for each deny of the guard. |
 | `~/.shotgun/claude` | The plugin of Shotgun for Claude Code, in a local marketplace. |
@@ -211,9 +231,9 @@ The window uses the DataFlow extension of VS Code. To use DataFlow from its repo
 | Command | Tests |
 | --- | --- |
 | `npm test` | The unit tests in a test build of VS Code. The tests load DataFlow from `../DataFlow`, or from the folder of the environment variable `DATAFLOW_REPO`. If the environment variable `CLAUDE_EXE` gives the CLI of Claude Code, a test also checks the plugin with `claude plugin validate`. |
-| `node scripts/test-claude.mjs <run folder>` | The test with Claude Code. 2 tasks go from the brief to stage 2. Task 1 has a brief in a file, and task 2 has a brief from the chat. The guard denies a change in stage 1. Then Claude makes the survey of task 1, and task 1 goes to stage 3. On the order page, the test changes the order. Claude surveys the changed tasks, and task 1 goes to stage 4. Then Claude makes the plan, the test changes the levels, and task 1 goes to stage 5. In the build, the test writes step 1 as the user. Claude does step 2 and gives a receipt. The test puts an issue on a change, Claude fixes it, and the test accepts the receipt. Use a new run folder outside of the repository. |
+| `node scripts/test-claude.mjs <run folder>` | The test with Claude Code. 2 tasks go from the brief to stage 2. Task 1 has a brief in a file, and task 2 has a brief from the chat. The guard denies a change in stage 1. Then Claude makes the survey of task 1, and task 1 goes to stage 3. On the order page, the test changes the order. Claude surveys the changed tasks, and task 1 goes to stage 4. Then Claude makes the plan, the test changes the levels, and task 1 goes to stage 5. In the build, the test writes step 1 as the user. Claude does step 2 and gives a receipt. The test puts an issue on a change, Claude fixes it, and the test accepts the receipt. Then the test sets step 3 to level 4 and asks for a frame. Claude gives the frame, and the test fills the holes with Tab and the hints. Use a new run folder outside of the repository. |
 
-NOTE: `scripts/test-claude.mjs` uses the Claude subscription of the user for 8 runs of Claude Code. It does not change the settings of the user.
+NOTE: `scripts/test-claude.mjs` uses the Claude subscription of the user for 9 runs of Claude Code. It does not change the settings of the user.
 
 ## License
 

@@ -3,8 +3,9 @@ import { EventEmitter } from 'events';
 import * as path from 'path';
 import { BRIEF_FILE, briefTemplate, PartId } from './brief';
 import {
-	BUILD_FILE, BuildFile, BuildStep, BuildWriter, ChangeMark, currentStep, CurrentStep, MAX_CHANGE_NOTE, parseBuild, Receipt, receiptCounts,
+	BUILD_FILE, BuildFile, BuildStep, BuildWriter, ChangeMark, currentStep, CurrentStep, MAX_CHANGE_NOTE, parseBuild, Receipt, receiptCounts, scopeOf, stateOf,
 } from './build';
+import type { Hole } from './frame';
 import {
 	ACTIVE_FILE, ActiveFile, ANSWERS_FILE, Decision, DECISIONS_FILE, decisionLine, DecisionInput, ENGINE_FILE, FILE_VERSION, jsonText, LEVELS_FILE,
 	ORDER_FILE, parseActive, parseDecisions, parseQuestions, parseTask, PLAN_FILE, Question, QUESTIONS_FILE, readText, RISK_FILE, SHOTGUN_DIR,
@@ -371,22 +372,31 @@ export class SessionStore {
 	}
 
 	// The level of the user for a step. undefined: the level of the rules again. The ledger records each change with the
-	// level of the rules at that time
-	setLevel(step: string, level: Level | undefined): void {
-		const task = this.requireStage('plan', 'You can change a level only in stage 4, the plan.');
-		this.requireStep(step);
+	// level of the rules at that time. In stage 5, the user changes the level of a step that Claude did not start, also of
+	// the current step of the user (decision 17). Then the step starts again with the writer of its new level. The result:
+	// the old state of the step in the build, for example with its base, or undefined
+	setLevel(step: string, level: Level | undefined): BuildStep | undefined {
+		const task = this.requireLevelStage(step);
 		const old = this.state.levels?.levels[step];
 		if (old?.level === level) {
-			return;
+			return undefined;
 		}
+		const removed = task.stage === 'build' ? this.state.build?.steps[step] : undefined;
 		this.writeLevel(task.id, step, level, old?.note);
+		if (removed) {
+			this.removeStep(task.id, step);
+		}
 		this.append(task.id, { kind: 'level', by: 'user', step, level: level ?? null, rule: this.state.risk?.steps[step]?.level ?? null });
 		this.load();
+		return removed;
 	}
 
 	// The note of the user for a step, for example the reason of a different level. An empty note removes the note
 	setLevelNote(step: string, note: string): void {
-		const task = this.requireStage('plan', 'You can change a note only in stage 4, the plan.');
+		const task = this.requireTask();
+		if (task.isDone || (task.stage !== 'plan' && task.stage !== 'build')) {
+			throw new Error('You can change a note only in stage 4, the plan, and in stage 5, the build.');
+		}
 		this.requireStep(step);
 		const text = note.trim().replace(/\s+/g, ' ');
 		if (text.length > MAX_LEVEL_NOTE) {
@@ -420,10 +430,11 @@ export class SessionStore {
 		if (current.state === 'open') {
 			throw new Error(`Step ${current.n} is open already.`);
 		}
-		if (current.state === 'receipt' && start.writer !== 'claude') {
-			throw new Error(`Step ${current.n} has a receipt of Claude.`);
+		if ((current.state === 'receipt' && start.writer !== 'claude') || (current.state === 'holes' && start.writer !== 'frame')) {
+			throw new Error(`Step ${current.n} has ${current.state === 'receipt' ? 'a receipt' : 'a frame'} of Claude.`);
 		}
-		const isAgain = current.state === 'receipt';
+		// Claude opens a step again after its receipt, or for a different frame
+		const isAgain = current.state === 'receipt' || current.state === 'holes';
 		const base = isAgain ? old?.base : start.base;
 		const baseError = isAgain ? old?.baseError : start.baseError;
 		const newFiles = isAgain ? old?.newFiles : start.newFiles;
@@ -435,12 +446,15 @@ export class SessionStore {
 			...(newFiles && newFiles.length > 0 ? { newFiles: [...newFiles] } : {}),
 			...(base ? { base } : {}),
 			...(baseError ? { baseError } : {}),
-			round: start.writer === 'claude' ? (old?.round ?? 0) + 1 : 0,
+			round: start.writer === 'user' ? 0 : (old?.round ?? 0) + 1,
 			opened: this.time(),
 			...(old?.receipt ? { receipt: old.receipt } : {}),
+			...(old?.holes ? { holes: old.holes } : {}),
+			...(old?.frameNote ? { frameNote: old.frameNote } : {}),
+			...(old?.isFrameRequested ? { isFrameRequested: true } : {}),
 		};
 		this.writeStep(task.id, id, step);
-		if (start.writer === 'claude') {
+		if (start.writer !== 'user') {
 			this.append(task.id, { kind: 'step', by: 'claude', step: id, round: step.round });
 		}
 		this.load();
@@ -461,6 +475,58 @@ export class SessionStore {
 			looseEnds: receipt.looseEnds.length,
 		});
 		this.load();
+	}
+
+	// The user selects "I want a frame" for the current step of level 4 (decision 16). The step of the user starts again as a
+	// frame of Claude. The result: the old state of the step, for example with the base of the step of the user
+	requestFrame(id: string): BuildStep | undefined {
+		const task = this.requireStage('build', 'A frame is only for stage 5, the build.');
+		const current = this.requireCurrent(id);
+		if (current.level !== 4) {
+			throw new Error(`Step ${current.n} has risk level ${current.level ?? '?'}. A frame on request is only for a step of level 4. Level 3 has a frame always.`);
+		}
+		if (current.writer !== 'user' || (current.state !== 'todo' && current.state !== 'open')) {
+			throw new Error(`Step ${current.n} is not a step of the user that Claude can frame now.`);
+		}
+		const old = current.build;
+		this.writeStep(task.id, id, { state: 'todo', writer: 'frame', level: current.level, scope: [...(old?.scope ?? scopeOf(current.step))], round: 0, isFrameRequested: true });
+		this.append(task.id, { kind: 'frame-request', by: 'user', step: id });
+		this.load();
+		return old;
+	}
+
+	// The frame of Claude for the open step: the holes with their hints. The scope closes, and the user fills the holes
+	writeFrame(id: string, holes: readonly Omit<Hole, 'shown'>[], note: string | undefined): void {
+		const task = this.requireStage('build', 'A frame comes only in stage 5, the build.');
+		const current = this.requireCurrent(id);
+		if (current.state !== 'open' || current.writer !== 'frame' || !current.build) {
+			throw new Error(`Step ${current.n} is not open for a frame of Claude.`);
+		}
+		const { frameNote: _old, ...rest } = current.build;
+		this.writeStep(task.id, id, { ...rest, state: 'holes', holes: holes.map((h) => ({ ...h, shown: 0 })), ...(note ? { frameNote: note } : {}) });
+		this.append(task.id, { kind: 'frame', by: 'claude', step: id, round: current.build.round, holes: holes.length });
+		this.load();
+	}
+
+	// The user opens the hints of a hole up to a level, from 1 to 4. Level 4 is the answer of Claude
+	setHint(id: string, hole: number, level: number): Hole {
+		const task = this.requireStage('build', 'A hint is only in stage 5, the build.');
+		const current = this.requireCurrent(id);
+		const found = current.build?.holes?.find((h) => h.n === hole);
+		if (current.state !== 'holes' || !current.build || !found) {
+			throw new Error(`Step ${current.n} has no hole ${hole} to fill now.`);
+		}
+		if (!Number.isInteger(level) || level < 1 || level > 4) {
+			throw new Error('A hint level is from 1 to 4.');
+		}
+		if (level <= found.shown) {
+			return found;
+		}
+		const next = { ...found, shown: level };
+		this.writeStep(task.id, id, { ...current.build, holes: current.build.holes!.map((h) => (h === found ? next : h)) });
+		this.append(task.id, { kind: 'hint', by: 'user', step: id, hole, level });
+		this.load();
+		return next;
 	}
 
 	// The mark of the user on a change of the receipt of the current step
@@ -505,8 +571,8 @@ export class SessionStore {
 		if (gate === 'accept-receipt' && current.state !== 'receipt') {
 			throw new Error(`Step ${current.n} has no receipt to accept.`);
 		}
-		if (gate === 'step-done' && (current.writer !== 'user' || current.state !== 'open')) {
-			throw new Error(`Step ${current.n} is not an open step of the user.`);
+		if (gate === 'step-done' && !((current.writer === 'user' && current.state === 'open') || (current.writer === 'frame' && current.state === 'holes'))) {
+			throw new Error(`Step ${current.n} is not an open step of the user, and it has no frame to fill.`);
 		}
 		const step: BuildStep = { ...current.build!, state: 'done', done: this.time() };
 		this.writeStep(task.id, id, step);
@@ -622,6 +688,34 @@ export class SessionStore {
 		if (!this.state.plan?.steps.some((s) => s.id === step)) {
 			throw new Error(`The plan has no step ${step}.`);
 		}
+	}
+
+	// The active task in a stage where the user changes the level of the step: stage 4, or stage 5 for a step that Claude
+	// did not start (decision 17)
+	private requireLevelStage(step: string): TaskFile {
+		const task = this.requireTask();
+		this.requireStep(step);
+		if (!task.isDone && task.stage === 'plan') {
+			return task;
+		}
+		if (task.isDone || task.stage !== 'build') {
+			throw new Error('You can change a level only in stage 4, the plan, and in stage 5, the build.');
+		}
+		const state = stateOf(this.state.build, step);
+		const b = this.state.build?.steps[step];
+		const isUserOpen = state === 'open' && b?.writer === 'user';
+		if (state !== 'todo' && !isUserOpen) {
+			throw new Error(state === 'done' ? 'The step is done, so its level stays.'
+				: 'Claude started the step, so its level stays. Accept the receipt, or fill the holes of the frame, first.');
+		}
+		return task;
+	}
+
+	// Removes the state of a step from the build: the step starts again with the writer of its level
+	private removeStep(id: string, step: string): void {
+		const steps: Record<string, BuildStep> = { ...(this.state.build?.steps ?? {}) };
+		delete steps[step];
+		writeTextAtomic(path.join(this.requireDir(), id, BUILD_FILE), jsonText({ version: FILE_VERSION, steps } satisfies BuildFile));
 	}
 
 	// The step of the build with the id, if it is the current step

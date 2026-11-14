@@ -17,8 +17,7 @@ export type StepWriter = 'claude' | 'frame' | 'user';
 export const LEVEL_INFO: Readonly<Record<Level, { readonly name: string; readonly writer: StepWriter; readonly text: string }>> = {
 	1: { name: 'Very low', writer: 'claude', text: 'Claude writes. The step changes no code that is there. You check 1 receipt.' },
 	2: { name: 'Low', writer: 'claude', text: 'Claude writes in the scope of the step. You check the receipt.' },
-	// decision 15: until the frames of phase 7, the user writes a step of level 3. Phase 7 gives level 3 the writer frame
-	3: { name: 'Medium', writer: 'user', text: 'You write. A frame of Claude with a hole for each decision comes in a later version of Shotgun.' },
+	3: { name: 'Medium', writer: 'frame', text: 'Claude writes the frame. Each decision is a hole for you.' },
 	4: { name: 'High', writer: 'user', text: 'You write. A frame is possible on request. Tests run before and after the step.' },
 	5: { name: 'Very high', writer: 'user', text: 'You write each line. Claude gives facts and callouts only. The step gets its own commit.' },
 };

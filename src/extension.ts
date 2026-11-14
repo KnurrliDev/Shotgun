@@ -4,12 +4,14 @@ import { ClaudeConnection, ClaudeState } from './claude/connection';
 import { isSamePath } from './claude/settings';
 import type { DataFlowApi } from './dataflow/dataflow-api';
 import { linkDataFlow } from './dataflow/dataflow';
+import { HoleDecorations } from './editor/holes';
 import { HookDecorations } from './editor/hooks';
 import { ClaudeLines } from './editor/lines';
 import { StepDecorations } from './editor/steps';
 import { parseBrief } from './session/brief';
-import { addedLines, ChangeMark, CurrentStep, markName, receiptCounts, scopeOf } from './session/build';
+import { addedLines, ChangeMark, CurrentStep, markName, receiptCounts, scopeOf, stateOf } from './session/build';
 import { readText } from './session/files';
+import { answerText, findMarkers, holeNow, isHoleDone } from './session/frame';
 import { LINES_FILE, LineStore } from './session/lines';
 import { orderWarnings } from './session/order';
 import { absolutePath, IS_CASE_SENSITIVE, isCppFile, isInside, projectPath } from './session/paths';
@@ -54,6 +56,7 @@ const VIEW_COMMANDS: Readonly<Record<ViewCommand, string>> = {
 // The button of a modal message that passes a gate with open questions
 const PASS_GATE = 'Pass the Gate';
 const ACCEPT_RECEIPT = 'Accept the Receipt';
+const FILL_HOLE = 'Fill the Hole';
 
 // The folders that the watcher of the files outside of the scope ignores: the folders of tools and of builds
 const IGNORED_FOLDERS = /(^|[\\/])(\.git|\.shotgun|\.claude|\.vs|\.vscode|\.cache|node_modules|out|build|bin|obj|dist|target|cmake-build-[^\\/]*)([\\/]|$)/i;
@@ -76,6 +79,8 @@ class Shotgun implements vscode.Disposable {
 	// the writer of each changed line in stage 5, and the lines of Claude in the text editor
 	private readonly lines = new LineStore();
 	private readonly claudeLines = new ClaudeLines();
+	// the holes of a frame of Claude in the text editor, and Tab between them
+	private readonly frameHoles = new HoleDecorations();
 	private linesTask: string | undefined = undefined;
 	// the files of the project that changed while a step of Claude was open
 	private readonly stepChanges = new Map<string, FileChange>();
@@ -97,7 +102,7 @@ class Shotgun implements vscode.Disposable {
 		this.status.name = 'Shotgun';
 		this.status.command = `${PANEL_ID}.focus`;
 		this.disposables.push(
-			this.log, this.status, this.views, this.hooks, this.steps, this.claudeLines,
+			this.log, this.status, this.views, this.hooks, this.steps, this.claudeLines, this.frameHoles,
 			new vscode.Disposable(() => this.lines.dispose()),
 			this.store.onDidChange(() => this.update()),
 			...this.commands(),
@@ -310,7 +315,8 @@ class Shotgun implements vscode.Disposable {
 		for (const [file, lines] of parts) {
 			const text = this.textOf(absolutePath(file, root));
 			if (text !== undefined) {
-				this.lines.replaceStep(file, text.split(/\r?\n/), 'user', current.step.id, [{ lines }]);
+				// a line of the frame of Claude keeps its writer
+				this.lines.fillStep(file, text.split(/\r?\n/), 'user', current.step.id, lines);
 			}
 		}
 		this.lines.flush();
@@ -334,7 +340,8 @@ class Shotgun implements vscode.Disposable {
 				+ 'Undo your edit, or wait for the receipt.');
 		}
 		// a change from the disk, for example by Claude, gives the new lines no writer. The receipt gives them their writer
-		const owner = doc.isDirty ? { writer: 'user' as const, step: current?.writer === 'user' && current.state === 'open' ? current.step.id : '' } : undefined;
+		const isUserStep = (current?.writer === 'user' && current.state === 'open') || (current?.writer === 'frame' && current.state === 'holes');
+		const owner = doc.isDirty ? { writer: 'user' as const, step: isUserStep ? current!.step.id : '' } : undefined;
 		if (this.lines.sync(file, doc.getText().split(/\r?\n/), owner)) {
 			this.claudeLines.renderSoon();
 		}
@@ -546,6 +553,10 @@ class Shotgun implements vscode.Disposable {
 			vscode.commands.registerCommand('shotgun.setLevel', run(() => this.setLevel())),
 			vscode.commands.registerCommand('shotgun.showStep', run((id?: unknown) => (typeof id === 'string' ? this.views.showStep(id) : this.views.showPage()))),
 			vscode.commands.registerCommand('shotgun.markChange', run(() => this.markChange())),
+			vscode.commands.registerCommand('shotgun.nextHole', run(() => this.goToHole(1))),
+			vscode.commands.registerCommand('shotgun.previousHole', run(() => this.goToHole(-1))),
+			vscode.commands.registerCommand('shotgun.nextHint', run((step?: unknown, hole?: unknown) => this.nextHint(step, hole))),
+			vscode.commands.registerCommand('shotgun.requestFrame', run(() => this.requestFrame())),
 			vscode.commands.registerCommand('shotgun.passGate', run(() => this.passGate())),
 			vscode.commands.registerCommand('shotgun.connectClaude', run(() => this.connectClaude())),
 			vscode.commands.registerCommand('shotgun.disconnectClaude', run(() => this.disconnectClaude())),
@@ -658,21 +669,29 @@ class Shotgun implements vscode.Disposable {
 		}
 	}
 
-	// The level of the user for a step, with the keyboard. The page has the same buttons
+	// The level of the user for a step, with the keyboard. The page has the same buttons. In stage 5, only the steps that
+	// Claude did not start (decision 17)
 	private async setLevel(): Promise<void> {
-		const { task, plan, risk, levels } = this.store.snapshot;
-		if (!task || task.isDone || task.stage !== 'plan' || !plan) {
-			void vscode.window.showInformationMessage('Shotgun: the active task has no plan in stage 4.');
+		const { task, plan, risk, levels, build } = this.store.snapshot;
+		if (!task || task.isDone || (task.stage !== 'plan' && task.stage !== 'build') || !plan) {
+			void vscode.window.showInformationMessage('Shotgun: the active task has no plan in stage 4 or 5.');
 			return;
 		}
-		const step = await vscode.window.showQuickPick(plan.steps.map((s, i) => {
+		const isEditable = (id: string) => task.stage === 'plan' || stateOf(build, id) === 'todo'
+			|| (stateOf(build, id) === 'open' && build?.steps[id]?.writer === 'user');
+		const items = plan.steps.map((s, i) => {
 			const l = levelOf(s.id, risk, levels);
 			return {
 				label: `${i + 1}. ${s.title}`,
 				description: l.level ? `level ${l.level}${l.user ? `, the rules gave ${l.rule ?? 'no level'}` : ''}` : 'no level yet',
 				id: s.id,
 			};
-		}), { title: 'Shotgun: Set Risk Level', placeHolder: 'Select the step' });
+		}).filter((item) => isEditable(item.id));
+		if (items.length === 0) {
+			void vscode.window.showInformationMessage('Shotgun: Claude started each step that is not done, so no level can change.');
+			return;
+		}
+		const step = await vscode.window.showQuickPick(items, { title: 'Shotgun: Set Risk Level', placeHolder: 'Select the step' });
 		if (!step) {
 			return;
 		}
@@ -681,8 +700,135 @@ class Shotgun implements vscode.Disposable {
 			{ label: 'The level of the rules', detail: 'Removes your level. The step gets the level of the rules again.', level: undefined },
 		], { title: `Shotgun: Set Risk Level of ${step.label}`, placeHolder: 'Select the level' });
 		if (choice) {
-			this.store.setLevel(step.id, choice.level);
+			await this.changeLevel(step.id, choice.level);
 		}
+	}
+
+	// A new level of the user. In stage 5, the step starts again with the writer of its new level, so the base of a step of
+	// the user goes away first. Shotgun opens a step of the user again with a new base
+	private async changeLevel(id: string, level: Level | undefined): Promise<void> {
+		const isBlocked = this.isOpeningStep;
+		this.isOpeningStep = true;
+		try {
+			const removed = this.store.setLevel(id, level);
+			await this.deleteBase(removed?.base);
+		} finally {
+			this.isOpeningStep = isBlocked;
+		}
+		await this.openUserStep();
+	}
+
+	private async deleteBase(base: string | undefined): Promise<void> {
+		const api = this.baseApi();
+		if (base && api) {
+			await api.deleteMark(base).catch((error: unknown) => this.log.warn(`DataFlow did not delete the base ${base}: ${messageOf(error)}`));
+		}
+	}
+
+	// The button "I want a frame" of a step of level 4 of the user (decision 16)
+	private async requestFrame(id?: string): Promise<void> {
+		const current = this.store.current;
+		if (!current) {
+			throw new Error('Each step of the plan is done.');
+		}
+		const old = this.store.requestFrame(id ?? current.step.id);
+		await this.deleteBase(old?.base);
+		vscode.window.setStatusBarMessage(`Shotgun: tell Claude "Give me a frame for step ${current.n}."`, 8000);
+	}
+
+	// Tab and Shift+Tab in a frame: the next open hole, or the hole before it. With no open hole, the keys indent as usual
+	private async goToHole(direction: 1 | -1): Promise<void> {
+		const editor = vscode.window.activeTextEditor;
+		const marker = editor ? this.frameHoles.nextHole(editor, direction) : undefined;
+		if (!editor || !marker) {
+			await vscode.commands.executeCommand(direction === 1 ? 'tab' : 'outdent');
+			return;
+		}
+		const range = new vscode.Range(marker.start.line - 1, marker.start.col, marker.end.line - 1, marker.end.col);
+		editor.selection = new vscode.Selection(range.start, range.end);
+		editor.revealRange(range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+	}
+
+	// The next hint of a hole: the hole of the arguments, else the hole at the cursor, else the first open hole
+	private async nextHint(stepArg?: unknown, holeArg?: unknown): Promise<void> {
+		const current = this.store.current;
+		const holes = current?.state === 'holes' ? current.build?.holes ?? [] : [];
+		if (!current || holes.length === 0) {
+			void vscode.window.showInformationMessage('Shotgun: the current step has no frame with holes.');
+			return;
+		}
+		let n = typeof holeArg === 'number' && (typeof stepArg !== 'string' || stepArg === current.step.id) ? holeArg : undefined;
+		const editor = vscode.window.activeTextEditor;
+		if (n === undefined && editor) {
+			const at = this.frameHoles.holesIn(editor.document).find(({ now }) => now.line - 1 <= editor.selection.active.line
+				&& editor.selection.active.line <= now.lastLine - 1);
+			n = at?.hole.n;
+		}
+		const root = this.store.snapshot.root!;
+		const hole = holes.find((h) => h.n === n) ?? holes.find((h) => {
+			const lines = this.textOf(absolutePath(h.file, root))?.split(/\r?\n/) ?? [];
+			return holeNow(lines, h, findMarkers(lines.join('\n'))).state === 'open';
+		});
+		if (!hole) {
+			void vscode.window.showInformationMessage('Shotgun: each hole of the frame has code.');
+			return;
+		}
+		if (hole.shown >= 4) {
+			void vscode.window.showInformationMessage(`Shotgun: hole ${hole.n} has each hint open already.`);
+			return;
+		}
+		const level = hole.shown + 1;
+		const shown = await this.showHint(current.step.id, hole.n, level);
+		if (shown && level < 4) {
+			const texts = [shown.hints.nudge, `${shown.hints.pointer.text} ${shown.hints.pointer.places.map((p) => `${p.file}:${p.lines[0]}-${p.lines[1]}`).join(', ')}`,
+				`${shown.hints.example.text} ${shown.hints.example.file}:${shown.hints.example.lines[0]}: ${shown.hints.example.code}`];
+			void vscode.window.showInformationMessage(`Shotgun: hint ${level} of hole ${hole.n}, by Claude: ${texts[level - 1]}`);
+		}
+	}
+
+	// The user opens the hints of a hole up to a level. Level 4 fills the hole with the answer of Claude, after a modal
+	// message. The result: the hole after the change, or undefined if the user did not confirm
+	private async showHint(step: string, n: number, level: number) {
+		if (level >= 4) {
+			const pick = await vscode.window.showWarningMessage(`Do you want the answer of Claude in hole ${n}?`, {
+				modal: true, detail: 'The answer goes into the place of the marker. Its lines are lines of Claude, and the ledger records it.',
+			}, FILL_HOLE);
+			if (pick !== FILL_HOLE) {
+				return undefined;
+			}
+			await this.fillAnswer(step, n);
+		}
+		return this.store.setHint(step, n, level);
+	}
+
+	// Puts the answer of Claude into the place of the marker of a hole. The lines of the answer are lines of Claude
+	private async fillAnswer(step: string, n: number): Promise<void> {
+		const root = this.store.snapshot.root;
+		const current = this.store.current;
+		const hole = current?.build?.holes?.find((h) => h.n === n);
+		if (!root || !current || current.step.id !== step || current.state !== 'holes' || !hole) {
+			throw new Error(`The current step has no hole ${n} to fill.`);
+		}
+		const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(absolutePath(hole.file, root)));
+		const lines = doc.getText().split(/\r?\n/);
+		const marker = holeNow(lines, hole, findMarkers(lines.join('\n'))).marker;
+		if (!marker) {
+			throw new Error(`The marker of hole ${n} is not in ${hole.file} now, so the answer has no place.`);
+		}
+		const range = new vscode.Range(marker.start.line - 1, marker.start.col, marker.end.line - 1, marker.end.col);
+		const text = answerText(hole.hints.answer, lines[marker.start.line - 1]);
+		const edit = new vscode.WorkspaceEdit();
+		edit.replace(doc.uri, range, text);
+		if (!await vscode.workspace.applyEdit(edit)) {
+			throw new Error(`VS Code did not put the answer into ${hole.file}.`);
+		}
+		const count = text.split('\n').length;
+		this.lines.setOwner(hole.file, doc.getText().split(/\r?\n/), Array.from({ length: count }, (_v, i) => marker.start.line + i),
+			{ writer: 'claude', step, change: `H${n}` });
+		this.lines.flush();
+		this.claudeLines.render();
+		const at = new vscode.Position(marker.start.line - 1, marker.start.col);
+		await vscode.window.showTextDocument(doc, { preview: false, selection: new vscode.Range(at, at) });
 	}
 
 	// The mark of the user on a change of the receipt, with the keyboard. The panel has the same buttons
@@ -771,11 +917,24 @@ class Shotgun implements vscode.Disposable {
 			return;
 		}
 		const step = current.build;
-		if (current.writer === 'user') {
-			if (current.state !== 'open' || !step) {
+		if (current.writer === 'frame') {
+			if (current.state !== 'holes' || !step?.holes) {
+				throw new Error(current.state === 'open' ? `Claude writes the frame of step ${current.n}. Wait for its holes.`
+					: `Claude writes the frame of step ${current.n} first. Tell Claude "Give me a frame for step ${current.n}."`);
+			}
+			const open = step.holes.filter((h) => {
+				const lines = this.textOf(absolutePath(h.file, root))?.split(/\r?\n/) ?? [];
+				return !isHoleDone(holeNow(lines, h, findMarkers(lines.join('\n'))).state);
+			});
+			if (open.length > 0) {
+				throw new Error(`Fill the holes first: hole ${open.map((h) => h.n).join(', ')} ${open.length === 1 ? 'has' : 'have'} no code.`);
+			}
+		}
+		if (current.writer === 'user' || current.writer === 'frame') {
+			if (current.writer === 'user' && (current.state !== 'open' || !step)) {
 				throw new Error(`Shotgun opens step ${current.n} first. Try again in a moment.`);
 			}
-			await this.saveFiles(step.scope.map((f) => absolutePath(f, root)));
+			await this.saveFiles(step!.scope.map((f) => absolutePath(f, root)));
 			try {
 				await this.recordUserLines(current, root);
 			} catch (error) {
@@ -812,7 +971,7 @@ class Shotgun implements vscode.Disposable {
 		if (base && api) {
 			await api.deleteMark(base).catch((error: unknown) => this.log.warn(`DataFlow did not delete the base ${base}: ${messageOf(error)}`));
 		}
-		this.store.finishStep(current.step.id, current.writer === 'user' ? 'step-done' : 'accept-receipt');
+		this.store.finishStep(current.step.id, current.writer === 'claude' ? 'accept-receipt' : 'step-done');
 		this.log.info(`Step ${current.n} of the task ${task.id} is done.`);
 		await this.openUserStep();
 	}
@@ -982,7 +1141,7 @@ class Shotgun implements vscode.Disposable {
 					this.store.editOrder(message.edit);
 					break;
 				case 'setLevel':
-					this.store.setLevel(message.step, message.level === null ? undefined : message.level as Level);
+					await this.changeLevel(message.step, message.level === null ? undefined : message.level as Level);
 					break;
 				case 'setLevelNote':
 					this.store.setLevelNote(message.step, message.note);
@@ -992,6 +1151,12 @@ class Shotgun implements vscode.Disposable {
 					break;
 				case 'setMark':
 					this.store.setMark(message.step, message.change, message.mark);
+					break;
+				case 'requestFrame':
+					await this.requestFrame(message.step);
+					break;
+				case 'showHint':
+					await this.showHint(message.step, message.hole, message.level);
 					break;
 				case 'setChangeNote':
 					this.store.setChangeNote(message.step, message.change, message.note);
@@ -1054,6 +1219,7 @@ class Shotgun implements vscode.Disposable {
 		this.hooks.update(snapshot);
 		this.steps.update(snapshot);
 		this.claudeLines.update(snapshot, this.lines);
+		this.frameHoles.update(snapshot, this.lines);
 		const status = statusOf(snapshot);
 		this.status.text = `$(send) ${status.text}`;
 		this.status.tooltip = status.tooltip;
@@ -1069,6 +1235,12 @@ class Shotgun implements vscode.Disposable {
 		void vscode.commands.executeCommand('setContext', 'shotgun.hasPlan', !!task && !task.isDone && task.stage === 'plan' && !!snapshot.plan);
 		const current = task && !task.isDone && task.stage === 'build' ? this.store.current : undefined;
 		void vscode.commands.executeCommand('setContext', 'shotgun.hasReceipt', current?.state === 'receipt');
+		void vscode.commands.executeCommand('setContext', 'shotgun.hasHoles', current?.state === 'holes');
+		// decision 17: in stage 5, the user changes the level of a step that Claude did not start
+		void vscode.commands.executeCommand('setContext', 'shotgun.canSetLevel', !!task && !task.isDone && !!snapshot.plan
+			&& (task.stage === 'plan' || task.stage === 'build'));
+		void vscode.commands.executeCommand('setContext', 'shotgun.canRequestFrame', current?.writer === 'user' && current.level === 4
+			&& (current.state === 'todo' || current.state === 'open'));
 		void this.openUserStep();
 	}
 }

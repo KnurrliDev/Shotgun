@@ -87,7 +87,8 @@ The steps of the plan go in sequence. The risk level of a step selects its write
 | Level | Writer |
 | --- | --- |
 | 1 and 2 | You. The step is an errand with a receipt for the user. |
-| 3 | The user. A later version of Shotgun gives you a frame with holes for the decisions of the user. |
-| 4 and 5 | The user. You change no file in the step, but you can answer questions in the chat. |
+| 3 | You write a frame, and the user fills its holes: the decisions of the user. |
+| 4 | The user. If the user selects "I want a frame" in the panel of Shotgun, you write a frame. |
+| 5 | The user. You change no file in the step, but you can answer questions in the chat. |
 
-Use the skill `shotgun-errand` when the user asks for a step, for example "Do step 5". Also use it for a fix, for example "Fix the issues of step 5". Do not change a file before `shotgun_start_step` opens the step.
+Use the skill `shotgun-errand` when the user asks for a step, for example "Do step 5". Also use it for a fix, for example "Fix the issues of step 5". Use the skill `shotgun-frame` when the user asks for a frame, for example "Give me a frame for step 4". Do not change a file before `shotgun_start_step` opens the step.

@@ -26,7 +26,7 @@ Load all these tools with 1 call of `ToolSearch`, with `select:` and the full na
 
 1. Call `shotgun_get_session`. Make sure that the stage is 5.
 2. Call `shotgun_get_step` with the step of the request, for example `"step": "5"`. A step has an id, for example `S5`, and a number in the plan. The user names the number.
-3. If the writer of the step is the user, stop. Tell the user that the user writes this step. You can answer questions in the chat.
+3. If the writer of the step is the user, stop. Tell the user that the user writes this step. You can answer questions in the chat. If the writer is a frame, use the skill `shotgun-frame`.
 4. If the step is not the current step, stop. The steps go in sequence. Tell the user the current step.
 5. Call `shotgun_start_step` with the step. Shotgun saves the files of the scope and keeps their text as the base of the step.
 6. Read the code of the places with the tool Read and with the read tools of DataFlow.

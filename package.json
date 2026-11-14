@@ -107,6 +107,26 @@
 				"category": "Shotgun"
 			},
 			{
+				"command": "shotgun.nextHole",
+				"title": "Go to the Next Hole",
+				"category": "Shotgun"
+			},
+			{
+				"command": "shotgun.previousHole",
+				"title": "Go to the Hole Before",
+				"category": "Shotgun"
+			},
+			{
+				"command": "shotgun.nextHint",
+				"title": "Show the Next Hint",
+				"category": "Shotgun"
+			},
+			{
+				"command": "shotgun.requestFrame",
+				"title": "I Want a Frame",
+				"category": "Shotgun"
+			},
+			{
 				"command": "shotgun.passGate",
 				"title": "Pass the Gate",
 				"category": "Shotgun"
@@ -150,7 +170,7 @@
 				},
 				{
 					"command": "shotgun.setLevel",
-					"when": "shotgun.hasPlan"
+					"when": "shotgun.canSetLevel"
 				},
 				{
 					"command": "shotgun.checkLevels",
@@ -165,11 +185,39 @@
 					"when": "shotgun.hasReceipt"
 				},
 				{
+					"command": "shotgun.nextHole",
+					"when": "shotgun.hasHoles"
+				},
+				{
+					"command": "shotgun.previousHole",
+					"when": "shotgun.hasHoles"
+				},
+				{
+					"command": "shotgun.nextHint",
+					"when": "shotgun.hasHoles"
+				},
+				{
+					"command": "shotgun.requestFrame",
+					"when": "shotgun.canRequestFrame"
+				},
+				{
 					"command": "shotgun.passGate",
 					"when": "shotgun.hasTask"
 				}
 			]
-		}
+		},
+		"keybindings": [
+			{
+				"command": "shotgun.nextHole",
+				"key": "tab",
+				"when": "editorTextFocus && shotgun.inFrame && !editorReadonly && !suggestWidgetVisible && !inlineSuggestionVisible && !inSnippetMode && !editorTabMovesFocus && !renameInputVisible && !parameterHintsVisible"
+			},
+			{
+				"command": "shotgun.previousHole",
+				"key": "shift+tab",
+				"when": "editorTextFocus && shotgun.inFrame && !editorReadonly && !suggestWidgetVisible && !inlineSuggestionVisible && !inSnippetMode && !editorTabMovesFocus && !renameInputVisible && !parameterHintsVisible"
+			}
+		]
 	},
 	"scripts": {
 		"vscode:prepublish": "npm run compile",
