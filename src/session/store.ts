@@ -3,11 +3,13 @@ import { EventEmitter } from 'events';
 import * as path from 'path';
 import { BRIEF_FILE, briefTemplate, PartId } from './brief';
 import {
-	ACTIVE_FILE, ActiveFile, ANSWERS_FILE, Decision, DECISIONS_FILE, decisionLine, DecisionInput, ENGINE_FILE, FILE_VERSION, jsonText, ORDER_FILE,
-	parseActive, parseDecisions, parseQuestions, parseTask, Question, QUESTIONS_FILE, readText, SHOTGUN_DIR, SURVEY_FILE, TASK_FILE, TASK_ID, TaskFile,
-	taskIdOf, writeTextAtomic,
+	ACTIVE_FILE, ActiveFile, ANSWERS_FILE, Decision, DECISIONS_FILE, decisionLine, DecisionInput, ENGINE_FILE, FILE_VERSION, jsonText, LEVELS_FILE,
+	ORDER_FILE, parseActive, parseDecisions, parseQuestions, parseTask, PLAN_FILE, Question, QUESTIONS_FILE, readText, RISK_FILE, SHOTGUN_DIR,
+	SURVEY_FILE, TASK_FILE, TASK_ID, TaskFile, taskIdOf, writeTextAtomic,
 } from './files';
 import { applyEdit, Order, OrderEdit, OrderFile, orderOf, OrderTask, parseOrder, surveyIds, TaskSurvey } from './order';
+import { LevelsFile, MAX_LEVEL_NOTE, parseLevels, parsePlan, parseRisk, Plan, PlanFile, RiskFile, UserLevel } from './plan';
+import type { Level } from './risk';
 import { Gate, passGate, Stage, START } from './stages';
 import { Answer, AnswersFile, checkAnswer, EngineFile, parseAnswers, parseEngine, parseSurvey, Survey, SurveyFile, SurveyHook } from './survey';
 
@@ -34,6 +36,9 @@ export interface Snapshot {
 	readonly engine: EngineFile | undefined; // the facts of DataFlow for the hooks of the survey
 	readonly answers: Readonly<Record<string, Answer>>; // the answers of the user to the questions of the survey
 	readonly order: OrderFile | undefined; // the order of the user in stage 3. undefined: the order of the survey
+	readonly plan: PlanFile | undefined; // the plan of Claude in stage 4
+	readonly risk: RiskFile | undefined; // the facts of DataFlow and the levels of the rules for the steps of the plan
+	readonly levels: LevelsFile | undefined; // the levels and the notes of the user for the steps
 	readonly problems: readonly string[]; // the stage files that Shotgun cannot read
 }
 
@@ -55,7 +60,7 @@ export class SessionStore {
 	constructor(private readonly root: string | undefined, private readonly now: () => Date = () => new Date()) {
 		this.state = {
 			root, task: undefined, isPaused: false, tasks: [], decisions: [], questions: [], survey: undefined, engine: undefined, answers: {},
-			order: undefined, problems: [],
+			order: undefined, plan: undefined, risk: undefined, levels: undefined, problems: [],
 		};
 	}
 
@@ -120,6 +125,9 @@ export class SessionStore {
 		let engine: EngineFile | undefined;
 		let answers: Readonly<Record<string, Answer>> = {};
 		let order: OrderFile | undefined;
+		let plan: PlanFile | undefined;
+		let risk: RiskFile | undefined;
+		let levels: LevelsFile | undefined;
 		// a stage file that is there, but that Shotgun cannot read, is a problem
 		const readFile = <T>(name: string, parse: (text: string, id: string) => T): T | undefined => {
 			const text = task && dir ? readText(path.join(dir, task.id, name)) : undefined;
@@ -138,6 +146,9 @@ export class SessionStore {
 			engine = readFile(ENGINE_FILE, parseEngine);
 			answers = readFile(ANSWERS_FILE, parseAnswers)?.answers ?? {};
 			order = readFile(ORDER_FILE, parseOrder);
+			plan = readFile(PLAN_FILE, parsePlan);
+			risk = readFile(RISK_FILE, parseRisk);
+			levels = readFile(LEVELS_FILE, parseLevels);
 			const parsed = parseDecisions(readText(path.join(dir, task.id, DECISIONS_FILE)) ?? '');
 			decisions = parsed.decisions.slice(-MAX_DECISIONS);
 			if (parsed.invalid > 0) {
@@ -163,6 +174,9 @@ export class SessionStore {
 			engine,
 			answers,
 			order,
+			plan,
+			risk,
+			levels,
 			problems,
 		});
 	}
@@ -282,9 +296,13 @@ export class SessionStore {
 	}
 
 	// The survey of Claude for 1 task of the order in stage 3. The new hooks go into survey.json, after the hooks of stage 2
+	// In stage 4, Claude surveys a task with no survey before the plan
 	writeTaskSurvey(id: string, survey: Omit<TaskSurvey, 'time'>, newHooks: readonly SurveyHook[]): void {
 		const dir = this.requireDir();
-		const task = this.requireStage('order', 'Claude surveys a task of the order only in stage 3, the order.');
+		const task = this.requireTask();
+		if (task.isDone || (task.stage !== 'order' && task.stage !== 'plan')) {
+			throw new Error('Claude surveys a task of the order only in the stages 3 and 4.');
+		}
 		const current = this.state.survey;
 		if (!current) {
 			throw new Error('The active task has no survey.');
@@ -307,6 +325,66 @@ export class SessionStore {
 		const task = this.requireStage('order', 'The active task is not in stage 3, the order.');
 		this.writeOrder(task.id, this.order);
 		return this.passGate('accept-order');
+	}
+
+	// The plan of Claude for the active task in stage 4. A new plan replaces the old plan. The levels of the user stay
+	// with the ids of their steps
+	writePlan(plan: Plan): PlanFile {
+		const dir = this.requireDir();
+		const task = this.requireStage('plan', 'Claude gives the plan only in stage 4, the plan.');
+		const file: PlanFile = { version: FILE_VERSION, time: this.time(), steps: plan.steps };
+		writeTextAtomic(path.join(dir, task.id, PLAN_FILE), jsonText(file));
+		this.append(task.id, { kind: 'plan', by: 'claude', steps: plan.steps.length });
+		this.load();
+		return file;
+	}
+
+	// The facts of DataFlow and the levels of the rules for the steps of the plan of the active task
+	writeRisk(risk: Omit<RiskFile, 'version' | 'time'>): void {
+		const dir = this.requireDir();
+		const task = this.requireTask();
+		writeTextAtomic(path.join(dir, task.id, RISK_FILE), jsonText({ version: FILE_VERSION, time: this.time(), ...risk } satisfies RiskFile));
+		this.load();
+	}
+
+	// The level of the user for a step. undefined: the level of the rules again. The ledger records each change with the
+	// level of the rules at that time
+	setLevel(step: string, level: Level | undefined): void {
+		const task = this.requireStage('plan', 'You can change a level only in stage 4, the plan.');
+		this.requireStep(step);
+		const old = this.state.levels?.levels[step];
+		if (old?.level === level) {
+			return;
+		}
+		this.writeLevel(task.id, step, level, old?.note);
+		this.append(task.id, { kind: 'level', by: 'user', step, level: level ?? null, rule: this.state.risk?.steps[step]?.level ?? null });
+		this.load();
+	}
+
+	// The note of the user for a step, for example the reason of a different level. An empty note removes the note
+	setLevelNote(step: string, note: string): void {
+		const task = this.requireStage('plan', 'You can change a note only in stage 4, the plan.');
+		this.requireStep(step);
+		const text = note.trim().replace(/\s+/g, ' ');
+		if (text.length > MAX_LEVEL_NOTE) {
+			throw new Error(`A note has a maximum of ${MAX_LEVEL_NOTE} characters.`);
+		}
+		const old = this.state.levels?.levels[step];
+		if ((old?.note ?? '') === text) {
+			return;
+		}
+		this.writeLevel(task.id, step, old?.level, text || undefined);
+		this.append(task.id, { kind: 'level-note', by: 'user', step, text });
+		this.load();
+	}
+
+	// The gate of stage 4, "Accept the plan". The levels and the notes of the user are in the ledger already
+	acceptPlan(): TaskFile {
+		this.requireStage('plan', 'The active task is not in stage 4, the plan.');
+		if (!this.state.plan) {
+			throw new Error('The active task has no plan. Ask Claude for the plan first.');
+		}
+		return this.passGate('accept-plan');
 	}
 
 	// The user closes a question of Claude, for example after the answer in the brief
@@ -409,6 +487,22 @@ export class SessionStore {
 			throw new Error(message);
 		}
 		return task;
+	}
+
+	private requireStep(step: string): void {
+		if (!this.state.plan?.steps.some((s) => s.id === step)) {
+			throw new Error(`The plan has no step ${step}.`);
+		}
+	}
+
+	private writeLevel(id: string, step: string, level: Level | undefined, note: string | undefined): void {
+		const levels: Record<string, UserLevel> = { ...(this.state.levels?.levels ?? {}) };
+		if (level === undefined && note === undefined) {
+			delete levels[step];
+		} else {
+			levels[step] = { ...(level ? { level } : {}), ...(note ? { note } : {}), time: this.time() };
+		}
+		writeTextAtomic(path.join(this.requireDir(), id, LEVELS_FILE), jsonText({ version: FILE_VERSION, levels } satisfies LevelsFile));
 	}
 
 	private writeOrder(id: string, order: Order): void {

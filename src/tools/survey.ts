@@ -1,4 +1,4 @@
-import type { HeatFacts, PlaceFacts } from '../dataflow/dataflow-api';
+import type { CallGraphFacts, HeatFacts, PlaceFacts } from '../dataflow/dataflow-api';
 import { absolutePath, IS_CASE_SENSITIVE, isCppFile } from '../session/paths';
 import { stageText } from '../session/stages';
 import type { SessionStore } from '../session/store';
@@ -12,6 +12,11 @@ export interface EngineApi {
 	readonly tools: () => readonly string[]; // the read tools of the MCP server of DataFlow
 	readonly place: (file: string, line: number) => Promise<PlaceFacts>;
 	readonly heat: (file: string, lines: Lines) => Promise<HeatFacts>;
+	// for the risk levels of the plan: the heat of 1 function, and the state of the call graph with its frame functions.
+	// scan starts the scan of the call graph
+	readonly functionHeat?: (file: string, name: string) => Promise<HeatFacts>;
+	readonly callGraph?: () => Promise<CallGraphFacts>;
+	readonly scan?: () => void;
 }
 
 export interface SurveyDeps {

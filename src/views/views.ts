@@ -39,6 +39,13 @@ export function isFromView(value: unknown): value is FromView {
 			return typeof m.id === 'string' && typeof m.text === 'string' && m.text.length <= 4000;
 		case 'editOrder':
 			return isOrderEdit(m.edit);
+		case 'setLevel':
+			return typeof m.step === 'string' && m.step.length <= 64 && (m.level === null || (Number.isInteger(m.level) && (m.level as number) >= 1
+				&& (m.level as number) <= 5));
+		case 'setLevelNote':
+			return typeof m.step === 'string' && m.step.length <= 64 && typeof m.note === 'string' && m.note.length <= 2000;
+		case 'checkLevels':
+			return true;
 		default:
 			return false;
 	}
@@ -91,6 +98,7 @@ export class Views implements vscode.Disposable {
 	private model: ViewModel | undefined;
 	private panel: vscode.WebviewView | undefined;
 	private page: vscode.WebviewPanel | undefined;
+	private step: string | undefined; // the step of the last click on a CodeLens line
 	private readonly disposables: vscode.Disposable[] = [];
 
 	constructor(private readonly extensionUri: vscode.Uri, private readonly onMessage: (message: FromView) => void) {
@@ -104,6 +112,13 @@ export class Views implements vscode.Disposable {
 		this.model = model;
 		this.post(this.panel?.webview);
 		this.post(this.page?.webview);
+	}
+
+	// Opens the page at a step of the plan, for example after a click on a CodeLens line in the text editor
+	showStep(id: string): void {
+		this.step = id;
+		this.showPage();
+		this.postStep();
 	}
 
 	// Opens the page in the editor area, or shows it
@@ -158,6 +173,10 @@ export class Views implements vscode.Disposable {
 			}
 			if (message.type === 'ready') {
 				this.post(webview);
+				// a new page gets the step of the last click on a CodeLens line after its model
+				if (webview === this.page?.webview) {
+					this.postStep();
+				}
 			} else {
 				this.onMessage(message);
 			}
@@ -167,6 +186,12 @@ export class Views implements vscode.Disposable {
 	private post(webview: vscode.Webview | undefined): void {
 		if (webview && this.model) {
 			void webview.postMessage({ type: 'model', model: this.model } satisfies ToView);
+		}
+	}
+
+	private postStep(): void {
+		if (this.page && this.step) {
+			void this.page.webview.postMessage({ type: 'selectStep', id: this.step } satisfies ToView);
 		}
 	}
 }

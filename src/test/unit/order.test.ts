@@ -243,9 +243,8 @@ suite('Order', () => {
 		]);
 		const session = tool('get_session').call({}) as { order: unknown };
 		assert.deepStrictEqual(session.order, { inPlan: 3, later: 0, changed: [], warnings: 0, tool: 'Call shotgun_get_order for the tasks in sequence.' });
-		// after the gate, the order does not change
+		// after the gate, the order does not change. Claude can still survey a task in stage 4, before the plan
 		store.acceptOrder();
-		await assert.rejects(call('submit_task_survey', { task: 'T1', text: 'A cycle limit', hooks: ['H1'], needs: [] }), /The user accepted the order already/);
 		assert.throws(() => store.editOrder({ action: 'add', text: 'x' }), /only in stage 3/);
 	});
 
@@ -280,7 +279,7 @@ suite('Order', () => {
 		// the gate: order.json keeps the order, and the page shows it with no edit
 		store.acceptOrder();
 		const after = model().task!;
-		assert.deepStrictEqual([after.stage, after.order?.isEditable, after.gate], ['plan', false, undefined]);
+		assert.deepStrictEqual([after.stage, after.order?.isEditable, after.gate?.label, after.gate?.isEnabled], ['plan', false, 'Accept the plan', false]);
 		assert.strictEqual(parseOrder(readFileSync(path.join(root, '.shotgun', id, 'order.json'), 'utf8'), id).tasks.length, 3);
 		assert.strictEqual(decisionText(store.snapshot.decisions[store.snapshot.decisions.length - 1]), 'You passed the gate "Accept the order" of stage 3.');
 	});

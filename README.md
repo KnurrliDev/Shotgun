@@ -16,12 +16,13 @@ A button of Shotgun records a decision of the user. It never starts Claude: you 
 
 ## Status
 
-Shotgun is in development. The phases 1 to 4 of 10 are complete:
+Shotgun is in development. The phases 1 to 5 of 10 are complete:
 
 - Phase 1: the tasks, the stages, the panel, the page, the guard and the connection to Claude Code.
 - Phase 2: the brief, the questions of Claude about the brief, and the gate of stage 1.
 - Phase 3: the survey of Claude with the facts of DataFlow, the hooks in the text editor, and the gate of stage 2.
 - Phase 4: your order of the tasks, the survey of the changed tasks, and the gate of stage 3.
+- Phase 5: the plan of Claude, the risk level of each step from the facts of DataFlow, and the gate of stage 4.
 
 `implementation-plan.md` gives the phases, and `CHANGELOG.md` gives the content of each phase.
 
@@ -47,7 +48,10 @@ Shotgun is in development. The phases 1 to 4 of 10 are complete:
 10. On the order page, put the tasks in sequence. You can change the text of a task, add a task, and keep a task for later.
 11. Tell Claude "Survey my changed tasks." Claude gives the hooks and the needs of each task with a new text, and of each new task.
 12. When the order is correct, select **Accept the order**.
-13. Follow the panel of Shotgun in the secondary side bar. It shows the next work and the requests for Claude Code.
+13. Tell Claude "Make the plan." Claude makes the steps in your sequence, and Shotgun gives each step a risk level.
+14. Check the levels on the plan page. To change a level, select **Lower**, **Raise** or **Shotgun: Set Risk Level**. Write your reason in the note of the step.
+15. When the plan is correct, select **Accept the plan**.
+16. Follow the panel of Shotgun in the secondary side bar. It shows the next work and the requests for Claude Code.
 
 | Command | Function |
 | --- | --- |
@@ -57,6 +61,8 @@ Shotgun is in development. The phases 1 to 4 of 10 are complete:
 | Shotgun: Close Question | Closes a question of Claude about the brief. |
 | Shotgun: Answer Question | Gives your answer to a question of the survey. An empty answer removes the answer. |
 | Shotgun: Check the Hooks Again | Gets the facts of DataFlow for the hooks of the survey again, at their lines now. |
+| Shotgun: Set Risk Level | Sets your level for a step of the plan, or sets the level of the rules again. |
+| Shotgun: Check the Levels Again | Gets the facts of DataFlow and the levels of the rules for the steps of the plan again. |
 | Shotgun: Pass the Gate | Records the gate of the stage, for example "The brief is ready". |
 | Shotgun: Pause | Stops the guard for work outside of the task. The ledger records the pause. |
 | Shotgun: Continue | Starts the guard again. |
@@ -112,6 +118,32 @@ A task with a new text and a new task have no survey. Tell Claude "Survey my cha
 
 The gate **Accept the order** needs 1 task or more in the plan, and a text for each task of the plan. With warnings, the button tells their number, and a modal message asks you first.
 
+## The plan and the risk levels
+
+In stage 4, Claude makes the steps of the plan in your sequence. Each step has a task, hooks, places, a text and checks. A place is lines of a file that is there, or a new file.
+
+Shotgun gives each step a risk level from the facts of DataFlow. The level of a step is the highest level of its places:
+
+| Facts of DataFlow | Risk level |
+| --- | --- |
+| A new file | 1 |
+| A cool function, a file that is not C or C++ ("no facts"), or lines with no function | 2 |
+| A warm function | 3 |
+| A hot function | 4 |
+| A very hot function | 5 |
+
+More rules make a level only higher:
+
+- Callers that the call graph cannot see: level 3 or higher.
+- A frame path with more than 8 calls, or a line in the main loop: level 4 or higher.
+- A worker thread at the line: 1 level more. A lock at the line: 1 level more. The maximum is 5.
+- A data member of a type: level 2, or level 3 if threads share a member or a member is on a frame path. A change of a data member gets the level of the hottest function that uses it.
+- Before the end of the scan of the call graph, a function with an incomplete reach has no level. After a stopped scan or a failed scan, the level is 3 or higher.
+
+In stage 5, the level selects the writer of the step. At the levels 1 and 2, Claude writes. At level 3, Claude writes a frame with holes for you. At the levels 4 and 5, you write. Only you change a level. The ledger records each level and each note of yours.
+
+In the stages 4 and 5, the text editor shows each place of a step with the color of its level, and a CodeLens line. A click on the CodeLens line shows the step on the page.
+
 ## Files
 
 | File | Content |
@@ -124,6 +156,9 @@ The gate **Accept the order** needs 1 task or more in the plan, and a text for e
 | `.shotgun/<task>/engine.json` | The facts of DataFlow for each hook of the survey. |
 | `.shotgun/<task>/answers.json` | Your answers to the questions of the survey. |
 | `.shotgun/<task>/order.json` | Your order of the tasks: the sequence, your texts, your new tasks, the tasks for later, and the surveys of Claude for the changed tasks. |
+| `.shotgun/<task>/plan.json` | The steps of the plan of Claude. |
+| `.shotgun/<task>/risk.json` | The facts of DataFlow and the level of the rules for each step. |
+| `.shotgun/<task>/levels.json` | Your levels and your notes for the steps. |
 | `.shotgun/<task>/decisions.jsonl` | The ledger: 1 line for each decision of the user and for each deny of the guard. |
 | `~/.shotgun/claude` | The plugin of Shotgun for Claude Code, in a local marketplace. |
 | `.claude/settings.local.json` | The local settings of Claude Code in the project. The connection turns the plugin of Shotgun on there. |
@@ -145,9 +180,9 @@ The window uses the DataFlow extension of VS Code. To use DataFlow from its repo
 | Command | Tests |
 | --- | --- |
 | `npm test` | The unit tests in a test build of VS Code. The tests load DataFlow from `../DataFlow`, or from the folder of the environment variable `DATAFLOW_REPO`. If the environment variable `CLAUDE_EXE` gives the CLI of Claude Code, a test also checks the plugin with `claude plugin validate`. |
-| `node scripts/test-claude.mjs <run folder>` | The test with Claude Code. 2 tasks go from the brief to stage 2. Task 1 has a brief in a file, and task 2 has a brief from the chat. The guard denies a change in stage 1. Then Claude makes the survey of task 1, and task 1 goes to stage 3. On the order page, the test changes the order. Claude surveys the changed tasks, and task 1 goes to stage 4. Use a new run folder outside of the repository. |
+| `node scripts/test-claude.mjs <run folder>` | The test with Claude Code. 2 tasks go from the brief to stage 2. Task 1 has a brief in a file, and task 2 has a brief from the chat. The guard denies a change in stage 1. Then Claude makes the survey of task 1, and task 1 goes to stage 3. On the order page, the test changes the order. Claude surveys the changed tasks, and task 1 goes to stage 4. Then Claude makes the plan, the test changes a level, and task 1 goes to stage 5. Use a new run folder outside of the repository. |
 
-NOTE: `scripts/test-claude.mjs` uses the Claude subscription of the user for 5 runs of Claude Code. It does not change the settings of the user.
+NOTE: `scripts/test-claude.mjs` uses the Claude subscription of the user for 6 runs of Claude Code. It does not change the settings of the user.
 
 ## License
 

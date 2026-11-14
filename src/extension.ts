@@ -5,14 +5,18 @@ import { isSamePath } from './claude/settings';
 import type { DataFlowApi } from './dataflow/dataflow-api';
 import { linkDataFlow } from './dataflow/dataflow';
 import { HookDecorations } from './editor/hooks';
+import { StepDecorations } from './editor/steps';
 import { parseBrief } from './session/brief';
 import { readText } from './session/files';
 import { orderWarnings } from './session/order';
 import { absolutePath, isCppFile, isInside } from './session/paths';
+import { levelOf } from './session/plan';
+import { Level, LEVEL_INFO, LEVELS } from './session/risk';
 import { GATE_LABEL, stageText } from './session/stages';
 import { messageOf, SessionStore, Snapshot } from './session/store';
 import { findHook, MAX_ANSWER, movedHook } from './session/survey';
 import { PromptLog } from './tools/prompts';
+import { planRisk } from './tools/plan';
 import { EngineApi, engineFacts } from './tools/survey';
 import { shotgunTools } from './tools/tools';
 import { buildModel, DataFlowView, statusOf } from './views/model';
@@ -54,13 +58,15 @@ class Shotgun implements vscode.Disposable {
 	private readonly views: Views;
 	// the last prompts of the user, only in memory, for the check of a brief from the chat (decision 12)
 	private readonly prompts = new PromptLog();
-	// the hooks of the survey in the text editor, in the stages 2 and 3
+	// the hooks of the survey in the text editor, in the stages 2 and 3, and the steps of the plan in the stages 4 and 5
 	private readonly hooks = new HookDecorations();
+	private readonly steps = new StepDecorations();
 	private readonly disposables: vscode.Disposable[] = [];
 	private dataflow: DataFlowView = { state: 'linking' };
 	private api: DataFlowApi | undefined;
 	private updateTimer: NodeJS.Timeout | undefined;
 	private isCheckingHooks = false;
+	private isCheckingRisk = false;
 
 	constructor(private readonly context: vscode.ExtensionContext) {
 		// Shotgun keeps its files in the first workspace folder (proposal P5)
@@ -70,7 +76,7 @@ class Shotgun implements vscode.Disposable {
 		this.status.name = 'Shotgun';
 		this.status.command = `${PANEL_ID}.focus`;
 		this.disposables.push(
-			this.log, this.status, this.views, this.hooks,
+			this.log, this.status, this.views, this.hooks, this.steps,
 			this.store.onDidChange(() => this.update()),
 			...this.commands(),
 			this.watchFiles(),
@@ -131,13 +137,13 @@ class Shotgun implements vscode.Disposable {
 				this.dataflow = { ...this.dataflow, engine: e.state, engineError: e.error };
 				this.update();
 				if (e.state === 'ready') {
-					void this.checkHooks(false).catch((error: unknown) => this.log.warn(`Shotgun did not check the hooks: ${messageOf(error)}`));
+					this.checkFacts();
 				}
 			}),
-			// at the end of the scan of the call graph, the heat of the hooks can change
+			// at the end of the scan of the call graph, the heat of the hooks and the levels of the steps can change
 			api.onDidChangeCallGraph((e) => {
-				if (e.state === 'ready') {
-					void this.checkHooks(false).catch((error: unknown) => this.log.warn(`Shotgun did not check the hooks: ${messageOf(error)}`));
+				if (e.state === 'ready' || e.state === 'stopped' || e.state === 'failed') {
+					this.checkFacts();
 				}
 			}),
 		);
@@ -155,7 +161,47 @@ class Shotgun implements vscode.Disposable {
 			tools: () => api.tools.filter((t) => t.isReadOnly && !t.name.startsWith('shotgun_')).map((t) => t.name),
 			place: (file, line) => api.getPlace({ file, line }),
 			heat: (file, lines) => api.getHeat({ file, lines: [lines[0], lines[1]] }),
+			functionHeat: (file, name) => api.getHeat({ file, function: name }),
+			callGraph: () => api.getCallGraph(),
+			scan: () => this.startScan(),
 		};
+	}
+
+	// The facts of DataFlow again where they are missing: the hooks in the stages 2 and 3, the levels in stage 4
+	private checkFacts(): void {
+		void this.checkHooks(false).catch((error: unknown) => this.log.warn(`Shotgun did not check the hooks: ${messageOf(error)}`));
+		void this.checkRisk(false).catch((error: unknown) => this.log.warn(`Shotgun did not check the levels: ${messageOf(error)}`));
+	}
+
+	// Gets the levels of the rules for the steps of the plan again, at the lines of their places now. isForced false: only
+	// if a level is missing, or if the scan of the call graph was not complete at the last check
+	private async checkRisk(isForced: boolean): Promise<void> {
+		const { task, plan, risk, root } = this.store.snapshot;
+		if (!task || !plan || !root || task.isDone || task.stage !== 'plan') {
+			if (isForced) {
+				throw new Error('The active task has no plan in stage 4, so it has no levels to check.');
+			}
+			return;
+		}
+		const isMissing = !risk || risk.scan !== 'ready' || plan.steps.some((s) => !risk.steps[s.id] || risk.steps[s.id].level === null);
+		if ((!isForced && !isMissing) || this.isCheckingRisk) {
+			return;
+		}
+		this.isCheckingRisk = true;
+		try {
+			const next = await planRisk(this.engineApi(), root, plan, (f) => this.textOf(f)?.split(/\r?\n/));
+			// the user can open a different task, or Claude can give a new plan, while DataFlow works
+			const now = this.store.snapshot;
+			if (now.task?.id !== task.id || now.plan?.time !== plan.time) {
+				return;
+			}
+			this.store.writeRisk(next);
+			const waiting = Object.values(next.steps).filter((s) => s.level === null).length;
+			this.log.info(`Shotgun checked the levels of ${plan.steps.length} steps with DataFlow. `
+				+ (waiting > 0 ? `${waiting} steps have no level yet.` : 'Each step has a level of the rules.'));
+		} finally {
+			this.isCheckingRisk = false;
+		}
 	}
 
 	// Gets the facts of DataFlow for the hooks of the survey again, at their lines now. isForced false: only if facts are
@@ -218,20 +264,25 @@ class Shotgun implements vscode.Disposable {
 		return !!file && doc.uri.scheme === 'file' && isSamePath(doc.uri.fsPath, file);
 	}
 
-	// The brief of the active task, or a file with a hook of its survey: a change of the text changes the views
+	// The brief of the active task, or a file with a hook of its survey or a place of its plan: a change of the text changes
+	// the views
 	private isWatched(doc: vscode.TextDocument): boolean {
 		if (this.isBrief(doc)) {
 			return true;
 		}
-		const { survey, root } = this.store.snapshot;
-		return !!survey && !!root && doc.uri.scheme === 'file' && survey.hooks.some((h) => isSamePath(absolutePath(h.file, root), doc.uri.fsPath));
+		const { survey, plan, root } = this.store.snapshot;
+		if (!root || doc.uri.scheme !== 'file') {
+			return false;
+		}
+		const isFile = (file: string) => isSamePath(absolutePath(file, root), doc.uri.fsPath);
+		return !!survey?.hooks.some((h) => isFile(h.file)) || !!plan?.steps.some((s) => s.places.some((p) => isFile(p.file)));
 	}
 
 	private commands(): vscode.Disposable[] {
 		// a command shows its error to the user
-		const run = (fn: () => unknown) => async () => {
+		const run = (fn: (arg?: unknown) => unknown) => async (arg?: unknown) => {
 			try {
-				await fn();
+				await fn(arg);
 			} catch (error) {
 				void vscode.window.showErrorMessage(`Shotgun: ${messageOf(error)}`);
 			}
@@ -246,6 +297,9 @@ class Shotgun implements vscode.Disposable {
 			vscode.commands.registerCommand('shotgun.closeQuestion', run(() => this.closeQuestion())),
 			vscode.commands.registerCommand('shotgun.answerQuestion', run(() => this.answerQuestion())),
 			vscode.commands.registerCommand('shotgun.checkHooks', run(() => this.checkHooks(true))),
+			vscode.commands.registerCommand('shotgun.checkLevels', run(() => this.checkRisk(true))),
+			vscode.commands.registerCommand('shotgun.setLevel', run(() => this.setLevel())),
+			vscode.commands.registerCommand('shotgun.showStep', run((id?: unknown) => (typeof id === 'string' ? this.views.showStep(id) : this.views.showPage()))),
 			vscode.commands.registerCommand('shotgun.passGate', run(() => this.passGate())),
 			vscode.commands.registerCommand('shotgun.connectClaude', run(() => this.connectClaude())),
 			vscode.commands.registerCommand('shotgun.disconnectClaude', run(() => this.disconnectClaude())),
@@ -358,6 +412,33 @@ class Shotgun implements vscode.Disposable {
 		}
 	}
 
+	// The level of the user for a step, with the keyboard. The page has the same buttons
+	private async setLevel(): Promise<void> {
+		const { task, plan, risk, levels } = this.store.snapshot;
+		if (!task || task.isDone || task.stage !== 'plan' || !plan) {
+			void vscode.window.showInformationMessage('Shotgun: the active task has no plan in stage 4.');
+			return;
+		}
+		const step = await vscode.window.showQuickPick(plan.steps.map((s, i) => {
+			const l = levelOf(s.id, risk, levels);
+			return {
+				label: `${i + 1}. ${s.title}`,
+				description: l.level ? `level ${l.level}${l.user ? `, the rules gave ${l.rule ?? 'no level'}` : ''}` : 'no level yet',
+				id: s.id,
+			};
+		}), { title: 'Shotgun: Set Risk Level', placeHolder: 'Select the step' });
+		if (!step) {
+			return;
+		}
+		const choice = await vscode.window.showQuickPick<vscode.QuickPickItem & { level: Level | undefined }>([
+			...LEVELS.map((n) => ({ label: `Level ${n}: ${LEVEL_INFO[n].name}`, detail: LEVEL_INFO[n].text, level: n as Level | undefined })),
+			{ label: 'The level of the rules', detail: 'Removes your level. The step gets the level of the rules again.', level: undefined },
+		], { title: `Shotgun: Set Risk Level of ${step.label}`, placeHolder: 'Select the level' });
+		if (choice) {
+			this.store.setLevel(step.id, choice.level);
+		}
+	}
+
 	// Opens a file of the project at a line, for example the place of a hook from the survey page
 	private async openPlace(file: string, line: number): Promise<void> {
 		// the message comes from a webview, so Shotgun opens only files in the workspace folders
@@ -384,6 +465,8 @@ class Shotgun implements vscode.Disposable {
 				return this.passSurveyGate(task);
 			case 'order':
 				return this.passOrderGate(task);
+			case 'plan':
+				return this.passPlanGate(task);
 			default:
 				throw new Error(`This version of Shotgun does not have the gate of ${stageText(task.stage)} yet.`);
 		}
@@ -432,6 +515,20 @@ class Shotgun implements vscode.Disposable {
 		}
 		this.store.acceptOrder();
 		this.log.info(`The task ${task.id} passed the gate "${GATE_LABEL['accept-order']}" with ${plan.length} tasks in the plan.`);
+	}
+
+	// The gate of stage 4, "Accept the plan". Each step needs a level: the level of the rules, or a level of the user
+	private passPlanGate(task: NonNullable<Snapshot['task']>): void {
+		const { plan, risk, levels } = this.store.snapshot;
+		if (!plan) {
+			throw new Error('The active task has no plan. Ask Claude for the plan first, for example with "Make the plan."');
+		}
+		const waiting = plan.steps.filter((s) => levelOf(s.id, risk, levels).level === null).map((s) => s.id);
+		if (waiting.length > 0) {
+			throw new Error(`The steps ${waiting.join(', ')} have no level yet. Wait for the end of the scan of the call graph, or set their levels.`);
+		}
+		this.store.acceptPlan();
+		this.log.info(`The task ${task.id} passed the gate "${GATE_LABEL['accept-plan']}" with ${plan.steps.length} steps.`);
 	}
 
 	// The gate of stage 1, "The brief is ready"
@@ -539,6 +636,15 @@ class Shotgun implements vscode.Disposable {
 				case 'editOrder':
 					this.store.editOrder(message.edit);
 					break;
+				case 'setLevel':
+					this.store.setLevel(message.step, message.level === null ? undefined : message.level as Level);
+					break;
+				case 'setLevelNote':
+					this.store.setLevelNote(message.step, message.note);
+					break;
+				case 'checkLevels':
+					await this.checkRisk(true);
+					break;
 				default:
 					break;
 			}
@@ -589,6 +695,7 @@ class Shotgun implements vscode.Disposable {
 			readLines: (f) => this.textOf(f)?.split(/\r?\n/),
 		}));
 		this.hooks.update(snapshot);
+		this.steps.update(snapshot);
 		const status = statusOf(snapshot);
 		this.status.text = `$(send) ${status.text}`;
 		this.status.tooltip = status.tooltip;
@@ -601,5 +708,6 @@ class Shotgun implements vscode.Disposable {
 		void vscode.commands.executeCommand('setContext', 'shotgun.hasSurveyQuestions', isSurvey && survey.questions.length > 0);
 		void vscode.commands.executeCommand('setContext', 'shotgun.hasHooks',
 			!!task && !task.isDone && (task.stage === 'survey' || task.stage === 'order') && !!survey && survey.hooks.length > 0);
+		void vscode.commands.executeCommand('setContext', 'shotgun.hasPlan', !!task && !task.isDone && task.stage === 'plan' && !!snapshot.plan);
 	}
 }

@@ -1,6 +1,6 @@
 // The test of Shotgun with Claude Code. It starts the test build of VS Code with DataFlow and Shotgun from their
 // repository folders. In VS Code, it makes a task with "Shotgun: New Task", and connects DataFlow and Shotgun to Claude
-// Code with their commands. Then it runs 5 prompts of the CLI of Claude Code in print mode:
+// Code with their commands. Then it runs 6 prompts of the CLI of Claude Code in print mode:
 // 1. Task 1: the test writes the brief into brief.md, as the user does. "Ask me questions about my brief." loads the
 //    skill shotgun, and Claude gives its questions with shotgun_submit_questions. The test closes the questions.
 // 2. Claude tries to change a file of the project in stage 1, and the guard denies the change (phase 1).
@@ -12,13 +12,16 @@
 // 5. On the order page, the test changes the text of a task, adds a task and moves it. "Survey my changed tasks."
 //    loads the skill shotgun-survey, and Claude surveys the 2 tasks with shotgun_submit_task_survey. Then the test
 //    passes the gate "Accept the order" on the page (the condition of phase 4).
+// 6. "Make the plan." loads the skill shotgun-plan, and Claude gives the steps with shotgun_submit_plan. The rules give
+//    each step a level from the facts of DataFlow. The test changes a level and writes a note on the page, and passes
+//    the gate "Accept the plan" (the condition of phase 5).
 // The commands write the settings of proposal P15, and the test checks these files. The CLI loads the 2 plugins with
 // --plugin-dir from the folders that the commands wrote. The CLI uses the login and thus the config folder of the user,
 // and a marketplace from settings would go into the plugin data of the user.
 // The settings of the user do not change: the test build has its own user data, MCP registry, folder for the settings
 // of Claude Code and Shotgun folder. The test records the plugin data of Claude Code of the user before the runs, and
 // checks it after them. It removes the empty folders that the CLI makes there.
-// The test uses the Claude subscription of the user for 5 runs of Claude Code, so it runs only on request.
+// The test uses the Claude subscription of the user for 6 runs of Claude Code, so it runs only on request.
 // Usage: node scripts/test-claude.mjs <new run folder>
 // Environment: DATAFLOW_REPO (default: ../DataFlow), CLAUDE_EXE (default: the CLI of the VS Code extension of Claude Code)
 import { execFileSync, spawn } from 'node:child_process';
@@ -42,11 +45,13 @@ const SUBMIT_QUESTIONS = 'mcp__plugin_dataflow_dataflow__shotgun_submit_question
 const SUBMIT_SURVEY = 'mcp__plugin_dataflow_dataflow__shotgun_submit_survey';
 const GET_ORDER = 'mcp__plugin_dataflow_dataflow__shotgun_get_order';
 const SUBMIT_TASK_SURVEY = 'mcp__plugin_dataflow_dataflow__shotgun_submit_task_survey';
+const SUBMIT_PLAN = 'mcp__plugin_dataflow_dataflow__shotgun_submit_plan';
+const GET_PLAN = 'mcp__plugin_dataflow_dataflow__shotgun_get_plan';
 // The read tools of DataFlow for the survey
 const READ_TOOLS = ['list_functions', 'get_outline', 'get_place', 'get_callers', 'get_calls', 'get_threads', 'get_heat', 'get_flow', 'get_logic',
 	'get_structure', 'get_member_sites', 'get_includes', 'get_call_graph', 'get_hidden'].map((t) => `mcp__plugin_dataflow_dataflow__${t}`);
 // The number of the tools of Shotgun in the MCP server of DataFlow
-const SHOTGUN_TOOLS = 8;
+const SHOTGUN_TOOLS = 10;
 // The brief of task 1, as the user writes it in brief.md
 const BRIEF_1 = [
 	`# Brief: ${TITLE}`, '',
@@ -937,6 +942,119 @@ async function main() {
 		text = await poll(async () => (await panelText())?.includes('Make the plan.') && true, 15);
 		check('The panel shows stage 4 of task 1 with its request', !!text, await panelText());
 		await wb.shot('panel-plan.png');
+
+		// 6: the plan of task 1 (phase 5). Claude makes the steps, and the rules give each step a level from the facts of DataFlow
+		const planRun = await runClaude('plan', 'Make the plan.', {
+			tools: [GET_SESSION, GET_ORDER, SUBMIT_TASK_SURVEY, SUBMIT_PLAN, GET_PLAN, 'Skill', ...READ_TOOLS], maxTurns: 50, seconds: 900,
+		});
+		const planNames = planRun.toolUses.map((t) => t.name);
+		check('The request loads the skill shotgun-plan', planRun.toolUses.some((t) => t.name === 'Skill' && String(t.input?.skill).includes('shotgun-plan')), planNames);
+		check('Claude gives the plan with shotgun_submit_plan', planNames.includes(SUBMIT_PLAN), planNames);
+		const refusedPlans = planRun.toolResults.filter((r) => r.isError && r.text.includes('did not take the plan')).length;
+		if (refusedPlans > 0) {
+			results.notes = [...(results.notes ?? []), `Shotgun refused ${refusedPlans} plan of Claude before it took the plan.`];
+			console.log(`NOTE Shotgun refused ${refusedPlans} plan of Claude before it took the plan.`);
+		}
+		const plan = readJson(taskFile(TASK_1, 'plan.json'));
+		const steps = plan?.steps ?? [];
+		const inPlan = tasks2.filter((t) => !t.isLater).map((t) => t.id);
+		check('Each task of the plan has 1 step or more, in the sequence of the order', steps.length >= inPlan.length
+			&& inPlan.every((id) => steps.some((s) => s.task === id))
+			&& steps.every((s, i) => i === 0 || inPlan.indexOf(s.task) >= inPlan.indexOf(steps[i - 1].task)), steps.map((s) => [s.id, s.task]));
+		// the scan of the call graph ended at the start of stage 2, so each step has a level of the rules
+		const risk = await poll(() => {
+			const r = readJson(taskFile(TASK_1, 'risk.json'));
+			return r && steps.every((s) => r.steps?.[s.id]?.level) ? r : undefined;
+		}, 60);
+		check('The rules give each step a level from the facts of DataFlow', !!risk, readJson(taskFile(TASK_1, 'risk.json')));
+		results.plan = {
+			steps: steps.map((s) => ({
+				id: s.id, task: s.task, title: s.title, places: s.places.map((p) => (p.lines ? `${p.file}:${p.lines[0]}-${p.lines[1]}` : `${p.file} (new)`)),
+				level: risk?.steps?.[s.id]?.level ?? null, reasons: risk?.steps?.[s.id]?.reasons ?? [],
+			})),
+		};
+		console.log(`INFO The plan: ${JSON.stringify(results.plan.steps.map((s) => `${s.id} ${s.task} ${s.level} ${s.places.join(' ')}`))}`);
+		const planFiles = execFileSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: p.project, encoding: 'utf8', windowsHide: true })
+			.split('\n').filter((l) => l.trim() && !l.includes('.shotgun/'));
+		check('Claude changed no file of the project in stage 4', planFiles.length === 0, planFiles);
+
+		// the page of the plan, and a step in the text editor with its CodeLens line
+		await command(wb, 'Shotgun: Show Page');
+		text = await poll(async () => {
+			const t = await pageText();
+			return t?.includes(steps[0]?.title ?? '?') && t.includes('Accept the plan') ? t : undefined;
+		}, 20);
+		check('The page shows the plan with the gate "Accept the plan"', !!text, await pageText());
+		await wb.shot('page-plan.png');
+		const withLines = steps.findIndex((s) => s.places.some((pl) => pl.lines));
+		if (withLines >= 0) {
+			const placeFile = steps[withLines].places.find((pl) => pl.lines).file;
+			await inWebview('.page', `() => {
+				d.querySelectorAll('.step-row')[${withLines}].click();
+				return true;
+			}`);
+			await sleep(500);
+			await inWebview('.page', `() => {
+				const b = [...d.querySelectorAll('button')].find((x) => x.textContent.includes('Open in the text editor'));
+				b?.click();
+				return !!b;
+			}`);
+			const lens = await poll(() => wb.evaluate(`(() => {
+				const t = [...document.querySelectorAll('.part.editor .codelens-decoration')].map((e) => e.textContent).find((x) => x.includes('Step ${withLines + 1} of'));
+				return t;
+			})()`), 20);
+			check('The text editor shows the step with its CodeLens line', !!lens && String(lens).includes('risk'), { lens, placeFile });
+			await wb.shot('editor-step.png');
+		}
+
+		// the user changes the level of step 1 and writes a note on the page
+		await command(wb, 'Shotgun: Show Page');
+		await poll(async () => (await pageText())?.includes('Accept the plan') && true, 15);
+		const rule1 = risk?.steps?.[steps[0]?.id]?.level ?? 0;
+		const button = rule1 >= 5 ? 'Lower' : 'Raise';
+		await inWebview('.page', `() => {
+			d.querySelectorAll('.step-row')[0].click();
+			return true;
+		}`);
+		await sleep(500);
+		await inWebview('.page', `() => {
+			const b = [...d.querySelectorAll('.pill')].find((x) => x.textContent.trim() === ${JSON.stringify(button)});
+			b?.click();
+			return !!b;
+		}`);
+		const note = 'The test changes this level.';
+		await inWebview('.page', `() => {
+			const input = d.querySelector('.note-field input');
+			input.value = ${JSON.stringify(note)};
+			input.dispatchEvent(new d.defaultView.Event('input', { bubbles: true }));
+			return true;
+		}`);
+		await sleep(400);
+		await inWebview('.page', `() => {
+			d.querySelector('.note-field input').dispatchEvent(new d.defaultView.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+			return true;
+		}`);
+		const userLevel = await poll(() => {
+			const l = readJson(taskFile(TASK_1, 'levels.json'))?.levels?.[steps[0]?.id];
+			return l?.level && l?.note ? l : undefined;
+		}, 15);
+		check('The page changes the level of a step and keeps the note of the user', userLevel?.level === rule1 + (button === 'Raise' ? 1 : -1)
+			&& userLevel?.note === note, readJson(taskFile(TASK_1, 'levels.json')));
+		check('The ledger records the level and the note', ledgerOf(TASK_1).filter((d) => d.kind === 'level' || d.kind === 'level-note').map((d) => d.kind).join() === 'level,level-note',
+			ledgerOf(TASK_1).filter((d) => d.kind === 'level' || d.kind === 'level-note'));
+		await wb.shot('page-plan-level.png');
+
+		// the gate "Accept the plan" on the page
+		await inWebview('.page', `() => {
+			const b = [...d.querySelectorAll('.gate button')].find((x) => x.textContent.includes('Accept the plan'));
+			b?.click();
+			return !!b;
+		}`);
+		const built = await poll(() => (readJson(taskFile(TASK_1, 'task.json'))?.stage === 'build' ? readJson(taskFile(TASK_1, 'task.json')) : undefined), 20);
+		check('The gate "Accept the plan" of the page takes task 1 to stage 5', built?.gates?.[3]?.gate === 'accept-plan', readJson(taskFile(TASK_1, 'task.json')));
+		text = await poll(async () => (await panelText())?.includes('Do step 1.') && true, 15);
+		check('The panel shows stage 5 of task 1 with its request', !!text, await panelText());
+		await wb.shot('panel-build.png');
 		wb.ws.close();
 	} catch (error) {
 		check('The test runs to its end', false, String(error?.stack ?? error));

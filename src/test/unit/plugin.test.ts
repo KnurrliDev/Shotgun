@@ -73,9 +73,14 @@ suite('Plugin of Shotgun', () => {
 		assert.deepStrictEqual(readSkills(dir), { shotgun: 'text' });
 	});
 
-	test('The extension has the skills shotgun and shotgun-survey', () => {
+	test('The extension has the skills shotgun, shotgun-survey and shotgun-plan', () => {
 		const skills = readSkills(repo);
-		assert.deepStrictEqual(Object.keys(skills).sort(), ['shotgun', 'shotgun-survey']);
+		assert.deepStrictEqual(Object.keys(skills).sort(), ['shotgun', 'shotgun-plan', 'shotgun-survey']);
+		assert.match(skills['shotgun-plan'], /^---\r?\nname: shotgun-plan\r?\ndescription: '[^']*Make the plan[^']*'\r?\n---/);
+		for (const tool of ['shotgun_get_order', 'shotgun_submit_task_survey', 'shotgun_submit_plan', 'shotgun_get_plan', 'get_heat']) {
+			assert.ok(skills['shotgun-plan'].includes(`mcp__plugin_dataflow_dataflow__${tool}`), tool);
+		}
+		assert.ok(skills.shotgun.includes('shotgun-plan'));
 		assert.match(skills.shotgun, /^---\r?\nname: shotgun\r?\ndescription: '.*Ask me questions about my brief.*'\r?\n---/);
 		assert.match(skills['shotgun-survey'], /^---\r?\nname: shotgun-survey\r?\ndescription: '[^']*Survey my brief[^']*'\r?\n---/);
 		// a skill gives the full names of its tools, because MCP tools are deferred tools in Claude Code

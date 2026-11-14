@@ -5,11 +5,14 @@ import { parseBrief, partName, partSummary, questionLine } from '../session/brie
 import type { Decision, TaskFile } from '../session/files';
 import { changedTasks, factsOf, MAX_TASK_TEXT, orderOf, orderWarnings } from '../session/order';
 import { absolutePath } from '../session/paths';
+import { levelOf, MAX_LEVEL_NOTE, placeName } from '../session/plan';
+import { LEVEL_INFO } from '../session/risk';
 import { GATE_LABEL, STAGE_INFO, STAGES, stageText } from '../session/stages';
 import type { Snapshot } from '../session/store';
 import { excerptOf, findHook, Lines } from '../session/survey';
 import type {
-	BriefView, DecisionView, GateView, HookView, OrderTaskView, OrderView, SetupRow, StageView, SurveyView, TaskView, ViewModel,
+	BriefView, DecisionView, GateView, HookView, OrderTaskView, OrderView, PlanPlaceView, PlanStepView, PlanView, SetupRow, StageView, SurveyView, TaskView,
+	ViewModel,
 } from './protocol';
 
 // The view model of the page and of the panel, from the session, the state of DataFlow and the connection to Claude
@@ -83,6 +86,15 @@ export function decisionText(decision: Decision): string {
 			return 'You changed the order.';
 		case 'task-survey':
 			return `Claude surveyed the task ${decision.task}: ${count(decision.hooks, 'hook')}, and it needs ${decision.needs === 0 ? 'no task' : count(decision.needs, 'task')}.`;
+		case 'plan':
+			return `Claude gave the plan: ${count(decision.steps, 'step')}.`;
+		case 'level':
+			if (decision.level === null) {
+				return `You set step ${decision.step} back to the level of the rules${decision.rule ? `, ${decision.rule}` : ''}.`;
+			}
+			return `You set step ${decision.step} to level ${decision.level}.${decision.rule ? ` The rules gave ${decision.rule}.` : ''}`;
+		case 'level-note':
+			return decision.text ? `Your note for step ${decision.step}: "${decision.text}".` : `You removed your note for step ${decision.step}.`;
 	}
 }
 
@@ -192,6 +204,74 @@ function orderView(snapshot: Snapshot, survey: SurveyView | undefined): OrderVie
 	};
 }
 
+// Stage 4 and later: the plan of Claude, with the level of each step and the places at their lines now
+function planView(snapshot: Snapshot, readLines: ModelInput['readLines']): PlanView | undefined {
+	const { task, plan, risk, levels, root } = snapshot;
+	if (!task || !plan || !root) {
+		return undefined;
+	}
+	const order = orderOf(snapshot.order, snapshot.survey);
+	const files = new Map<string, readonly string[] | undefined>();
+	const linesOf = (file: string) => {
+		if (!files.has(file)) {
+			files.set(file, readLines?.(file));
+		}
+		return files.get(file);
+	};
+	const steps: PlanStepView[] = plan.steps.map((s, i) => {
+		const l = levelOf(s.id, risk, levels);
+		const stepRisk = risk?.steps[s.id];
+		const places: PlanPlaceView[] = s.places.map((p, j) => {
+			const path = absolutePath(p.file, root);
+			const level = stepRisk?.places[j]?.level ?? null;
+			if (!p.lines) {
+				return { name: placeName(p), path, line: 0, isNew: true, isMoved: false, isLost: false, level };
+			}
+			const text = linesOf(path);
+			const found = text && p.code ? findHook(text, { lines: p.lines, code: p.code, codeLine: p.codeLine }) : undefined;
+			const lines = found ?? p.lines;
+			return {
+				name: placeName({ ...p, lines }), path, line: lines[0], isNew: false, isMoved: !!found && found[0] !== p.lines[0], isLost: !!text && !!p.code && !found,
+				level, ...(text ? { excerpt: excerptOf(text, lines) } : {}),
+			};
+		});
+		// the heat of the place with the highest level
+		const hottest = [...(stepRisk?.places ?? [])].filter((p) => p.heat).sort((a, b) => (b.level ?? 0) - (a.level ?? 0))[0];
+		const info = l.level ? LEVEL_INFO[l.level] : undefined;
+		return {
+			id: s.id,
+			n: i + 1,
+			title: s.title,
+			task: s.task,
+			taskText: order.tasks.find((t) => t.id === s.task)?.text ?? s.task,
+			hooks: [...s.hooks],
+			places,
+			text: s.text,
+			checks: [...s.checks],
+			...(s.note ? { note: s.note } : {}),
+			level: l.level,
+			rule: l.rule,
+			...(l.user ? { user: l.user } : {}),
+			levelName: info ? `${info.name}, level ${l.level} of 5` : 'No level yet',
+			...(info ? { writer: info.writer, writerText: info.text } : {}),
+			reasons: [...(stepRisk?.reasons ?? ['Shotgun did not check the step with DataFlow yet.'])],
+			userNote: levels?.levels[s.id]?.note ?? '',
+			...(hottest?.heat ? { heat: { ...hottest.heat, signals: [...(hottest.heat.signals ?? [])] } } : {}),
+		};
+	});
+	const writers = (w: PlanStepView['writer']) => steps.filter((s) => s.writer === w).length;
+	return {
+		steps,
+		writers: { user: writers('user'), frame: writers('frame'), claude: writers('claude'), none: steps.filter((s) => !s.writer).length },
+		changed: steps.filter((s) => s.user !== undefined).map((s) => ({ step: s.id, n: s.n, level: s.level, rule: s.rule, note: s.userNote })),
+		waiting: steps.filter((s) => s.level === null).length,
+		scan: risk?.scan ?? 'none',
+		...(risk ? { riskTime: risk.time } : {}),
+		isEditable: task.stage === 'plan' && !task.isDone,
+		maxNote: MAX_LEVEL_NOTE,
+	};
+}
+
 // Stage 1: the parts of the brief and the open questions of Claude
 function briefView(snapshot: Snapshot, brief: NonNullable<ModelInput['brief']>): BriefView {
 	const parsed = parseBrief(brief.text);
@@ -210,10 +290,27 @@ function briefView(snapshot: Snapshot, brief: NonNullable<ModelInput['brief']>):
 	};
 }
 
-// The gate of the stage. This version of Shotgun has the gates of the stages 1 to 3
-function gateView(task: TaskFile, brief: BriefView | undefined, survey: SurveyView | undefined, order: OrderView | undefined): GateView | undefined {
+// The gate of the stage. This version of Shotgun has the gates of the stages 1 to 4
+function gateView(task: TaskFile, brief: BriefView | undefined, survey: SurveyView | undefined, order: OrderView | undefined, plan: PlanView | undefined)
+	: GateView | undefined {
 	if (task.isDone) {
 		return undefined;
+	}
+	if (task.stage === 'plan') {
+		const note = 'Your gate. After it, the build starts, and the level of each step selects its writer.';
+		if (!plan) {
+			return { label: GATE_LABEL['accept-plan'], note, isEnabled: false, reason: 'Ask Claude for the plan first.' };
+		}
+		return {
+			label: GATE_LABEL['accept-plan'],
+			note,
+			isEnabled: plan.waiting === 0,
+			...(plan.waiting > 0 ? {
+				reason: `${count(plan.waiting, 'step')} ${plan.waiting === 1 ? 'has' : 'have'} no level yet. Wait for the end of the scan of the call graph, `
+					+ 'or set the level.',
+			} : {}),
+			...(STAGE_INFO.build.request ? { after: STAGE_INFO.build.request } : {}),
+		};
 	}
 	if (task.stage === 'order') {
 		if (!order) {
@@ -358,7 +455,8 @@ function taskView(snapshot: Snapshot, briefInput: ModelInput['brief'], readLines
 	const brief = task.stage === 'brief' && !task.isDone && briefInput ? briefView(snapshot, briefInput) : undefined;
 	const survey = task.stage !== 'brief' ? surveyView(snapshot, readLines) : undefined;
 	const order = orderView(snapshot, survey);
-	const gate = gateView(task, brief, survey, order);
+	const plan = task.stage === 'plan' || task.stage === 'build' ? planView(snapshot, readLines) : undefined;
+	const gate = gateView(task, brief, survey, order, plan);
 	const info = STAGE_INFO[task.stage];
 	const isActive = !task.isDone && !snapshot.isPaused;
 	let next = info.next;
@@ -385,6 +483,7 @@ function taskView(snapshot: Snapshot, briefInput: ModelInput['brief'], readLines
 		...(brief ? { brief } : {}),
 		...(survey ? { survey } : {}),
 		...(order ? { order } : {}),
+		...(plan ? { plan } : {}),
 		...(gate ? { gate } : {}),
 		isDone: task.isDone,
 		isPaused: snapshot.isPaused,

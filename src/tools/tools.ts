@@ -2,6 +2,7 @@ import * as path from 'path';
 import type { ExtensionTool } from '../dataflow/dataflow-api';
 import { parseBrief, partSummary, questionLine } from '../session/brief';
 import { changedTasks, Order, orderWarnings } from '../session/order';
+import { levelOf } from '../session/plan';
 import { IS_CASE_SENSITIVE } from '../session/paths';
 import { GATE_LABEL, GATE_OF, STAGE_INFO, STAGES } from '../session/stages';
 import type { Snapshot, SessionStore } from '../session/store';
@@ -10,6 +11,7 @@ import { submitBrief, submitQuestions } from './brief';
 import { contextOutput, contextText } from './context';
 import { decide, GuardInput, hookOutput, isInside, targetOf } from './guard';
 import { orderData, submitTaskSurvey } from './order';
+import { planData, submitPlan } from './plan';
 import type { PromptLog } from './prompts';
 import { EngineApi, submitSurvey } from './survey';
 
@@ -17,8 +19,8 @@ export { IS_CASE_SENSITIVE };
 
 // The tools of Shotgun for the MCP server of DataFlow. DataFlow puts "shotgun_" before each name, so Claude Code sees
 // for example mcp__plugin_dataflow_dataflow__shotgun_get_session. Phase 1 has the read tool get_session and the 2 tools
-// of the hooks. Phase 2 adds submit_brief and submit_questions, phase 3 submit_survey, and phase 4 get_order and
-// submit_task_survey.
+// of the hooks. Phase 2 adds submit_brief and submit_questions, phase 3 submit_survey, phase 4 get_order and
+// submit_task_survey, and phase 5 get_plan and submit_plan.
 
 // A hook in the survey of stage 2 and in the survey of a task in stage 3
 const HOOK_SCHEMA = {
@@ -111,6 +113,14 @@ export function sessionData(snapshot: Snapshot, brief?: { file: string; text: st
 				tool: 'Call shotgun_get_order for the tasks in sequence.',
 			},
 		} : {}),
+		...(task && snapshot.plan ? {
+			plan: {
+				steps: snapshot.plan.steps.length,
+				waiting: snapshot.plan.steps.filter((s) => levelOf(s.id, snapshot.risk, snapshot.levels).level === null).map((s) => s.id),
+				userLevels: Object.values(snapshot.levels?.levels ?? {}).filter((l) => l.level).length,
+				tool: 'Call shotgun_get_plan for the steps with their levels.',
+			},
+		} : {}),
 		isPaused: snapshot.isPaused,
 		guard,
 		next,
@@ -169,6 +179,59 @@ export function shotgunTools(deps: ToolDeps): ExtensionTool[] {
 				required: ['task', 'text', 'hooks', 'needs'],
 			},
 			call: (args) => submitTaskSurvey(deps, args),
+		},
+		{
+			name: 'get_plan',
+			title: 'Shotgun plan',
+			description: 'Gives the plan of the active task, in stage 4 and later: the steps in sequence, with their places, texts and checks, '
+				+ 'and the risk level of each step. The rules give a level from the facts of DataFlow, and only the user changes a level.',
+			inputSchema: { type: 'object', properties: {} },
+			isReadOnly: true,
+			call: () => planData(deps.store.snapshot),
+		},
+		{
+			name: 'submit_plan',
+			title: 'Shotgun: give the plan',
+			description: 'Gives your plan to Shotgun, in stage 4: the steps in the sequence of the order of the user. Each step names its task, '
+				+ 'its hooks and its places: lines of a file with a short text of their code, or a new file. Each task of the plan needs 1 '
+				+ 'step or more. Shotgun gives each step a risk level from the facts of DataFlow. A new plan replaces the old plan.',
+			inputSchema: {
+				type: 'object',
+				properties: {
+					steps: {
+						type: 'array',
+						items: {
+							type: 'object',
+							properties: {
+								id: { type: 'string', description: 'For example S1. Keep the id of a step in a new plan.' },
+								title: { type: 'string' },
+								task: { type: 'string', description: 'The id of the task of the order, from get_order.' },
+								hooks: { type: 'array', items: { type: 'string' }, description: 'The ids of the hooks of the survey that the step changes.' },
+								places: {
+									type: 'array',
+									items: {
+										type: 'object',
+										properties: {
+											file: { type: 'string', description: 'The file, relative to the first folder of the project.' },
+											lines: { type: 'array', items: { type: 'integer' }, minItems: 2, maxItems: 2, description: '[first, last], from 1.' },
+											code: { type: 'string', description: 'A short text of the code in the lines, copied exactly.' },
+											new: { type: 'boolean', description: 'True for a new file. Then give no lines and no code.' },
+										},
+										required: ['file'],
+									},
+									description: 'The places that the step changes, 1 to 8.',
+								},
+								text: { type: 'string', description: 'What the step does, in 1 to 3 sentences.' },
+								checks: { type: 'array', items: { type: 'string' }, description: '1 to 5 checks for the user after the step.' },
+								note: { type: 'string', description: 'A short note for the user, for example a risk that the facts show.' },
+							},
+							required: ['id', 'title', 'task', 'places', 'text', 'checks'],
+						},
+					},
+				},
+				required: ['steps'],
+			},
+			call: (args) => submitPlan(deps, args),
 		},
 		{
 			name: 'submit_survey',

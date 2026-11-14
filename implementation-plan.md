@@ -51,8 +51,9 @@ These items are not in the scope of version 1:
 12. For a brief from the chat, Claude can add only the headings of the 5 parts and list marks. The context hook gives each prompt of the user to Shotgun. Shotgun keeps the last prompts only in memory, and `submit_brief` refuses each line that is not in the words of the user.
 
 13. In the survey, a fact that Claude writes gets the badge "Model", with the DataFlow tool that Claude names and the place as a link. The facts that Shotgun gets from DataFlow for each hook (the function, the threads, the locks, the frame path and the heat) get the badge "Engine".
+14. The risk rules of D1: before the end of the scan of the call graph, a step gets no level. After a stopped scan or a failed scan, the level is 3 or higher. A frame path past the limit, or a line in the main loop, gives level 4 or higher. A lock at the line gives 1 level more. A change of a data member gets the level of the hottest function that uses it. A file that is not C or C++ gets level 2, with the label "no facts".
 
-The user gave decision 10 on 13 November 2026, and the decisions 11 to 13 on 14 November 2026. Decision 10 changes the buttons of the canvas that started Claude. Section 12 lists these changes.
+The user gave decision 10 on 13 November 2026, and the decisions 11 to 14 on 14 November 2026. Decision 10 changes the buttons of the canvas that started Claude. Section 12 lists these changes.
 
 ## 3. Proposals of this plan
 
@@ -80,7 +81,7 @@ The user can change each proposal before the phase that needs it starts.
 
 | Number | Decision | Phase |
 | --- | --- | --- |
-| D1 | The 5 rules for the risk level that the user did not accept yet. The table "The risk level and the heat" in `dataflow-gaps-2.md` gives them. | Before phase 5 |
+| D1 | Decided on 14 November 2026: the user accepted the 5 rules. Decision 14 gives them. | Before phase 5 |
 | D2 | The default voice of the callouts, and the time with no edit that makes a pause. | Before phase 8 |
 | D3 | The users of Shotgun: only the user, a team, or a public release. This decision sets the release form and the documents. | Before phase 10 |
 
@@ -148,7 +149,9 @@ The other stages of Claude run in the same way: the user asks, Claude reads, and
 | `engine.json` | Shotgun | The facts of DataFlow for each hook of the survey: the function, the threads, the locks and the heat. |
 | `answers.json` | User | The answers of the user to the questions of the survey. |
 | `order.json` | User | The tasks in sequence, with the new texts, the new tasks and the tasks for later. Each changed task keeps the last survey of Claude for its text. |
-| `plan.json` | Claude and user | The steps, the levels of the rules, the levels of the user and the notes of the user. |
+| `plan.json` | Claude | The steps of the plan: the task, the hooks, the places, the text and the checks of each step. |
+| `risk.json` | Shotgun | The facts of DataFlow and the level of the rules for each step. |
+| `levels.json` | User | The levels and the notes of the user for the steps. A level stays with the id of its step. |
 | `build.json` | Shotgun | The state of each step, the holes, the receipts and the loose ends. |
 | `lines.json` | Shotgun | The writer of each changed line. |
 | `decisions.jsonl` | Shotgun | The ledger: 1 line for each decision of the user and for each deny of the guard. |
@@ -171,7 +174,7 @@ The MCP name of each tool starts with `shotgun_`. In Claude Code, the full name 
 | `submit_questions` | submit | 1 | 1 to 10 questions of Claude about the brief, each with a part and a quote of the brief. A new list replaces the open questions. |
 | `submit_survey` | submit | 2 | The facts, the tasks, the hooks and the questions. Each hook gives a short text of its code. Shotgun then gets the facts of DataFlow for each hook. A new survey replaces the old survey. |
 | `submit_task_survey` | submit | 3 | The hooks, the new hooks, the needs, the size and a note of a rewritten task or of a new task. Claude gives the text of the task too, so that Shotgun refuses a survey of an old text. |
-| `submit_plan` | submit | 4 | The steps of the plan. |
+| `submit_plan` | submit | 4 | The steps of the plan. Shotgun then gives each step the level of the rules from the facts of DataFlow. A new plan replaces the old plan. |
 | `start_step` | submit | 5 | Opens a step for an errand or for a frame. |
 | `submit_frame` | submit | 5 | The holes of a frame with their hints. |
 | `submit_errand` | submit | 5 | The notes of Claude on its changes, and the loose ends that Claude found. |
@@ -436,6 +439,24 @@ Differences from the plan:
 - **New plan:** `submit_plan` can replace the plan before the gate. A level that the user changed stays with its step, if the step has the same id.
 - **Gate:** **Accept the plan**. The levels of the user and their notes go into the ledger.
 - **Done when:** the plan of the fixture gets the levels 3, 4, 5, 4, 2, 3, 1 and 1 from the rules.
+
+**Status, 14 November 2026:** done. `scripts/test-claude.mjs` passed all 81 checks with 6 prompts of Claude Code:
+
+- "Make the plan." loaded the skill `shotgun-plan`. Claude gave 8 steps for the 5 tasks of the order, in their sequence, and Shotgun took the plan at the first call. Claude changed no file.
+- The rules gave the levels 3, 3, 3, 4, 3, 2, 2 and 2 from the facts of DataFlow. For example, step 4 changes a line of `solve_power_plan()`. The function is warm (level 3), and a worker thread runs the line (1 level more).
+- 2 steps change a data member of a type. Each got the level of the hottest function that uses the member: `process()`, warm, level 3. A step with `CMakeLists.txt` got level 2 with "no facts".
+- The page opened the place of a step in the text editor, and the CodeLens line showed the step with its level and its writer. On the page, the test raised the level of step 1 and wrote a note. The ledger recorded both.
+- The gate **Accept the plan** on the page took task 1 to stage 5.
+
+Differences from the plan:
+
+- Done when: the plan of Claude is different from the example plan of the design canvas. A unit test gives the facts of the 8 steps of the canvas to the rules. The rules give the levels 3, 4, 5, 4, 2, 3, 1 and 1.
+- Three files keep the writers apart: `plan.json` (Claude), `risk.json` (Shotgun) and `levels.json` (user). Section 6.3 has them now.
+- Lines in no function and in no type get level 2. The rules of decision 14 have no level for them.
+- In stage 4, Claude can survey a task with no survey with `submit_task_survey`. `submit_plan` refuses a task with no survey.
+- A step that waits for the scan has no **Lower** and **Raise**. The user can set its level with the buttons **Level 1** to **Level 5**.
+- New commands: **Shotgun: Set Risk Level** and **Shotgun: Check the Levels Again**.
+- The main loop of the fixture is a for loop with 100 cycles. `get_place` gives `isOpenLoop` false for it, so the rule of the main loop does not find a line in it. Gap 32 of `dataflow-gaps-2.md` has this data now. No step of the test was in this loop.
 
 ### Phase 6: build
 

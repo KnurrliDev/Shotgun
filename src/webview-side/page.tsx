@@ -1,6 +1,7 @@
 import { render } from 'preact';
 import { CommandButton, Decisions, NoTask, Problems, SetupList, StageBar, TaskList, TaskSummary, useModel } from './common';
 import { OrderPage } from './order';
+import { PlanPage } from './plan';
 import { applyStyles } from './styles';
 import { SurveyPage } from './survey';
 
@@ -16,7 +17,10 @@ function Page() {
 		return <div class="page"><p class="muted">Shotgun starts.</p></div>;
 	}
 	const { task } = model;
-	// stage 3 and later: the order of the user on the full page. Stage 2: the survey of Claude
+	// stage 4 and later: the plan of Claude. Stage 3, and stage 4 with no plan: the order of the user. Stage 2: the survey
+	if (task?.plan) {
+		return <PlanPage task={task} model={model} />;
+	}
 	if (task?.order) {
 		return <OrderPage task={task} model={model} />;
 	}

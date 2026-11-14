@@ -28,7 +28,9 @@ export function orderData(snapshot: Snapshot, order: Order): Record<string, unkn
 	const hooks = new Map(survey.hooks.map((h) => [h.id, h]));
 	const changed = changedTasks(order, survey).map((t) => t.id);
 	let next: string;
-	if (task.isDone || task.stage !== 'order') {
+	if (task.stage === 'plan' && changed.length > 0) {
+		next = `Survey each task in "changed" with submit_task_survey first: ${changed.join(', ')}. Then make the steps of the plan in this sequence.`;
+	} else if (task.isDone || task.stage !== 'order') {
 		next = 'The user accepted this order. Make the steps of the plan in this sequence.';
 	} else if (changed.length > 0) {
 		next = `Survey each task in "changed" with submit_task_survey: ${changed.join(', ')}. Give its text exactly as here.`;
@@ -68,9 +70,10 @@ export async function submitTaskSurvey(deps: SurveyDeps, args: Record<string, un
 	if (!task || !root) {
 		throw new Error(`No task is active. ${NO_ORDER}`);
 	}
-	if (task.isDone || task.stage !== 'order') {
-		throw new Error(`The active task is in ${stageText(task.stage)}. The survey of a task of the order is only for stage 3. `
-			+ (task.stage === 'brief' || task.stage === 'survey' ? NO_ORDER : 'The user accepted the order already.'));
+	// stage 4: a task with no survey gets its survey before the plan
+	if (task.isDone || (task.stage !== 'order' && task.stage !== 'plan')) {
+		throw new Error(`The active task is in ${stageText(task.stage)}. The survey of a task of the order is only for the stages 3 and 4. `
+			+ (task.stage === 'brief' || task.stage === 'survey' ? NO_ORDER : 'The user accepted the plan already.'));
 	}
 	if (!survey) {
 		throw new Error('The active task has no survey of stage 2.');
@@ -111,6 +114,7 @@ export async function submitTaskSurvey(deps: SurveyDeps, args: Record<string, un
 		changed,
 		next: changed.length > 0
 			? `Survey the next task in "changed": ${changed.join(', ')}.`
-			: 'Each task of the plan has a survey now. Tell the user that the order page of Shotgun shows the hooks and the needs. The user selects "Accept the order".',
+			: task.stage === 'plan' ? 'Each task of the plan has a survey now. Make the steps of the plan with submit_plan.'
+				: 'Each task of the plan has a survey now. Tell the user that the order page of Shotgun shows the hooks and the needs. The user selects "Accept the order".',
 	};
 }

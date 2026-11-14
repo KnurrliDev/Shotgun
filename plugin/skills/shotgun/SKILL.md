@@ -75,3 +75,7 @@ When the user asks for the survey, for example "Survey my brief", use the skill 
 The user puts the tasks in sequence on the order page of Shotgun. The user can also change the text of a task, add a task, and keep a task for later. Do not change the order: it is the decision of the user.
 
 When the user asks for the survey of the changed tasks, for example "Survey my changed tasks", use the skill `shotgun-survey`. When the order is correct, the user selects "Accept the order".
+
+## Stage 4: the plan
+
+When the user asks for the plan, for example "Make the plan", use the skill `shotgun-plan`. Shotgun gives each step a risk level from the facts of DataFlow. Do not choose a level: only the user changes a level. When the plan is correct, the user selects "Accept the plan".

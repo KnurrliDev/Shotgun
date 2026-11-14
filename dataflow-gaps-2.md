@@ -85,7 +85,7 @@ The plan page of the design canvas shows the basic rule and 3 more rules:
 - the rule for a worker thread
 - the rule for a new data member
 
-The user accepted these 3 rules on 13 November 2026. The other rules of the second table are a proposal.
+The user accepted these 3 rules on 13 November 2026. The user accepted the other rules of the second table on 14 November 2026, with decision D1 of the plan of Shotgun.
 
 The basic rule: the step gets the band of the hottest function that has a line of the step. `getHeat` with `lines` gives this function.
 
@@ -101,15 +101,15 @@ DataFlow gives more facts now, and these rules use them. The first 6 rules make 
 
 | Fact of DataFlow | Rule of Shotgun | Status |
 | --- | --- | --- |
-| `isReachComplete` is false | No level. Shotgun waits for the end of the scan. After a stopped scan or a failed scan, the level is 3 or higher. | Proposal |
+| `isReachComplete` is false | No level. Shotgun waits for the end of the scan. After a stopped scan or a failed scan, the level is 3 or higher. | Accepted |
 | `reachUnknown`: callers that the call graph cannot see | The level is 3 or higher. | Accepted |
-| `framePath` with `isPastLimit` | The level is 4 or higher. | Proposal |
-| The line of the step is in a main loop | The level is 4 or higher. See item 32. | Proposal |
+| `framePath` with `isPastLimit` | The level is 4 or higher. | Accepted |
+| The line of the step is in a main loop | The level is 4 or higher. See item 32. | Accepted |
 | `getPlace` gives a worker thread for the line | The level is 1 higher, with a maximum of 5. | Accepted |
-| `getPlace` gives a lock for the line | The level is 1 higher, with a maximum of 5. | Proposal |
+| `getPlace` gives a lock for the line | The level is 1 higher, with a maximum of 5. | Accepted |
 | The step adds a data member to a type | Level 2. Level 3 if a member of the type has `framePath` or `shared`. See item 11. | Accepted |
-| The step changes a data member that is there | The level of the hottest function in `users` of the member. | Proposal |
-| The file is not a C or C++ file | Level 2, with the label "no facts". | Proposal |
+| The step changes a data member that is there | The level of the hottest function in `users` of the member. | Accepted |
+| The file is not a C or C++ file | Level 2, with the label "no facts". | Accepted |
 
 DataFlow does not change the score of a function with `reachUnknown`. Section 2 of `docs/api-gaps-strategy.md` gives this decision: the client makes its own risk level from the flag. Thus the second rule is necessary.
 
@@ -190,6 +190,7 @@ Do the groups in this sequence. Do not do the items 34 to 40 for Shotgun.
 
 - **Data:** `merge_graph` makes a frame function of each function that a main loop calls. The reason is the text "called in the main loop of" and a name. The function with the main loop gets no frame path, and with no callers DataFlow sets it to siloed. `get_place` gives `isOpenLoop` for each loop with no fixed number of iterations, also for a loop that reads a file. No field tells that a loop is a main loop.
 - **Use in Shotgun:** A hook in the body of the main loop runs in each frame. The band of its function is cool, thus the model gets the step.
+- **Data:** The fixture `battery` of DataFlow has the main loop `for (int cycle = 0; cycle < 100; ++cycle)` in `main()`. DataFlow calls it the main loop, but `get_place` gives `isOpenLoop` false for it, because it has a fixed number of iterations. Thus the procedure below does not find a line in this loop. Phase 5 of Shotgun found this on 14 November 2026.
 - **Until the fix:** Shotgun reads the reasons of the frame functions from `getCallGraph`. It takes the name after "called in the main loop of". A line in an open loop of that function gets the level 4 or higher. This procedure reads a text.
 - **Possible fix:** Add `isMainLoop` to a loop in `around` of `get_place`. Add `mainLoops` with the function, the file and the line to `get_call_graph`.
 

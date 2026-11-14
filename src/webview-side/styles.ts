@@ -160,6 +160,58 @@ h1, h2 { margin: 0; font-weight: 600; }
 .check-line { margin: 4px 0; }
 .icon-btn:focus-visible, .pill:focus-visible, .chip:focus-visible, .link:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
 
+/* stage 4: the plan. The 5 colors of the risk levels come from the design canvas, with darker values for a light theme */
+:root { --sg-l1: #8a97a8; --sg-l2: #a3adba; --sg-l3: #d9a36a; --sg-l4: #f0835a; --sg-l5: #ff5c6c; }
+body.vscode-light { --sg-l1: #56606e; --sg-l2: #66707d; --sg-l3: #9a5b16; --sg-l4: #b8410e; --sg-l5: #c0182c; }
+.lv-0 { --lv: var(--sg-border); }
+.lv-1 { --lv: var(--sg-l1); }
+.lv-2 { --lv: var(--sg-l2); }
+.lv-3 { --lv: var(--sg-l3); }
+.lv-4 { --lv: var(--sg-l4); }
+.lv-5 { --lv: var(--sg-l5); }
+.risk-bar { flex: none; display: inline-flex; gap: 2px; }
+.risk-bar .seg { width: 5px; height: 10px; border-radius: 1px; background: color-mix(in srgb, var(--sg-border) 60%, transparent); }
+.risk-bar .seg.on { background: var(--lv); }
+.level-name { font-weight: 600; color: var(--lv); }
+.steps { display: flex; flex-direction: column; gap: 3px; margin: 6px 0 0; }
+.step-row { display: flex; align-items: center; gap: 8px; width: 100%; padding: 4px 8px; box-sizing: border-box; border: 1px solid var(--sg-border);
+  border-radius: 4px; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.step-row:hover { background: var(--vscode-list-hoverBackground, transparent); }
+.step-row.on { border-color: var(--vscode-focusBorder); background: var(--vscode-list-inactiveSelectionBackground, transparent); }
+.step-row .grow { font-weight: 600; overflow-wrap: anywhere; }
+.step-num { flex: none; min-width: 1.6em; padding: 0 4px; border-radius: 999px; text-align: center; font-size: 11px; font-weight: 700;
+  color: var(--sg-engine); background: color-mix(in srgb, var(--sg-engine) 16%, transparent); }
+.step-title { font-weight: 600; }
+.dots.writer { justify-content: flex-end; width: 16px; }
+.badge.rule { color: var(--vscode-foreground); background: color-mix(in srgb, var(--sg-border) 50%, transparent); }
+.rule-box { display: flex; align-items: baseline; gap: 6px; margin: 4px 0; padding: 4px 6px; border-radius: 4px;
+  background: color-mix(in srgb, var(--sg-border) 15%, transparent); }
+.places { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.checks, .reasons { margin: 4px 0 8px; padding: 0; list-style: none; }
+.reasons { padding-left: 4px; }
+.heat-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 4px 0 2px; }
+.heat-title { font-weight: 600; }
+.band-cool { color: var(--sg-cool); }
+.band-warm { color: var(--sg-warm); }
+.band-hot, .band-very-hot { color: var(--sg-hot); }
+.flames { display: inline-flex; align-items: center; gap: 1px; }
+.flames svg { fill: color-mix(in srgb, var(--sg-border) 70%, transparent); }
+.flames svg.on { fill: currentColor; }
+.signals { display: grid; grid-template-columns: 2.6em minmax(0, 1fr); gap: 0 8px; margin: 4px 0 8px; padding: 0; list-style: none; font-size: 12px; }
+.signals li { display: contents; }
+.signals .pts { text-align: right; font-weight: 600; }
+.profile { display: flex; gap: 2px; height: 8px; margin: 6px 0; }
+.profile .seg { flex: 1; border-radius: 1px; background: var(--lv); }
+.writers { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--vscode-descriptionForeground); }
+.writers span { display: inline-flex; align-items: center; gap: 5px; }
+.writers strong { color: var(--vscode-foreground); }
+.note-field { display: block; margin: 8px 0 0; font-size: 12px; color: var(--vscode-descriptionForeground); }
+.note-field input { display: block; width: 100%; box-sizing: border-box; height: 24px; margin: 2px 0 0; padding: 0 6px;
+  border: 1px solid var(--vscode-input-border, var(--sg-border)); border-radius: 2px; background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground); font: inherit; }
+.note-field input:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+.step-row:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
+
 /* lists: the setup, the decisions and the tasks */
 .list { margin: 4px 0 0; padding: 0; list-style: none; }
 .list li { display: flex; align-items: baseline; gap: 6px; padding: 3px 0; }

@@ -12,6 +12,7 @@ import { Gate, GateRecord, isGate, isStage, Stage } from './stages';
 //   Claude that Shotgun records.
 // - <task>/survey.json, engine.json and answers.json: the survey of stage 2 (survey.ts).
 // - <task>/order.json: the order of the user in stage 3 (order.ts).
+// - <task>/plan.json, risk.json and levels.json: the plan of stage 4 (plan.ts).
 // Each JSON file and each line has the field version. Shotgun writes each JSON file in 1 step. These functions use no
 // VS Code API, so the unit tests can call them directly.
 
@@ -25,6 +26,9 @@ export const SURVEY_FILE = 'survey.json';
 export const ENGINE_FILE = 'engine.json';
 export const ANSWERS_FILE = 'answers.json';
 export const ORDER_FILE = 'order.json';
+export const PLAN_FILE = 'plan.json';
+export const RISK_FILE = 'risk.json';
+export const LEVELS_FILE = 'levels.json';
 
 // The edits of the user in stage 3. later and now: the user keeps a task for later, or puts it back into the plan
 export const ORDER_ACTIONS = ['move', 'text', 'add', 'later', 'now', 'remove'] as const;
@@ -70,6 +74,10 @@ export interface QuestionsFile {
 // - answer: the user answered a question of the survey
 // - order: an edit of the user in stage 3, with the text of the task. position: the place of a moved task, from 1
 // - task-survey: Claude surveyed 1 task in stage 3, with the number of its hooks and needs
+// - plan: Claude gave the plan, with the number of its steps
+// - level: the user set the level of a step, or set it back to the level of the rules (level null). rule: the level of
+//   the rules at that time
+// - level-note: the note of the user for a step. An empty text removes the note
 export type Decision =
 	| { readonly version: 1; readonly time: string; readonly kind: 'task'; readonly by: 'user' | 'claude'; readonly title: string }
 	| { readonly version: 1; readonly time: string; readonly kind: 'gate'; readonly by: 'user'; readonly gate: Gate; readonly stage: Stage }
@@ -90,7 +98,13 @@ export type Decision =
 	| {
 		readonly version: 1; readonly time: string; readonly kind: 'task-survey'; readonly by: 'claude'; readonly task: string; readonly hooks: number;
 		readonly needs: number;
-	};
+	}
+	| { readonly version: 1; readonly time: string; readonly kind: 'plan'; readonly by: 'claude'; readonly steps: number }
+	| {
+		readonly version: 1; readonly time: string; readonly kind: 'level'; readonly by: 'user'; readonly step: string; readonly level: number | null;
+		readonly rule: number | null;
+	}
+	| { readonly version: 1; readonly time: string; readonly kind: 'level-note'; readonly by: 'user'; readonly step: string; readonly text: string };
 
 // A decision before Shotgun adds the version and the time
 type WithoutStamp<T> = T extends unknown ? Omit<T, 'version' | 'time'> : never;
@@ -227,6 +241,20 @@ function parseDecision(value: unknown): Decision | undefined {
 		case 'task-survey':
 			return value.by === 'claude' && isText(value.task) && typeof value.hooks === 'number' && typeof value.needs === 'number'
 				? { version: FILE_VERSION, time, kind: 'task-survey', by: 'claude', task: value.task, hooks: value.hooks, needs: value.needs } : undefined;
+		case 'plan':
+			return value.by === 'claude' && typeof value.steps === 'number'
+				? { version: FILE_VERSION, time, kind: 'plan', by: 'claude', steps: value.steps } : undefined;
+		case 'level': {
+			const isLevelValue = (v: unknown) => v === null || (typeof v === 'number' && Number.isInteger(v));
+			return value.by === 'user' && isText(value.step) && isLevelValue(value.level) && isLevelValue(value.rule)
+				? {
+					version: FILE_VERSION, time, kind: 'level', by: 'user', step: value.step, level: value.level as number | null,
+					rule: value.rule as number | null,
+				} : undefined;
+		}
+		case 'level-note':
+			return value.by === 'user' && isText(value.step) && typeof value.text === 'string'
+				? { version: FILE_VERSION, time, kind: 'level-note', by: 'user', step: value.step, text: value.text } : undefined;
 		default:
 			return undefined;
 	}

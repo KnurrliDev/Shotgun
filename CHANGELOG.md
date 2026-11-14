@@ -4,6 +4,22 @@
 
 This version has no release yet. Each phase of `implementation-plan.md` adds its items.
 
+### Phase 5: plan
+
+- The risk rules of the decisions 8 and 14 of the plan are pure functions. They give a level from 1 to 5 from the facts of DataFlow. Tables of facts and levels test them, also the example plan of the design canvas.
+- The new tool `shotgun_submit_plan` gives the steps of Claude in stage 4. Each step has a task, hooks, places, a text and checks. A place is lines of a file with a short text of their code, or a new file.
+- Shotgun checks all data of the plan, and gives all problems in 1 list. Each task of the plan needs 1 step or more and a survey for its text. The steps must follow the order of the user.
+- For each place, Shotgun gets the facts of DataFlow. These are the heat, the threads, the locks, the frame path, the main loop and the data members of a type. The rules then give each step its level.
+- Before the end of the scan of the call graph, a step can have no level. At the end of the scan, Shotgun gets the levels again. **Shotgun: Check the Levels Again** gets them on request.
+- The new tool `shotgun_get_plan` gives the steps with their levels. In stage 4, Claude can survey a task with no survey with `shotgun_submit_task_survey`.
+- The plan page shows the steps with their risk bars and writers. For the selected step, it shows the place and the code, the heat, the rules and the level.
+- The user changes a level with **Lower**, **Raise**, **Rule value** or **Shotgun: Set Risk Level**, and writes a note for each step. The ledger records each level and each note. A level stays with the id of its step in a new plan.
+- The text editor shows each place of a step with the color of its level, and a CodeLens line. A click on the CodeLens line shows the step on the page.
+- The gate **Accept the plan** needs a level for each step.
+- The plugin of Shotgun has the new skill `shotgun-plan`.
+- New stage files: `plan.json`, `risk.json` and `levels.json`.
+- Tests: 92 unit tests. `scripts/test-claude.mjs` adds the plan of task 1, a change of a level and the gate of stage 4.
+
 ### Phase 4: order
 
 - The order page shows the tasks of the survey in sequence, with their text, their hooks, their size and the tasks that they need.

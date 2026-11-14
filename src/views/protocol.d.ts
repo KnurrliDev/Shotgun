@@ -28,6 +28,7 @@ export interface TaskView {
 	brief?: BriefView; // stage 1: the brief and the questions
 	survey?: SurveyView; // stage 2 and later: the survey of Claude
 	order?: OrderView; // stage 3 and later: the order of the user
+	plan?: PlanView; // stage 4 and later: the plan of Claude with the risk levels
 	gate?: GateView; // the gate of the stage, if this version of Shotgun has it
 	isDone: boolean;
 	isPaused: boolean;
@@ -156,6 +157,66 @@ export interface OrderView {
 	maxText: number; // the maximum length of the text of a task
 }
 
+// The heat of DataFlow for the place that gave the level of a step (decision 13: the badge Engine)
+export interface PlanHeatView {
+	function: string;
+	score: number;
+	band: 'cool' | 'warm' | 'hot' | 'very hot';
+	isReachComplete: boolean;
+	reachUnknown?: string;
+	flames?: number;
+	reach?: number;
+	risk?: number;
+	history?: number;
+	isSiloed?: boolean;
+	signals?: { points: number; text: string }[];
+}
+
+// A place of a step, at its lines now
+export interface PlanPlaceView {
+	name: string; // for example "src/battery.cpp:94-96", or "tests/a.cpp (new)"
+	path: string;
+	line: number; // the first line now. 0 for a new file
+	isNew: boolean;
+	isMoved: boolean;
+	isLost: boolean; // the code of the place is not in the file now
+	level: number | null; // the level of the rules for this place
+	excerpt?: ExcerptView;
+}
+
+export interface PlanStepView {
+	id: string;
+	n: number; // the place of the step in the plan, from 1
+	title: string;
+	task: string; // the id of the task of the order
+	taskText: string;
+	hooks: string[];
+	places: PlanPlaceView[];
+	text: string;
+	checks: string[];
+	note?: string; // the note of Claude
+	level: number | null; // the level now: the level of the user, else of the rules. null: no level yet
+	rule: number | null; // the level of the rules
+	user?: number; // the level of the user
+	levelName: string; // for example "High, level 4 of 5"
+	writer?: 'claude' | 'frame' | 'user';
+	writerText?: string; // what the level means for the build
+	reasons: string[]; // the rules that gave the level of the rules
+	userNote: string;
+	heat?: PlanHeatView;
+}
+
+export interface PlanView {
+	steps: PlanStepView[];
+	writers: { user: number; frame: number; claude: number; none: number };
+	changed: { step: string; n: number; level: number | null; rule: number | null; note: string }[]; // the steps with a level of the user
+	waiting: number; // the steps with no level yet
+	scan: string; // the state of the scan of the call graph at the last check
+	riskTime?: string; // the time of the last check of the levels
+	isEditable: boolean; // stage 4
+	maxNote: number;
+}
+
 export interface GateView {
 	label: string; // the text of the button
 	note: string;
@@ -201,7 +262,8 @@ export interface ViewModel {
 	problems: string[]; // the stage files that Shotgun cannot read
 }
 
-export type ToView = { type: 'model'; model: ViewModel };
+// selectStep: the page shows this step, for example after a click on a CodeLens line in the text editor
+export type ToView = { type: 'model'; model: ViewModel } | { type: 'selectStep'; id: string };
 
 // An edit of the user on the order page. later: true keeps the task for later, and false puts it back into the plan
 export type OrderEditView =
@@ -222,4 +284,7 @@ export type FromView =
 	| { type: 'openPlace'; path: string; line: number }
 	| { type: 'saveAnswer'; id: string; text: string }
 	| { type: 'checkHooks' }
-	| { type: 'editOrder'; edit: OrderEditView };
+	| { type: 'editOrder'; edit: OrderEditView }
+	| { type: 'setLevel'; step: string; level: number | null } // null: the level of the rules again
+	| { type: 'setLevelNote'; step: string; note: string }
+	| { type: 'checkLevels' };
