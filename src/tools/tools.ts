@@ -2,6 +2,7 @@ import * as path from 'path';
 import type { ExtensionTool } from '../dataflow/dataflow-api';
 import { parseBrief, partSummary, questionLine } from '../session/brief';
 import { buildGuard, buildNext, CurrentStep, receiptCounts, stateOf } from '../session/build';
+import type { Voice } from '../session/callouts';
 import type { LineStore } from '../session/lines';
 import { changedTasks, Order, orderWarnings } from '../session/order';
 import { levelOf } from '../session/plan';
@@ -11,6 +12,7 @@ import type { Snapshot, SessionStore } from '../session/store';
 import { SIZES } from '../session/survey';
 import { submitBrief, submitQuestions } from './brief';
 import { BaseApi, getStep, START_STEP_TOOL, startStep, StepChanges, submitErrand, submitFrame } from './build';
+import { calloutsData, submitExplanation, submitLineAnswer, voiceOf } from './callouts';
 import { contextOutput, contextText } from './context';
 import { decide, GuardInput, hookOutput, isInside, targetOf } from './guard';
 import { orderData, submitTaskSurvey } from './order';
@@ -23,8 +25,8 @@ export { IS_CASE_SENSITIVE };
 // The tools of Shotgun for the MCP server of DataFlow. DataFlow puts "shotgun_" before each name, so Claude Code sees
 // for example mcp__plugin_dataflow_dataflow__shotgun_get_session. Phase 1 has the read tool get_session and the 2 tools
 // of the hooks. Phase 2 adds submit_brief and submit_questions, phase 3 submit_survey, phase 4 get_order and
-// submit_task_survey, phase 5 get_plan and submit_plan, phase 6 get_step, start_step and submit_errand, and phase 7
-// submit_frame.
+// submit_task_survey, phase 5 get_plan and submit_plan, phase 6 get_step, start_step and submit_errand, phase 7
+// submit_frame, and phase 8 get_callouts, submit_explanation and submit_line_answer.
 
 // A hook in the survey of stage 2 and in the survey of a task in stage 3
 const HOOK_SCHEMA = {
@@ -54,6 +56,9 @@ export interface ToolDeps {
 	readonly saveFiles: (files: readonly string[]) => Promise<void>; // saves the open text editors of the files
 	readonly lines: LineStore; // the writer of each changed line
 	readonly changes: StepChanges; // the files that changed while a step was open
+	readonly voice?: () => Voice; // the voice of the callouts, from the settings of the user
+	// the tools of DataFlow that the MCP clients called since a time (decision 13). undefined: DataFlow does not tell them
+	readonly calls?: (since: number) => ReadonlySet<string> | undefined;
 }
 
 const textOf = (value: unknown): string => (typeof value === 'string' ? value : '');
@@ -383,6 +388,51 @@ export function shotgunTools(deps: ToolDeps): ExtensionTool[] {
 				required: ['step', 'holes'],
 			},
 			call: (args) => submitFrame(deps, args),
+		},
+		{
+			name: 'get_callouts',
+			title: 'Shotgun callouts',
+			description: 'Gives the callouts of the current step, in stage 5: the new facts of DataFlow on the lines that the user wrote, for '
+				+ 'example a race. Each callout has its id, place, kind, title, the facts of the engine, its state, and your explanation. It '
+				+ 'also gives the questions of the user about lines with your answers.',
+			inputSchema: { type: 'object', properties: {} },
+			isReadOnly: true,
+			call: () => calloutsData(deps.store.snapshot, voiceOf(deps)),
+		},
+		{
+			name: 'submit_explanation',
+			title: 'Shotgun: explain a callout',
+			description: 'Gives your explanation of a callout to Shotgun, in stage 5, when the user asks, for example "Explain the callout on line '
+				+ '129". Give 1 to 3 sentences about the effect of the facts of DataFlow. Shotgun shows them under the facts with the badge '
+				+ 'Model. Change no code.',
+			inputSchema: {
+				type: 'object',
+				properties: {
+					callout: { type: 'string', description: 'The id of the callout from get_callouts, for example C2.' },
+					line: { type: 'integer', description: 'Or the line of the callout.' },
+					text: { type: 'string', description: 'Your explanation: 1 to 3 sentences.' },
+				},
+				required: ['text'],
+			},
+			call: (args) => submitExplanation(deps, args),
+		},
+		{
+			name: 'submit_line_answer',
+			title: 'Shotgun: answer a question about a line',
+			description: 'Gives your answer to a question of the user about a line to Shotgun, in stage 5, for example "Does the lambda on line '
+				+ '95 copy charge?". Give the question exactly in the words of the user, and an answer of 1 to 4 sentences. Shotgun adds the '
+				+ 'facts of DataFlow at the line, and shows the answer at the line. Change no code.',
+			inputSchema: {
+				type: 'object',
+				properties: {
+					file: { type: 'string', description: 'The file, relative to the first folder of the project.' },
+					line: { type: 'integer', description: 'The line of the question, from 1.' },
+					question: { type: 'string', description: 'The question of the user, copied exactly from the prompt.' },
+					answer: { type: 'string', description: 'Your answer: 1 to 4 sentences.' },
+				},
+				required: ['file', 'line', 'question', 'answer'],
+			},
+			call: (args) => submitLineAnswer(deps, args),
 		},
 		{
 			name: 'submit_survey',

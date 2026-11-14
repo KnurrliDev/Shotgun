@@ -12,6 +12,7 @@ import {
 	checkAnswer, checkSurvey, codeLineOf, excerptOf, findHook, heatOf, hookEngineOf, movedHook, parseAnswers, parseEngine, parseSurvey, placeText,
 	SurveyContext, typeText,
 } from '../../session/survey';
+import { stageStart, ToolCallLog } from '../../tools/calls';
 import { PromptLog } from '../../tools/prompts';
 import type { EngineApi } from '../../tools/survey';
 import { shotgunTools } from '../../tools/tools';
@@ -51,6 +52,34 @@ suite('Survey', () => {
 		assert.strictEqual(projectPath(path.join(root, 'src', 'a.cpp'), root, true), 'src/a.cpp');
 		assert.strictEqual(projectPath(path.join(os.tmpdir(), 'elsewhere.cpp'), root, true), path.join(os.tmpdir(), 'elsewhere.cpp'));
 		assert.deepStrictEqual(['a.cpp', 'a.H', 'a.inl', 'a.c++', 'a.md', 'a.cs', 'cpp'].map(isCppFile), [true, true, true, true, false, false, false]);
+	});
+
+	test('With the tool calls of DataFlow, a fact needs a call of its tool in this stage (decision 13)', async () => {
+		assert.deepStrictEqual(checkSurvey(SURVEY, { ...context(), called: new Set(['get_callers']) }).problems, []);
+		assert.deepStrictEqual(checkSurvey(SURVEY, { ...context(), called: new Set(['get_place']) }).problems,
+			['Fact 1: you did not call get_callers in this stage. Call it, and give only a fact that it shows.']);
+		// the log: a failed call does not count, and only the calls since the start of the stage count
+		const log = new ToolCallLog();
+		assert.strictEqual(log.since(0), undefined);
+		log.start();
+		log.record({ tool: 'get_callers', time: '2026-11-14T10:00:00.000Z', isError: false });
+		log.record({ tool: 'get_place', time: '2026-11-14T12:00:00.000Z', isError: true });
+		log.record({ tool: 'get_threads', time: '2026-11-14T12:00:00.000Z', isError: false });
+		assert.deepStrictEqual([...log.since(Date.parse('2026-11-14T11:00:00.000Z'))!], ['get_threads']);
+		assert.strictEqual(stageStart({ created: '2026-11-14T09:00:00.000Z', gates: [] }), Date.parse('2026-11-14T09:00:00.000Z'));
+		assert.strictEqual(stageStart({ created: '2026-11-14T09:00:00.000Z', gates: [{ gate: 'brief-ready', stage: 'survey', time: '2026-11-14T11:00:00.000Z' }] }),
+			Date.parse('2026-11-14T11:00:00.000Z'));
+		// submit_survey takes the calls since the gate of the brief
+		surveyTask();
+		const called = new Set<string>();
+		const withCalls = shotgunTools({
+			store, folders: () => [root], log: () => undefined, prompts: new PromptLog(), readText, openFile: () => undefined, engine: () => undefined, ...noBuild(),
+			calls: () => called,
+		}).find((t) => t.name === 'submit_survey')!;
+		await assert.rejects(withCalls.call(SURVEY) as Promise<unknown>, /Fact 1: you did not call get_callers in this stage\./);
+		called.add('get_callers');
+		await withCalls.call(SURVEY);
+		assert.strictEqual(store.snapshot.survey?.facts.length, 1);
 	});
 
 	test('checkSurvey takes a correct survey: relative paths, "line", other spaces in "code", and the tool with its prefix', () => {

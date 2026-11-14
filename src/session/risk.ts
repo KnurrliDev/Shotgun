@@ -153,20 +153,30 @@ export function stepLevel(places: readonly RuleResult[]): RuleResult {
 	return highest ?? { level: null, reasons: ['The step has no place.'] };
 }
 
-// The main loops from the frame functions of the call graph: the reason of a frame function names the function with the
-// main loop, for example "called in the main loop of main". Item 32 of dataflow-gaps-2.md: DataFlow has no field for it
-export function mainLoopsOf(frames: readonly { readonly reason: string }[]): string[] {
-	const names = frames.map((f) => /called in the main loop of ([\w:~<>]+)/.exec(f.reason)?.[1]).filter((n): n is string => !!n);
+// The functions with a main loop, from the last scan of the call graph. DataFlow gives mainLoops (item 32 of
+// dataflow-gaps-2.md). DataFlow 0.6.0 gives them only in the reason of a frame function, for example "called in the main
+// loop of main"
+export function mainLoopsOf(scan: { readonly frames: readonly { readonly reason: string }[]; readonly mainLoops?: readonly { readonly function: string }[] } | undefined)
+	: string[] {
+	if (scan?.mainLoops) {
+		return [...new Set(scan.mainLoops.map((m) => m.function))];
+	}
+	const names = (scan?.frames ?? []).map((f) => /called in the main loop of ([\w:~<>]+)/.exec(f.reason)?.[1]).filter((n): n is string => !!n);
 	return [...new Set(names)];
 }
 
-// The main loop of a line: the function of the line has a main loop, and an open loop is around the line
-export function mainLoopAt(fn: string | undefined, around: readonly { readonly kind: string; readonly isOpenLoop?: boolean }[], mainLoops: readonly string[])
+// The main loop of a line: a loop around the line is a main loop. DataFlow gives isMainLoop for each loop when the call
+// graph is complete. Else the function of the line must have a main loop, and an open loop must be around the line
+export function mainLoopAt(fn: string | undefined,
+	around: readonly { readonly kind: string; readonly isOpenLoop?: boolean; readonly isMainLoop?: boolean }[], mainLoops: readonly string[])
 	: string | undefined {
 	if (!fn) {
 		return undefined;
 	}
+	const loops = around.filter((s) => s.kind === 'for' || s.kind === 'while' || s.kind === 'do');
+	if (loops.some((s) => s.isMainLoop !== undefined)) {
+		return loops.some((s) => s.isMainLoop === true) ? fn : undefined;
+	}
 	const name = mainLoops.find((m) => fn === m || fn.endsWith(`::${m}`));
-	const isInLoop = around.some((s) => (s.kind === 'for' || s.kind === 'while' || s.kind === 'do') && s.isOpenLoop === true);
-	return name && isInLoop ? fn : undefined;
+	return name && loops.some((s) => s.isOpenLoop === true) ? fn : undefined;
 }

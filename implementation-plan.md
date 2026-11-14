@@ -56,8 +56,9 @@ These items are not in the scope of version 1:
 16. A frame at level 4: the panel of a level-4 step has the button "I want a frame". The ledger records this decision. Then the user tells Claude "Give me a frame for step N." Shotgun opens a frame at level 4 only after the button.
 17. In stage 5, the user can change the level of each step that Claude did not start, also the current step of the user. The ledger records each change, and a new writer applies at once.
 18. The frame lines of Claude get no receipt. They get the tag "Claude · frame" in the text editor, and the user reads them while the user fills the holes. The gate "The step is done" needs each hole filled.
+19. D2: the default voice of the callouts is normal: problems and warnings. A pause is 2 seconds with no edit in the files of the step.
 
-The user gave decision 10 on 13 November 2026, and the decisions 11 to 18 on 14 November 2026. Decision 10 changes the buttons of the canvas that started Claude. Section 12 lists these changes.
+The user gave decision 10 on 13 November 2026, and the decisions 11 to 19 on 14 November 2026. Decision 10 changes the buttons of the canvas that started Claude. Section 12 lists these changes.
 
 ## 3. Proposals of this plan
 
@@ -86,7 +87,7 @@ The user can change each proposal before the phase that needs it starts.
 | Number | Decision | Phase |
 | --- | --- | --- |
 | D1 | Decided on 14 November 2026: the user accepted the 5 rules. Decision 14 gives them. | Before phase 5 |
-| D2 | The default voice of the callouts, and the time with no edit that makes a pause. | Before phase 8 |
+| D2 | Decided on 14 November 2026: the voice normal, and a pause of 2 seconds. Decision 19 gives them. | Before phase 8 |
 | D3 | The users of Shotgun: only the user, a team, or a public release. This decision sets the release form and the documents. | Before phase 10 |
 
 ## 5. Terms
@@ -158,6 +159,7 @@ The other stages of Claude run in the same way: the user asks, Claude reads, and
 | `levels.json` | User | The levels and the notes of the user for the steps. A level stays with the id of its step. |
 | `build.json` | Shotgun | The state of each step, its scope and its base. The receipt of an errand, with the notes and the loose ends of Claude and the marks and the notes of the user. The holes of a frame with their hints, and the hints that the user opened. |
 | `lines.json` | Shotgun | The writer of each changed line, with a hash of each line of the file. |
+| `callouts.json` | Shotgun | The keys of the facts of DataFlow at the start of each step of the user. The callouts with the reasons of the user and the words of Claude. The answers of Claude on lines. |
 | `decisions.jsonl` | Shotgun | The ledger: 1 line for each decision of the user and for each deny of the guard. |
 
 Each JSON file has a `version` field. Shotgun writes each file in 1 step, as `writeTextAtomic` of DataFlow does.
@@ -544,6 +546,33 @@ Differences from the plan:
 - **Questions on a line:** the user asks Claude in Claude Code, for example "Does the lambda on line 95 copy charge?". Claude puts its answer at the line with `submit_line_answer`. The answer keeps the facts of the engine and the words of Claude apart.
 - **Skill:** `shotgun-explain`.
 - **Done when:** the race of step 4 of the fixture shows as a problem callout.
+
+**Status, 14 November 2026:** done. `scripts/test-claude.mjs` passed all 135 checks with 10 prompts of Claude Code. The run used the repository of DataFlow with the fixes of the items 30 to 33 and 41 to 47 of `dataflow-gaps-2.md`:
+
+- In stage 5, the test set step 4 to level 4. Shotgun opened the step for the user, and kept the keys of the facts of DataFlow at the start of the step.
+- The test typed `charge.is_dirty = true;` in `process()`, on line 101. The line was a line of the user at once.
+- At the pause, the race of `charge.is_dirty` with the worker thread showed as the problem callout C1 on line 101. The text editor showed the tag "PROBLEM · charge.is_dirty: race". The status bar showed "Shotgun: 1 problem on your lines".
+- "Explain the callout on line 101. Then answer my question: does the lambda on line 95 copy charge?" loaded the skill `shotgun-explain`. Claude explained the callout with `shotgun_submit_explanation`, and changed no file.
+- Claude answered the question with `shotgun_submit_line_answer`. Shotgun added 2 facts of DataFlow at line 95, and the panel showed them apart from the answer.
+- "Not a problem" closed the callout with the reason of the test, and the ledger kept the reason. The panel set the voice to quiet.
+- The new data of DataFlow: the 2 holes of the frame of step 3 showed 8 names in scope each, for example `home_battery_ctl: HomeBatteryCtrl &`. Shotgun refused no fact of the survey, so Claude called each tool of its facts. The MCP server had the same token as the token file.
+- An earlier run with DataFlow 0.6.0 passed all 11 checks of phase 8. Its 5 failures in stage 1 came from the restart of the MCP server after the 401 of item 42: the letter "w" went into the open `brief.md`.
+
+Earlier runs found 4 faults, and this phase fixed them:
+
+- Phase 7: a click on "I want a frame" while Shotgun opened the step for the user did not stick. Now a step that changes while it opens does not open. The store refuses a start with a writer that is not the writer of the step.
+- A file with no lines of a writer did not get the lines that the user typed, so a callout had no line of the user. Now Shotgun follows the lines of the files of the scope from the start of a step of the user, or of the holes of a frame.
+- The engine of DataFlow stopped on a check of a `std::optional` with an error after it: item 47 of `dataflow-gaps-2.md`. The frame of step 3 had such an error. The repository of DataFlow has a fix.
+- The test script: "File: Save" in the Command Palette selected "File: Compare Active File with Saved", so the test saves with Ctrl+S. The test also waits for the new open of step 3 after the new level.
+
+Differences from the plan:
+
+- A pause is 2 seconds with no edit in a C or C++ file of the project, not the event `onDidParse`. DataFlow parses the text of the editor, so the facts at the pause agree with the text.
+- The key of a fact at the start of the step has the text of its line. Thus a fact that only moved is no callout.
+- The voice and the pause are the settings `shotgun.voice` and `shotgun.pauseSeconds` of VS Code (decision 19).
+- Shotgun takes an answer on a line only for a question in the recent prompts of the user.
+- The repository of DataFlow got the fixes of the items 30 to 33 and 41 to 47 of `dataflow-gaps-2.md` in this phase. They are not committed and not in a release. Shotgun uses their data: the accesses of a race (item 46), the main loops (item 32), the new files of a base (item 44), the names in scope at a hole (item 45), and the tool calls of Claude for decision 13 (item 43). With DataFlow 0.6.0, Shotgun uses its procedures from before the fixes.
+- Item 11 of `dataflow-gaps-2.md` stays open: the score of a type and of a data member needs a calibration on real projects.
 
 ### Phase 9: loose ends, ledger and commit message
 

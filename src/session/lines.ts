@@ -293,6 +293,17 @@ export class LineStore {
 		return JSON.stringify(old.runs) !== JSON.stringify(next.runs);
 	}
 
+	// Starts to follow the lines of a file with no lines of a writer, for example a file of an open step of the user. Then
+	// a later change of the text gives the changed lines their writer. lines.json gets the file only when it has lines of
+	// a writer. The result: true if the file was not followed before
+	track(file: string, text: readonly string[]): boolean {
+		if (this.files.has(file)) {
+			return false;
+		}
+		this.files.set(file, moveLines(undefined, text));
+		return true;
+	}
+
 	// Gives lines of a file a writer, after a sync with its text now
 	setOwner(file: string, text: readonly string[], lines: readonly number[], owner: LineOwner): void {
 		const now = moveLines(this.files.get(file), text);

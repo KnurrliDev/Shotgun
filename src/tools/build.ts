@@ -47,6 +47,8 @@ export interface BuildDeps extends SurveyDeps {
 const NOT_BUILD = 'Steps open only in stage 5, the build, after the gate "Accept the plan" of the user.';
 // The maximum number of the lines of the diff of a new file in a receipt
 const MAX_NEW_DIFF = 400;
+// The maximum number of the names in scope at the line of a hole
+const MAX_HOLE_NAMES = 12;
 const MAX_OUTSIDE = 50;
 
 const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error));
@@ -194,21 +196,17 @@ export async function startStep(deps: BuildDeps, args: Record<string, unknown>):
 	const absolute = scope.map((f) => absolutePath(f, root));
 	await deps.saveFiles(absolute);
 	let base: string | undefined;
-	const newFiles = current.state === 'todo' ? scope.filter((_f, i) => deps.readText(absolute[i]) === undefined) : undefined;
+	let newFiles: string[] | undefined;
 	if (current.state === 'todo') {
-		const existing = absolute.filter((_f, i) => !newFiles!.includes(scope[i]));
-		if (existing.length > 0) {
-			const api = deps.base();
-			if (!api) {
-				throw new Error('Shotgun has no link to DataFlow, so it cannot make the base of the step. Tell the user: Shotgun needs DataFlow for the receipt.');
-			}
-			const name = markName(task!.id, found.step.id);
-			try {
-				await api.mark(name, existing);
-			} catch (error) {
-				throw new Error(`DataFlow did not make the base of the step: ${messageOf(error)} Tell the user.`);
-			}
-			base = name;
+		const isThere = (file: string) => deps.readText(file) !== undefined;
+		const api = deps.base();
+		if (!api && absolute.some(isThere)) {
+			throw new Error('Shotgun has no link to DataFlow, so it cannot make the base of the step. Tell the user: Shotgun needs DataFlow for the receipt.');
+		}
+		try {
+			({ base, newFiles } = api ? await markScope(api, markName(task!.id, found.step.id), scope, absolute, isThere) : { newFiles: [...scope] });
+		} catch (error) {
+			throw new Error(`DataFlow did not make the base of the step: ${messageOf(error)} Tell the user.`);
 		}
 	}
 	deps.changes.start();
@@ -240,6 +238,32 @@ export async function startStep(deps: BuildDeps, args: Record<string, unknown>):
 	};
 }
 
+// The base of a step: a mark of DataFlow with the files of its scope. DataFlow keeps a file that is not there as a file
+// with no text, so the diff since the base gives a new file of the step with its functions and its heat (item 44 of
+// dataflow-gaps-2.md). DataFlow 0.6.0 refuses such a file. Then the mark has only the files that are there, and Shotgun
+// reads each new file itself. The result: the base, or no base if no file is there, and the new files for Shotgun
+export async function markScope(api: BaseApi, name: string, scope: readonly string[], absolute: readonly string[], isThere: (file: string) => boolean)
+	: Promise<{ base?: string; newFiles: string[] }> {
+	const newFiles = scope.filter((_f, i) => !isThere(absolute[i]));
+	if (newFiles.length > 0) {
+		try {
+			await api.mark(name, absolute);
+			return { base: name, newFiles: [] };
+		} catch (error) {
+			// the text of DataFlow 0.6.0 for a path that is not there
+			if (!/paths are not there/.test(messageOf(error))) {
+				throw error;
+			}
+		}
+	}
+	const existing = absolute.filter((f) => isThere(f));
+	if (existing.length === 0) {
+		return { newFiles };
+	}
+	await api.mark(name, existing);
+	return { base: name, newFiles };
+}
+
 // The hunks since the base of the step: the diff of DataFlow for the files of the base, and each new file of the scope
 async function hunksOf(deps: BuildDeps, root: string, step: NonNullable<CurrentStep['build']>)
 	: Promise<{ hunks: FileHunk[]; deleted: string[]; notice?: string }> {
@@ -263,8 +287,9 @@ async function hunksOf(deps: BuildDeps, root: string, step: NonNullable<CurrentS
 		for (const f of facts.files) {
 			const file = rel(f.file);
 			for (const h of f.hunks) {
+				// a new file in the mark of the base (item 44 of dataflow-gaps-2.md)
 				hunks.push({
-					file, id: h.id, lines: [h.lines[0], h.lines[1]], added: h.added, removed: h.removed,
+					file, id: h.id, lines: [h.lines[0], h.lines[1]], added: h.added, removed: h.removed, ...(f.isNew ? { isNewFile: true } : {}),
 					...(h.functions ? { functions: [...h.functions] } : {}),
 					...(h.heat ? { heat: h.heat.map((x) => ({ function: x.function, score: x.score, band: x.band, isReachComplete: x.isReachComplete })) } : {}),
 					...(h.diff ? { diff: h.diff } : {}),
@@ -319,8 +344,13 @@ export async function submitFrame(deps: BuildDeps, args: Record<string, unknown>
 			return h;
 		}
 		const facts = await engine.place(absolutePath(h.file, root), h.line).catch(() => undefined);
+		// the names in scope at the line (item 45 of dataflow-gaps-2.md). DataFlow 0.6.0 does not give them
+		const names = (facts?.inScope ?? []).slice(0, MAX_HOLE_NAMES).map((n) => `${n.name}: ${n.type}`);
 		return facts ? {
-			...h, facts: { ...(facts.function ? { function: facts.function.name } : {}), threads: facts.threads.map((t) => t.label), locks: [...facts.locks] },
+			...h, facts: {
+				...(facts.function ? { function: facts.function.name } : {}), threads: facts.threads.map((t) => t.label), locks: [...facts.locks],
+				...(names.length > 0 ? { names } : {}),
+			},
 		} : h;
 	}));
 	store.writeFrame(found.step.id, holes, checked.note);

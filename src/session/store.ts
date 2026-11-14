@@ -5,6 +5,7 @@ import { BRIEF_FILE, briefTemplate, PartId } from './brief';
 import {
 	BUILD_FILE, BuildFile, BuildStep, BuildWriter, ChangeMark, currentStep, CurrentStep, MAX_CHANGE_NOTE, parseBuild, Receipt, receiptCounts, scopeOf, stateOf,
 } from './build';
+import { CALLOUTS_FILE, CalloutsFile, EMPTY_CALLOUTS, LineAnswer, parseCallouts, StepCallouts } from './callouts';
 import type { Hole } from './frame';
 import {
 	ACTIVE_FILE, ActiveFile, ANSWERS_FILE, Decision, DECISIONS_FILE, decisionLine, DecisionInput, ENGINE_FILE, FILE_VERSION, jsonText, LEVELS_FILE,
@@ -44,6 +45,7 @@ export interface Snapshot {
 	readonly risk: RiskFile | undefined; // the facts of DataFlow and the levels of the rules for the steps of the plan
 	readonly levels: LevelsFile | undefined; // the levels and the notes of the user for the steps
 	readonly build: BuildFile | undefined; // the state of the steps of the build in stage 5, and their receipts
+	readonly callouts: CalloutsFile | undefined; // the callouts of the steps, and the answers of Claude about lines
 	readonly problems: readonly string[]; // the stage files that Shotgun cannot read
 }
 
@@ -75,7 +77,7 @@ export class SessionStore {
 	constructor(private readonly root: string | undefined, private readonly now: () => Date = () => new Date()) {
 		this.state = {
 			root, task: undefined, isPaused: false, tasks: [], decisions: [], questions: [], survey: undefined, engine: undefined, answers: {},
-			order: undefined, plan: undefined, risk: undefined, levels: undefined, build: undefined, problems: [],
+			order: undefined, plan: undefined, risk: undefined, levels: undefined, build: undefined, callouts: undefined, problems: [],
 		};
 	}
 
@@ -144,6 +146,7 @@ export class SessionStore {
 		let risk: RiskFile | undefined;
 		let levels: LevelsFile | undefined;
 		let build: BuildFile | undefined;
+		let callouts: CalloutsFile | undefined;
 		// a stage file that is there, but that Shotgun cannot read, is a problem
 		const readFile = <T>(name: string, parse: (text: string, id: string) => T): T | undefined => {
 			const text = task && dir ? readText(path.join(dir, task.id, name)) : undefined;
@@ -166,6 +169,7 @@ export class SessionStore {
 			risk = readFile(RISK_FILE, parseRisk);
 			levels = readFile(LEVELS_FILE, parseLevels);
 			build = readFile(BUILD_FILE, parseBuild);
+			callouts = readFile(CALLOUTS_FILE, parseCallouts);
 			const parsed = parseDecisions(readText(path.join(dir, task.id, DECISIONS_FILE)) ?? '');
 			decisions = parsed.decisions.slice(-MAX_DECISIONS);
 			if (parsed.invalid > 0) {
@@ -195,6 +199,7 @@ export class SessionStore {
 			risk,
 			levels,
 			build,
+			callouts,
 			problems,
 		});
 	}
@@ -433,6 +438,10 @@ export class SessionStore {
 		if ((current.state === 'receipt' && start.writer !== 'claude') || (current.state === 'holes' && start.writer !== 'frame')) {
 			throw new Error(`Step ${current.n} has ${current.state === 'receipt' ? 'a receipt' : 'a frame'} of Claude.`);
 		}
+		// the writer can change while a step opens, for example after "I want a frame" or a different level
+		if (start.writer !== current.writer) {
+			throw new Error(`Step ${current.n} changed while it opened. Its writer is ${current.writer} now, not ${start.writer}.`);
+		}
 		// Claude opens a step again after its receipt, or for a different frame
 		const isAgain = current.state === 'receipt' || current.state === 'holes';
 		const base = isAgain ? old?.base : start.base;
@@ -451,7 +460,8 @@ export class SessionStore {
 			...(old?.receipt ? { receipt: old.receipt } : {}),
 			...(old?.holes ? { holes: old.holes } : {}),
 			...(old?.frameNote ? { frameNote: old.frameNote } : {}),
-			...(old?.isFrameRequested ? { isFrameRequested: true } : {}),
+			// only a frame keeps the request of the user
+			...(old?.isFrameRequested && start.writer === 'frame' ? { isFrameRequested: true } : {}),
 		};
 		this.writeStep(task.id, id, step);
 		if (start.writer !== 'user') {
@@ -527,6 +537,84 @@ export class SessionStore {
 		this.append(task.id, { kind: 'hint', by: 'user', step: id, hole, level });
 		this.load();
 		return next;
+	}
+
+	// The facts of DataFlow at the start of a step of the user or of the holes of a frame. A callout needs a fact that
+	// is not in these keys
+	startCallouts(step: string, keys: readonly string[]): void {
+		const task = this.requireStage('build', 'Callouts are only for stage 5, the build.');
+		const file = this.state.callouts ?? EMPTY_CALLOUTS;
+		const value: StepCallouts = { started: this.time(), startKeys: [...new Set(keys)], callouts: [], nextId: 1 };
+		this.writeCalloutsFile(task.id, { ...file, steps: { ...file.steps, [step]: value } });
+		this.load();
+	}
+
+	// The callouts of a step after a check of the facts. The ledger does not record a check: it is no decision
+	writeStepCallouts(step: string, value: StepCallouts): void {
+		const task = this.requireStage('build', 'Callouts are only for stage 5, the build.');
+		const file = this.state.callouts ?? EMPTY_CALLOUTS;
+		this.writeCalloutsFile(task.id, { ...file, steps: { ...file.steps, [step]: value } });
+		this.load();
+	}
+
+	// "Not a problem": the user closes a callout with a reason, or opens it again with no reason
+	closeCallout(step: string, id: string, reason: string | undefined): void {
+		const task = this.requireStage('build', 'Callouts are only for stage 5, the build.');
+		const { file, value, callout } = this.requireCallout(step, id);
+		const text = (reason ?? '').trim().replace(/\s+/g, ' ');
+		if (reason !== undefined && (!text || text.length > MAX_CHANGE_NOTE)) {
+			throw new Error(`Give a reason of 1 to ${MAX_CHANGE_NOTE} characters. The ledger keeps it.`);
+		}
+		const callouts = value.callouts.map((c) => {
+			if (c !== callout) {
+				return c;
+			}
+			const { closed: _old, ...rest } = c;
+			return reason !== undefined ? { ...rest, closed: { reason: text, time: this.time() } } : rest;
+		});
+		this.writeCalloutsFile(task.id, { ...file, steps: { ...file.steps, [step]: { ...value, callouts } } });
+		this.append(task.id, reason !== undefined
+			? { kind: 'callout-close', by: 'user', step, callout: id, title: callout.title, reason: text }
+			: { kind: 'callout-open', by: 'user', step, callout: id });
+		this.load();
+	}
+
+	// The words of Claude for a callout
+	setExplanation(step: string, id: string, text: string): void {
+		const task = this.requireStage('build', 'Callouts are only for stage 5, the build.');
+		const { file, value, callout } = this.requireCallout(step, id);
+		const callouts = value.callouts.map((c) => (c === callout ? { ...c, explanation: { text, time: this.time() } } : c));
+		this.writeCalloutsFile(task.id, { ...file, steps: { ...file.steps, [step]: { ...value, callouts } } });
+		this.append(task.id, { kind: 'explanation', by: 'claude', step, callout: id });
+		this.load();
+	}
+
+	// The answer of Claude to a question of the user about a line. The result: the answer with its id
+	addLineAnswer(answer: Omit<LineAnswer, 'id' | 'time'>): LineAnswer {
+		const task = this.requireStage('build', 'The answers on a line are only for stage 5, the build.');
+		const file = this.state.callouts ?? EMPTY_CALLOUTS;
+		const next = file.answers.reduce((max, a) => Math.max(max, Number.parseInt(a.id.slice(1), 10) || 0), 0) + 1;
+		const value: LineAnswer = { id: `A${next}`, ...answer, time: this.time() };
+		this.writeCalloutsFile(task.id, { ...file, answers: [...file.answers, value] });
+		this.append(task.id, { kind: 'line-answer', by: 'claude', answer: value.id, file: value.file, line: value.line, question: value.question });
+		this.load();
+		return value;
+	}
+
+	// The user resolves a question about a line
+	resolveAnswer(id: string): void {
+		const task = this.requireStage('build', 'The answers on a line are only for stage 5, the build.');
+		const file = this.state.callouts ?? EMPTY_CALLOUTS;
+		const found = file.answers.find((a) => a.id === id);
+		if (!found) {
+			throw new Error(`The task has no answer ${id}.`);
+		}
+		if (found.resolved) {
+			return;
+		}
+		this.writeCalloutsFile(task.id, { ...file, answers: file.answers.map((a) => (a === found ? { ...a, resolved: this.time() } : a)) });
+		this.append(task.id, { kind: 'line-resolve', by: 'user', answer: id });
+		this.load();
 	}
 
 	// The mark of the user on a change of the receipt of the current step
@@ -709,6 +797,21 @@ export class SessionStore {
 				: 'Claude started the step, so its level stays. Accept the receipt, or fill the holes of the frame, first.');
 		}
 		return task;
+	}
+
+	// A callout of a step
+	private requireCallout(step: string, id: string): { file: CalloutsFile; value: StepCallouts; callout: StepCallouts['callouts'][number] } {
+		const file = this.state.callouts ?? EMPTY_CALLOUTS;
+		const value = file.steps[step];
+		const callout = value?.callouts.find((c) => c.id === id);
+		if (!value || !callout) {
+			throw new Error(`Step ${step} has no callout ${id}.`);
+		}
+		return { file, value, callout };
+	}
+
+	private writeCalloutsFile(id: string, value: CalloutsFile): void {
+		writeTextAtomic(path.join(this.requireDir(), id, CALLOUTS_FILE), jsonText(value));
 	}
 
 	// Removes the state of a step from the build: the step starts again with the writer of its level

@@ -111,7 +111,7 @@ export async function planRisk(engine: EngineApi | undefined, root: string, plan
 	if (engine?.callGraph) {
 		const graph = await engine.callGraph().catch(() => undefined);
 		scan = graph?.state ?? 'none';
-		mainLoops = mainLoopsOf(graph?.lastScan?.frames ?? []);
+		mainLoops = mainLoopsOf(graph?.lastScan);
 		if (scan === 'none') {
 			engine.scan?.();
 		}

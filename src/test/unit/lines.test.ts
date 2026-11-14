@@ -80,4 +80,32 @@ suite('Lines of the writers', () => {
 			rmSync(dir, { recursive: true, force: true });
 		}
 	});
+
+	test('A followed file of a step of the user gives a typed line its writer at once, and stays out of lines.json until then', () => {
+		const dir = mkdtempSync(path.join(os.tmpdir(), 'shotgun-lines-'));
+		try {
+			const file = path.join(dir, 'task', 'lines.json');
+			const lines = new LineStore();
+			lines.load(file);
+			const text = ['void process() {', '  run();', '}'];
+			assert.strictEqual(lines.track('src/battery.cpp', text), true);
+			assert.strictEqual(lines.track('src/battery.cpp', ['int other;']), false);
+			lines.flush();
+			assert.strictEqual(existsSync(file), false);
+			// a new indent of the next line keeps its hash, so only the typed line is a line of the user
+			const user = { writer: 'user' as const, step: 'S4' };
+			assert.strictEqual(lines.sync('src/battery.cpp', ['void process() {', '  charge.is_dirty = true;', '    run();', '}'], user), true);
+			assert.deepStrictEqual(lines.runs('src/battery.cpp').map((r) => [r.lines, r.writer, r.step]), [[[2, 2], 'user', 'S4']]);
+			// a new file of the step starts with no text
+			assert.strictEqual(lines.track('tests/new_test.cpp', ['']), true);
+			lines.sync('tests/new_test.cpp', ['TEST(Limit, Stops) {', '}', ''], user);
+			assert.deepStrictEqual(lines.runs('tests/new_test.cpp').map((r) => r.lines), [[1, 2]]);
+			lines.flush();
+			const again = new LineStore();
+			again.load(file);
+			assert.deepStrictEqual(again.paths.sort(), ['src/battery.cpp', 'tests/new_test.cpp']);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
 });

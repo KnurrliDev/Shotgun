@@ -298,7 +298,7 @@ export interface HoleView {
 	pointer?: { text: string; places: HintPlaceView[] };
 	example?: { text: string; place: HintPlaceView; code: string };
 	answer?: string;
-	facts?: { function?: string; threads: string[]; locks: string[] }; // the facts of DataFlow at the line of the hole
+	facts?: { function?: string; threads: string[]; locks: string[]; names?: string[] }; // the facts of DataFlow at the line of the hole
 }
 
 // The current step of the build, with its text, its places and its receipt
@@ -319,7 +319,47 @@ export interface CurrentStepView extends BuildStepView {
 	isFrameRequested: boolean;
 }
 
+// A callout: a new fact of DataFlow on a line of the user (decision 13: the badge Engine), with the words of Claude
+export interface CalloutView {
+	id: string;
+	kind: 'problem' | 'warning' | 'info';
+	source: 'threads' | 'logic' | 'hidden';
+	title: string;
+	place: string; // for example "src/battery.cpp:129"
+	path: string;
+	line: number;
+	status: 'open' | 'held' | 'waiting' | 'closed' | 'gone'; // held: by the voice. waiting: for the next pause
+	proof: string[]; // the facts of the engine with their places
+	explanation?: string; // the words of Claude
+	closedReason?: string;
+}
+
+// The answer of Claude to a question of the user about a line
+export interface LineAnswerView {
+	id: string;
+	place: string;
+	path: string;
+	line: number;
+	question: string; // the words of the user
+	answer: string; // the words of Claude
+	facts: string[]; // the facts of DataFlow at the line
+	resolved: boolean;
+}
+
+// The navigator of stage 5: the voice, the callouts of the current step, and the answers on lines
+export interface NavigatorView {
+	step?: string; // the id of the current step with callouts: a step of the user, or a frame with its holes
+	voice: 'quiet' | 'normal' | 'talkative';
+	voiceText: string;
+	callouts: CalloutView[];
+	open: number; // the callouts that show now
+	answers: LineAnswerView[];
+	maxPerPause: number;
+	pauseSeconds: number;
+}
+
 export interface BuildView {
+	navigator: NavigatorView;
 	steps: BuildStepView[];
 	current: CurrentStepView | null; // null: each step is done
 	done: number;
@@ -401,4 +441,9 @@ export type FromView =
 	| { type: 'setMark'; step: string; change: string; mark: 'todo' | 'ok' | 'issue' | 'question' } // todo: no mark
 	| { type: 'setChangeNote'; step: string; change: string; note: string }
 	| { type: 'requestFrame'; step: string } // the button "I want a frame"
-	| { type: 'showHint'; step: string; hole: number; level: number }; // level 4: the answer of Claude fills the hole
+	| { type: 'showHint'; step: string; hole: number; level: number } // level 4: the answer of Claude fills the hole
+	| { type: 'setVoice'; voice: 'quiet' | 'normal' | 'talkative' }
+	| { type: 'closeCallout'; step: string; id: string } // "Not a problem": the extension asks for the reason
+	| { type: 'reopenCallout'; step: string; id: string }
+	| { type: 'showInDataFlow'; path: string; line: number; source: 'threads' | 'logic' | 'hidden' } // after a click of the user
+	| { type: 'resolveAnswer'; id: string };

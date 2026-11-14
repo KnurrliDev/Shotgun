@@ -7,6 +7,7 @@ import { changedTasks, factsOf, MAX_TASK_TEXT, orderOf, orderWarnings } from '..
 import {
 	buildNext, buildWriterOf, currentStep, diffLines, MAX_CHANGE_NOTE, receiptCounts, stateOf, walkText,
 } from '../session/build';
+import { calloutStatus, DEFAULT_PAUSE_SECONDS, DEFAULT_VOICE, MAX_PER_PAUSE, Voice, VOICE_TEXT } from '../session/callouts';
 import { findMarkers, Hole, holeNow, isHoleDone } from '../session/frame';
 import { absolutePath } from '../session/paths';
 import { levelOf, MAX_LEVEL_NOTE, placeName } from '../session/plan';
@@ -15,8 +16,8 @@ import { GATE_LABEL, STAGE_INFO, STAGES, stageText } from '../session/stages';
 import type { Snapshot } from '../session/store';
 import { excerptOf, findHook, Lines } from '../session/survey';
 import type {
-	BriefView, BuildStepView, BuildView, CurrentStepView, DecisionView, GateView, HoleView, HookView, OrderTaskView, OrderView, PlanPlaceView, PlanStepView,
-	PlanView, ReceiptView, SetupRow, StageView, SurveyView, TaskView, ViewModel,
+	BriefView, BuildStepView, BuildView, CurrentStepView, DecisionView, GateView, HoleView, HookView, NavigatorView, OrderTaskView, OrderView, PlanPlaceView,
+	PlanStepView, PlanView, ReceiptView, SetupRow, StageView, SurveyView, TaskView, ViewModel,
 } from './protocol';
 
 // The view model of the page and of the panel, from the session, the state of DataFlow and the connection to Claude
@@ -41,6 +42,9 @@ export interface ModelInput {
 	readonly brief?: { readonly file: string; readonly text: string; readonly isDirty: boolean };
 	// the lines of a file of the project now, for the hooks of the survey. undefined: no file
 	readonly readLines?: (file: string) => readonly string[] | undefined;
+	// the settings of the callouts (decision 19)
+	readonly voice?: Voice;
+	readonly pauseSeconds?: number;
 }
 
 const count = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -121,6 +125,16 @@ export function decisionText(decision: Decision): string {
 		case 'hint':
 			return decision.level >= 4 ? `The answer of Claude filled hole ${decision.hole} of step ${decision.step}.`
 				: `You opened hint ${decision.level} of hole ${decision.hole} of step ${decision.step}.`;
+		case 'callout-close':
+			return `You closed the callout "${decision.title}" of step ${decision.step}: not a problem. Your reason: "${decision.reason}".`;
+		case 'callout-open':
+			return `You opened the callout ${decision.callout} of step ${decision.step} again.`;
+		case 'explanation':
+			return `Claude explained the callout ${decision.callout} of step ${decision.step}.`;
+		case 'line-answer':
+			return `Claude answered your question about ${decision.file}:${decision.line}: "${decision.question}".`;
+		case 'line-resolve':
+			return `You resolved the question ${decision.answer}.`;
 	}
 }
 
@@ -334,14 +348,46 @@ function holeViews(holes: readonly Hole[], root: string, readLines: ModelInput['
 			...(h.shown >= 2 ? { pointer: { text: h.hints.pointer.text, places: h.hints.pointer.places.map((p) => link(p.file, p.lines)) } } : {}),
 			...(h.shown >= 3 ? { example: { text: h.hints.example.text, place: link(h.hints.example.file, h.hints.example.lines), code: h.hints.example.code } } : {}),
 			...(h.shown >= 4 ? { answer: h.hints.answer } : {}),
-			...(h.facts ? { facts: { ...(h.facts.function ? { function: h.facts.function } : {}), threads: [...h.facts.threads], locks: [...h.facts.locks] } } : {}),
+			...(h.facts ? {
+				facts: {
+					...(h.facts.function ? { function: h.facts.function } : {}), threads: [...h.facts.threads], locks: [...h.facts.locks],
+					...(h.facts.names ? { names: [...h.facts.names] } : {}),
+				},
+			} : {}),
 		};
 	});
 }
 
+// Stage 5: the navigator: the voice, the callouts of the current step of the user, and the answers of Claude on lines
+function navigatorView(snapshot: Snapshot, voice: Voice, pauseSeconds: number): NavigatorView {
+	const { plan, build, root } = snapshot;
+	const steps = plan?.steps ?? [];
+	const n = steps.findIndex((s) => build?.steps[s.id]?.state !== 'done');
+	const b = n >= 0 ? build?.steps[steps[n].id] : undefined;
+	const step = b && ((b.writer === 'user' && b.state === 'open') || (b.writer === 'frame' && b.state === 'holes')) ? steps[n].id : undefined;
+	const callouts = (step ? snapshot.callouts?.steps[step]?.callouts ?? [] : []).filter((c) => !c.isGone).map((c) => ({
+		id: c.id, kind: c.kind, source: c.source, title: c.title, place: `${c.file}:${c.line}`, path: absolutePath(c.file, root ?? ''), line: c.line,
+		status: calloutStatus(c, voice), proof: [...c.proof], ...(c.explanation ? { explanation: c.explanation.text } : {}),
+		...(c.closed ? { closedReason: c.closed.reason } : {}),
+	}));
+	return {
+		...(step ? { step } : {}),
+		voice,
+		voiceText: VOICE_TEXT[voice],
+		callouts,
+		open: callouts.filter((c) => c.status === 'open').length,
+		answers: (snapshot.callouts?.answers ?? []).map((a) => ({
+			id: a.id, place: `${a.file}:${a.line}`, path: absolutePath(a.file, root ?? ''), line: a.line, question: a.question, answer: a.answer,
+			facts: [...a.facts], resolved: !!a.resolved,
+		})),
+		maxPerPause: MAX_PER_PAUSE,
+		pauseSeconds,
+	};
+}
+
 // Stage 5: the steps in sequence, and the current step with its receipt. plan: the steps of the plan view, with their
 // places at the lines now
-function buildView(snapshot: Snapshot, plan: PlanView, readLines: ModelInput['readLines']): BuildView | undefined {
+function buildView(snapshot: Snapshot, plan: PlanView, readLines: ModelInput['readLines'], navigator: NavigatorView): BuildView | undefined {
 	const { task, risk, levels, build, root } = snapshot;
 	if (!task || !snapshot.plan || !root) {
 		return undefined;
@@ -435,6 +481,7 @@ function buildView(snapshot: Snapshot, plan: PlanView, readLines: ModelInput['re
 		};
 	}
 	return {
+		navigator,
 		steps,
 		current: view,
 		done: steps.filter((s) => s.state === 'done').length,
@@ -685,7 +732,7 @@ function stageViews(snapshot: Snapshot): StageView[] {
 	});
 }
 
-function taskView(snapshot: Snapshot, briefInput: ModelInput['brief'], readLines: ModelInput['readLines']): TaskView | null {
+function taskView(snapshot: Snapshot, briefInput: ModelInput['brief'], readLines: ModelInput['readLines'], voice: Voice, pauseSeconds: number): TaskView | null {
 	const task = snapshot.task;
 	if (!task) {
 		return null;
@@ -694,7 +741,7 @@ function taskView(snapshot: Snapshot, briefInput: ModelInput['brief'], readLines
 	const survey = task.stage !== 'brief' ? surveyView(snapshot, readLines) : undefined;
 	const order = orderView(snapshot, survey);
 	const plan = task.stage === 'plan' || task.stage === 'build' ? planView(snapshot, readLines) : undefined;
-	const build = task.stage === 'build' && plan ? buildView(snapshot, plan, readLines) : undefined;
+	const build = task.stage === 'build' && plan ? buildView(snapshot, plan, readLines, navigatorView(snapshot, voice, pauseSeconds)) : undefined;
 	const gate = gateView(task, brief, survey, order, plan, build);
 	const info = STAGE_INFO[task.stage];
 	const isActive = !task.isDone && !snapshot.isPaused;
@@ -740,7 +787,7 @@ export function buildModel(input: ModelInput): ViewModel {
 	return {
 		version: input.version,
 		stages: stageViews(snapshot),
-		task: taskView(snapshot, input.brief, input.readLines),
+		task: taskView(snapshot, input.brief, input.readLines, input.voice ?? DEFAULT_VOICE, input.pauseSeconds ?? DEFAULT_PAUSE_SECONDS),
 		tasks: snapshot.tasks.map((t) => ({
 			id: t.id, title: t.title, stageNumber: STAGE_INFO[t.stage].number, stageName: STAGE_INFO[t.stage].name, isDone: t.isDone,
 			isActive: t.id === snapshot.task?.id,
@@ -763,6 +810,15 @@ export function statusOf(snapshot: Snapshot): { text: string; tooltip: string } 
 	}
 	if (snapshot.isPaused) {
 		return { text: 'Shotgun: paused', tooltip: `Shotgun: the guard is off for "${task.title}". Select "Shotgun: Continue" to continue.` };
+	}
+	// stage 5: the problems on the lines of the user come first
+	const problems = Object.values(snapshot.callouts?.steps ?? {}).flatMap((s) => s.callouts)
+		.filter((c) => c.kind === 'problem' && c.shown && !c.closed && !c.isGone).length;
+	if (task.stage === 'build' && problems > 0) {
+		return {
+			text: `Shotgun: ${problems === 1 ? '1 problem' : `${problems} problems`} on your lines`,
+			tooltip: 'Shotgun: callouts of DataFlow on the lines that you wrote. The panel of Shotgun shows them.',
+		};
 	}
 	return { text: `Shotgun: ${stageText(task.stage)}`, tooltip: `Shotgun: "${task.title}". Next: ${STAGE_INFO[task.stage].next}` };
 }

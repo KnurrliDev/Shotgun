@@ -126,6 +126,9 @@ export interface SurveyContext {
 	readonly isCaseSensitive: boolean;
 	readonly readLines: (file: string) => readonly string[] | undefined; // the lines of a file, or undefined if no file
 	readonly tools: readonly string[]; // the read tools of DataFlow. Empty: Shotgun does not check the names
+	// the tools of DataFlow that Claude called in this stage (decision 13). undefined: Shotgun does not check the calls,
+	// because DataFlow 0.6.0 does not tell the calls of the tools (item 43 of dataflow-gaps-2.md)
+	readonly called?: ReadonlySet<string>;
 }
 
 // The checks of the items of a survey. Each check adds its problems to the list. ids: the ids that are in use, in lower
@@ -309,6 +312,8 @@ export function checkSurvey(raw: Json, ctx: SurveyContext): { survey: Survey; pr
 			problems.push(`${label}: give the "tool": the read tool of DataFlow that shows the fact, for example get_threads.`);
 		} else if (ctx.tools.length > 0 && !ctx.tools.includes(tool)) {
 			problems.push(`${label}: "${tool}" is not a read tool of DataFlow. Give the tool that shows the fact, for example get_threads.`);
+		} else if (ctx.called && !ctx.called.has(tool)) {
+			problems.push(`${label}: you did not call ${tool} in this stage. Call it, and give only a fact that it shows.`);
 		}
 		const place = placeOf(f, label, false);
 		if (text && tool && place) {

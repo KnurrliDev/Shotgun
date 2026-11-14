@@ -47,6 +47,7 @@ export interface HoleFacts {
 	readonly function?: string;
 	readonly threads: readonly string[];
 	readonly locks: readonly string[];
+	readonly names?: readonly string[]; // the names in scope at the line with their types, for example "limit: int" (item 45)
 }
 
 export interface Hole {

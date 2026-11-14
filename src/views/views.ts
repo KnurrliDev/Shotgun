@@ -1,6 +1,7 @@
 import { randomBytes } from 'crypto';
 import * as vscode from 'vscode';
 import { isChangeMark } from '../session/build';
+import { isVoice } from '../session/callouts';
 import type { FromView, ToView, ViewCommand, ViewModel } from './protocol';
 
 // The 2 webviews of Shotgun: the panel beside the text editor (a webview view in the secondary side bar) and the page
@@ -54,6 +55,16 @@ export function isFromView(value: unknown): value is FromView {
 				&& m.note.length <= 2000;
 		case 'requestFrame':
 			return typeof m.step === 'string' && m.step.length <= 64;
+		case 'setVoice':
+			return isVoice(m.voice);
+		case 'closeCallout':
+		case 'reopenCallout':
+			return typeof m.step === 'string' && m.step.length <= 64 && typeof m.id === 'string' && m.id.length <= 16;
+		case 'showInDataFlow':
+			return typeof m.path === 'string' && Number.isInteger(m.line) && (m.line as number) > 0 && (m.source === 'threads' || m.source === 'logic'
+				|| m.source === 'hidden');
+		case 'resolveAnswer':
+			return typeof m.id === 'string' && m.id.length <= 16;
 		case 'showHint':
 			return typeof m.step === 'string' && m.step.length <= 64 && Number.isInteger(m.hole) && (m.hole as number) >= 1 && Number.isInteger(m.level)
 				&& (m.level as number) >= 1 && (m.level as number) <= 4;

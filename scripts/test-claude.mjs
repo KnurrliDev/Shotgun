@@ -1,6 +1,6 @@
 // The test of Shotgun with Claude Code. It starts the test build of VS Code with DataFlow and Shotgun from their
 // repository folders. In VS Code, it makes a task with "Shotgun: New Task", and connects DataFlow and Shotgun to Claude
-// Code with their commands. Then it runs 9 prompts of the CLI of Claude Code in print mode:
+// Code with their commands. Then it runs 10 prompts of the CLI of Claude Code in print mode:
 // 1. Task 1: the test writes the brief into brief.md, as the user does. "Ask me questions about my brief." loads the
 //    skill shotgun, and Claude gives its questions with shotgun_submit_questions. The test closes the questions.
 // 2. Claude tries to change a file of the project in stage 1, and the guard denies the change (phase 1).
@@ -24,13 +24,16 @@
 //    skill shotgun-frame, and Claude gives the frame with shotgun_submit_frame. The test goes to the holes with Tab and
 //    types their code. The last hole gets the nudge and then the answer of Claude. The gate "The step is done" ends the
 //    step (the condition of phase 7).
+// 10. The test sets step 4 to level 4, and writes a line in process() that makes a race with the worker thread. At the
+//    pause, the race shows as a problem callout (the condition of phase 8). "Explain the callout ..." and a question
+//    about a line load the skill shotgun-explain. The test closes the callout with "Not a problem" and a reason.
 // The commands write the settings of proposal P15, and the test checks these files. The CLI loads the 2 plugins with
 // --plugin-dir from the folders that the commands wrote. The CLI uses the login and thus the config folder of the user,
 // and a marketplace from settings would go into the plugin data of the user.
 // The settings of the user do not change: the test build has its own user data, MCP registry, folder for the settings
 // of Claude Code and Shotgun folder. The test records the plugin data of Claude Code of the user before the runs, and
 // checks it after them. It removes the empty folders that the CLI makes there.
-// The test uses the Claude subscription of the user for 9 runs of Claude Code, so it runs only on request.
+// The test uses the Claude subscription of the user for 10 runs of Claude Code, so it runs only on request.
 // Usage: node scripts/test-claude.mjs <new run folder>
 // Environment: DATAFLOW_REPO (default: ../DataFlow), CLAUDE_EXE (default: the CLI of the VS Code extension of Claude Code)
 import { execFileSync, spawn } from 'node:child_process';
@@ -60,11 +63,14 @@ const GET_STEP = 'mcp__plugin_dataflow_dataflow__shotgun_get_step';
 const START_STEP = 'mcp__plugin_dataflow_dataflow__shotgun_start_step';
 const SUBMIT_ERRAND = 'mcp__plugin_dataflow_dataflow__shotgun_submit_errand';
 const SUBMIT_FRAME = 'mcp__plugin_dataflow_dataflow__shotgun_submit_frame';
+const GET_CALLOUTS = 'mcp__plugin_dataflow_dataflow__shotgun_get_callouts';
+const SUBMIT_EXPLANATION = 'mcp__plugin_dataflow_dataflow__shotgun_submit_explanation';
+const SUBMIT_LINE_ANSWER = 'mcp__plugin_dataflow_dataflow__shotgun_submit_line_answer';
 // The read tools of DataFlow for the survey
 const READ_TOOLS = ['list_functions', 'get_outline', 'get_place', 'get_callers', 'get_calls', 'get_threads', 'get_heat', 'get_flow', 'get_logic',
 	'get_structure', 'get_member_sites', 'get_includes', 'get_call_graph', 'get_hidden'].map((t) => `mcp__plugin_dataflow_dataflow__${t}`);
 // The number of the tools of Shotgun in the MCP server of DataFlow
-const SHOTGUN_TOOLS = 14;
+const SHOTGUN_TOOLS = 17;
 // The brief of task 1, as the user writes it in brief.md
 const BRIEF_1 = [
 	`# Brief: ${TITLE}`, '',
@@ -438,6 +444,22 @@ async function command(wb, text) {
 		}
 	}
 	throw new Error(`The Command Palette did not open for "${text}".`);
+}
+
+// Saves the active text editor with Ctrl+S. In the Command Palette, "File: Save" can select a different command, for
+// example "File: Compare Active File with Saved". The result: true if the file on the disk has the text
+async function saveEditor(wb, file, text) {
+	const box = await wb.evaluate(`(() => {
+		const r = [...document.querySelectorAll('.part.editor .monaco-editor .view-lines')].map((e) => e.getBoundingClientRect()).find((x) => x.width > 0);
+		return r ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : undefined; })()`);
+	if (box) {
+		for (const type of ['mousePressed', 'mouseReleased']) {
+			await wb.send('Input.dispatchMouseEvent', { type, x: box.x, y: box.y, button: 'left', clickCount: 1 });
+		}
+	}
+	await sleep(300);
+	await wb.key('s', 'KeyS', 83, 2); // ctrl+s
+	return !!(await poll(() => fs.readFileSync(file, 'utf8').includes(text) || undefined, 10));
 }
 
 // Runs a script in the webview of Shotgun with this root element: .panel for the panel, .page for the page. The script
@@ -1266,12 +1288,15 @@ async function main() {
 		// 9: a frame of Claude for step 3 (phase 7). In stage 5, the user sets step 3 to level 4 (decision 17), and selects
 		// "I want a frame" (decision 16). Then "Give me a frame for step 3." loads the skill shotgun-frame
 		const s3 = steps[2];
+		// step 3 can be open for the user already. The new level opens it again, so the test waits for the new open
+		const levelTime3 = Date.now();
 		await command(wb, 'Shotgun: Set Risk Level');
 		await quickPickNth(wb, 'Shotgun: Set Risk Level', 0);
 		await quickPickNth(wb, 'Shotgun: Set Risk Level of', 3);
 		const opened3 = await poll(() => {
 			const b = buildOf()?.steps?.[s3.id];
-			return readJson(taskFile(TASK_1, 'levels.json'))?.levels?.[s3.id]?.level === 4 && b?.state === 'open' && b.writer === 'user' ? b : undefined;
+			return readJson(taskFile(TASK_1, 'levels.json'))?.levels?.[s3.id]?.level === 4 && b?.state === 'open' && b.writer === 'user'
+				&& Date.parse(b.opened) >= levelTime3 ? b : undefined;
 		}, 30);
 		check('In stage 5, "Shotgun: Set Risk Level" sets step 3 to level 4, and Shotgun opens it for the user', !!opened3,
 			{ levels: readJson(taskFile(TASK_1, 'levels.json')), build: buildOf()?.steps?.[s3.id] });
@@ -1415,6 +1440,108 @@ async function main() {
 		check('The ledger records the frame request, the frame, the hints and the gate of step 3', ['frame-request', 'frame', 'hint'].every((k) => kinds3.includes(k))
 			&& kinds3.filter((k) => k === 'step-gate').length === 3, kinds3);
 		await wb.shot('panel-build-step-4.png');
+
+		// 10: the callouts of a step of the user (phase 8). The test sets step 4 to level 4, writes a line in process() that
+		// writes charge.is_dirty, which the worker thread also uses, and waits for the pause. Then "Explain the callout" and a
+		// question about a line load the skill shotgun-explain
+		const s4 = steps[3];
+		await command(wb, 'Shotgun: Set Risk Level');
+		await quickPickNth(wb, 'Shotgun: Set Risk Level', 0);
+		await quickPickNth(wb, 'Shotgun: Set Risk Level of', 3);
+		const opened4 = await poll(() => {
+			const b = buildOf()?.steps?.[s4.id];
+			return b?.state === 'open' && b.writer === 'user' ? b : undefined;
+		}, 30);
+		const calloutsOf = () => readJson(taskFile(TASK_1, 'callouts.json'));
+		const started4 = await poll(() => calloutsOf()?.steps?.[s4.id], 60);
+		check('Shotgun keeps the facts of DataFlow at the start of step 4 of the user', !!opened4 && !!started4,
+			{ build: buildOf()?.steps?.[s4.id], start: started4 ? started4.startKeys.length : undefined });
+		const batteryFile = path.join(p.project, 'src', 'battery.cpp');
+		const batteryLines = fs.readFileSync(batteryFile, 'utf8').split('\n');
+		const target = batteryLines.findIndex((l) => l.includes('if (home_battery_ctl.state == HOMEPOWER_CHARGE_PLANNING)')) + 1;
+		const lambda = batteryLines.findIndex((l) => l.includes('solve_power_plan(charge)')) + 1;
+		const lambdaLine = lambda > target ? lambda + 1 : lambda;
+		await command(wb, 'Go to File');
+		await quickInput(wb, 'src/battery.cpp');
+		await sleep(1500);
+		await command(wb, 'Go to Line/Column');
+		await quickInput(wb, String(target));
+		await sleep(700);
+		await wb.send('Input.insertText', { text: '  charge.is_dirty = true;\n' });
+		const userLine4 = await poll(() => {
+			const runs = readJson(taskFile(TASK_1, 'lines.json'))?.files?.['src/battery.cpp']?.runs ?? [];
+			return runs.find((r) => r.writer === 'user' && r.step === s4.id && r.lines[0] <= target && r.lines[1] >= target);
+		}, 15);
+		check('The line that the user types is a line of the user in step 4', !!userLine4, readJson(taskFile(TASK_1, 'lines.json'))?.files?.['src/battery.cpp']);
+		// the pause: 2 seconds with no edit, then the facts of DataFlow
+		const problem = await poll(() => (calloutsOf()?.steps?.[s4.id]?.callouts ?? []).find((c) => c.kind === 'problem' && c.shown && c.source === 'threads'), 40);
+		check('At a pause, the race on the line of the user shows as a problem callout', !!problem && problem.line === target,
+			{ target, callouts: calloutsOf()?.steps?.[s4.id]?.callouts });
+		results.callouts = calloutsOf()?.steps?.[s4.id]?.callouts?.map((c) => ({ id: c.id, kind: c.kind, line: c.line, title: c.title, shown: !!c.shown, proof: c.proof }));
+		console.log(`INFO The callouts of step 4: ${JSON.stringify(results.callouts?.map((c) => `${c.id} ${c.kind} ${c.line} ${c.title}${c.shown ? '' : ' (held)'}`))}`);
+		text = await poll(async () => {
+			const t = await panelText();
+			return t && /callouts on your lines/i.test(t) && t.includes(problem?.title ?? '?') ? t : undefined;
+		}, 15);
+		const statusBar = await poll(() => wb.evaluate(`[...document.querySelectorAll('.statusbar-item')].map((e) => e.textContent).find((x) => /problem on your lines/.test(x))`), 15);
+		check('The panel and the status bar show the problem on the line of the user', !!text && !!statusBar, { statusBar, panel: await panelText() });
+		await wb.shot('editor-callout.png');
+		// Claude reads the file on the disk, so the test saves the line of the user
+		const isSaved4 = await saveEditor(wb, batteryFile, 'charge.is_dirty = true;');
+		check('Ctrl+S saves the line of the user for Claude', isSaved4, fs.readFileSync(batteryFile, 'utf8').split('\n').slice(target - 3, target + 2));
+
+		const question = `does the lambda on line ${lambdaLine} copy charge?`;
+		const explainRun = await runClaude('explain', `Explain the callout on line ${problem?.line ?? target}. Then answer my question: ${question}`, {
+			tools: [GET_SESSION, GET_CALLOUTS, SUBMIT_EXPLANATION, SUBMIT_LINE_ANSWER, 'Skill', 'Read', ...READ_TOOLS], maxTurns: 30, seconds: 600,
+		});
+		const explainNames = explainRun.toolUses.map((t) => t.name);
+		check('The requests load the skill shotgun-explain', explainRun.toolUses.some((t) => t.name === 'Skill' && String(t.input?.skill).includes('shotgun-explain')), explainNames);
+		const explained = (calloutsOf()?.steps?.[s4.id]?.callouts ?? []).find((c) => c.id === problem?.id);
+		check('Claude explains the callout with shotgun_submit_explanation, and changes no file', explainNames.includes(SUBMIT_EXPLANATION) && !!explained?.explanation?.text
+			&& !explainNames.some((n) => ['Edit', 'Write', 'MultiEdit'].includes(n)), { explainNames, explanation: explained?.explanation });
+		const answer = (calloutsOf()?.answers ?? []).find((a) => a.question.toLowerCase().includes('copy charge'));
+		check('Claude answers the question on the line, and Shotgun adds the facts of DataFlow at the line', explainNames.includes(SUBMIT_LINE_ANSWER)
+			&& !!answer && answer.line === lambdaLine && answer.facts.length > 0, { answer, explainNames });
+		const refusedAnswers = explainRun.toolResults.filter((r) => r.isError && r.text.includes('did not take the answer')).length;
+		if (refusedAnswers > 0) {
+			results.notes = [...(results.notes ?? []), `Shotgun refused ${refusedAnswers} answer of Claude before it took the answer.`];
+			console.log(`NOTE Shotgun refused ${refusedAnswers} answer of Claude before it took the answer.`);
+		}
+		results.explain = { explanation: explained?.explanation?.text, answer: answer ? { question: answer.question, answer: answer.answer, facts: answer.facts } : undefined };
+		console.log(`INFO The explanation: ${explained?.explanation?.text ?? '-'} The answer: ${answer?.answer ?? '-'}`);
+		text = await poll(async () => {
+			const t = await panelText();
+			return t && t.includes(answer?.answer?.slice(0, 30) ?? '?') ? t : undefined;
+		}, 15);
+		check('The panel shows the question of the user with the facts of DataFlow and the answer of Claude', !!text, await panelText());
+		await wb.shot('panel-callout-answer.png');
+
+		// "Not a problem": the reason of the user goes into the ledger
+		await inWebview('.panel', `() => {
+			const b = [...d.querySelectorAll('.callout-row')].find((x) => x.textContent.includes(${JSON.stringify(problem?.title ?? '?')}));
+			b?.click();
+			return !!b;
+		}`);
+		await sleep(500);
+		await inWebview('.panel', `() => {
+			const b = [...d.querySelectorAll('.callout-detail button')].find((x) => x.textContent.includes('Not a problem'));
+			b?.click();
+			return !!b;
+		}`);
+		const reason = 'The test writes the flag on purpose.';
+		await quickInput(wb, reason, 'Not a Problem');
+		const closed4 = await poll(() => (calloutsOf()?.steps?.[s4.id]?.callouts ?? []).find((c) => c.id === problem?.id && c.closed), 15);
+		check('"Not a problem" closes the callout, and the ledger keeps the reason of the user', closed4?.closed?.reason === reason
+			&& ledgerOf(TASK_1).some((d) => d.kind === 'callout-close' && d.reason === reason), closed4);
+		// the voice of the navigator
+		await inWebview('.panel', `() => {
+			const b = [...d.querySelectorAll('.mark-btn.voice')].find((x) => x.textContent.includes('Quiet'));
+			b?.click();
+			return !!b;
+		}`);
+		text = await poll(async () => (await panelText())?.includes('Quiet: problems only') && true, 15);
+		check('The panel sets the voice of the callouts', !!text, await panelText());
+		await wb.shot('panel-callout-closed.png');
 
 		wb.ws.close();
 	} catch (error) {

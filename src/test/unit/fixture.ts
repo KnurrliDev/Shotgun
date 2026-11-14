@@ -33,7 +33,7 @@ export function makeProject(prefix: string): string {
 
 // The facts of DataFlow for a line in the loop of solve()
 export const placeFacts = (file: string, line: number): PlaceFacts => ({
-	file, line, function: { name: 'solve', lines: [3, 9] }, isInBody: true,
+	file, line, function: { name: 'solve', lines: [3, 9] }, isInBody: true, inScope: [{ name: 'plan', type: 'Plan &', kind: 'param' }],
 	around: [{ kind: 'for', lines: [5, 7], text: 'int i = 0; i < plan.steps' }],
 	locks: [], threads: [], isOnCallerThread: true, isReachComplete: false,
 });

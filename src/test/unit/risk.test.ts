@@ -93,8 +93,10 @@ suite('Risk rules', () => {
 		assert.strictEqual(stepLevel([]).level, null);
 	});
 
-	test('The main loop comes from the reasons of the frame functions', () => {
-		const loops = mainLoopsOf([{ reason: 'called in the main loop of main' }, { reason: 'called in the main loop of main' }, { reason: 'a timer of Qt' }]);
+	test('The main loop comes from isMainLoop of DataFlow, else from the reasons of the frame functions', () => {
+		// DataFlow 0.6.0: the reasons of the frame functions
+		const frames = [{ reason: 'called in the main loop of main' }, { reason: 'called in the main loop of main' }, { reason: 'a timer of Qt' }];
+		const loops = mainLoopsOf({ frames });
 		assert.deepStrictEqual(loops, ['main']);
 		const open = [{ kind: 'if' }, { kind: 'for', isOpenLoop: true }];
 		assert.strictEqual(mainLoopAt('main', open, loops), 'main');
@@ -102,6 +104,12 @@ suite('Risk rules', () => {
 		assert.strictEqual(mainLoopAt('main', [{ kind: 'for', isOpenLoop: false }], loops), undefined);
 		assert.strictEqual(mainLoopAt('process', open, loops), undefined);
 		assert.strictEqual(mainLoopAt(undefined, open, loops), undefined);
+		// the fields of DataFlow (item 32 of dataflow-gaps-2.md)
+		assert.deepStrictEqual(mainLoopsOf({ frames, mainLoops: [{ function: 'app::run' }] }), ['app::run']);
+		assert.deepStrictEqual(mainLoopsOf(undefined), []);
+		assert.strictEqual(mainLoopAt('app::run', [{ kind: 'while', isOpenLoop: true, isMainLoop: true }], []), 'app::run');
+		// an open loop that is no main loop, for example a loop that reads a file
+		assert.strictEqual(mainLoopAt('main', [{ kind: 'while', isOpenLoop: true, isMainLoop: false }], loops), undefined);
 	});
 
 	test('Each level has a name, a writer and a text', () => {

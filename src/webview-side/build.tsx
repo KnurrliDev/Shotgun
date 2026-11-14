@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import type { BuildStepView, CurrentStepView, HintPlaceView, HoleView, ReceiptChangeView, ReceiptView, TaskView } from '../views/protocol';
+import type {
+	BuildStepView, CalloutView, CurrentStepView, HintPlaceView, HoleView, LineAnswerView, NavigatorView, ReceiptChangeView, ReceiptView, TaskView,
+} from '../views/protocol';
 import { GateBlock, TellClaude, WriterBadges } from './common';
 import { post } from './vscode';
 
@@ -205,13 +207,14 @@ function HoleDetail({ step, hole }: { step: string; hole: HoleView }) {
 			<div class="row-head"><span class="name">Hole {hole.n}</span><span class={`hole-state h-${hole.state}`}>{holeStatus(hole)}</span></div>
 			<p class="hole-question">{hole.question}</p>
 			<p class="change-place"><PlaceLink place={{ name: hole.place, path: hole.path, line: hole.line }} /></p>
-			{hole.facts && (hole.facts.function || hole.facts.threads.length > 0 || hole.facts.locks.length > 0) && (
+			{hole.facts && (hole.facts.function || hole.facts.threads.length > 0 || hole.facts.locks.length > 0 || (hole.facts.names?.length ?? 0) > 0) && (
 				<div class="order-note">
 					<span class="badge engine">Engine</span>
 					<span>
 						{hole.facts.function ? `In ${hole.facts.function}.` : ''}
 						{hole.facts.threads.length > 0 ? ` The thread ${hole.facts.threads.join(', ')} runs the line.` : ''}
 						{hole.facts.locks.length > 0 ? ` The line holds the lock ${hole.facts.locks.join(', ')}.` : ''}
+						{hole.facts.names && hole.facts.names.length > 0 ? ` Names in scope: ${hole.facts.names.join(', ')}.` : ''}
 					</span>
 				</div>
 			)}
@@ -343,7 +346,121 @@ function CurrentStep({ step, request, maxNote }: { step: CurrentStepView; reques
 	);
 }
 
-// The panel in stage 5: the steps, the current step with its receipt, and the gate
+const KIND_TEXT = { problem: 'Problem', warning: 'Warning', info: 'Info' } as const;
+const STATUS_TEXT = { open: 'open', held: 'held back by the voice', waiting: 'at the next pause', closed: 'closed by you', gone: 'gone' } as const;
+const VOICE_NAMES = [['quiet', 'Quiet'], ['normal', 'Normal'], ['talkative', 'Talkative']] as const;
+
+// A callout: the facts of the engine, the words of Claude, and the buttons of the user
+function CalloutDetail({ step, callout }: { step: string; callout: CalloutView }) {
+	return (
+		<div class={`callout-detail k-${callout.kind}`}>
+			<p class="change-place">
+				<span class={`kind-chip k-${callout.kind}`}>{KIND_TEXT[callout.kind]}</span>
+				<PlaceLink place={{ name: callout.place, path: callout.path, line: callout.line }} />
+			</p>
+			<div class="order-note">
+				<span class="badge engine">Engine</span>
+				<span>{callout.proof.map((p) => <span class="block">{p}</span>)}</span>
+			</div>
+			{callout.explanation
+				? <div class="order-note claude"><span class="badge claude">Model</span><span>{callout.explanation}</span></div>
+				: <p class="muted small">No words of Claude yet. Claude explains a callout only when you ask.</p>}
+			{callout.closedReason && <p class="muted small">You closed this callout: not a problem. Your reason: "{callout.closedReason}". The ledger keeps it.</p>}
+			<div class="buttons">
+				{callout.status === 'closed'
+					? <button type="button" class="btn secondary small" onClick={() => post({ type: 'reopenCallout', step, id: callout.id })}>Open again</button>
+					: <button type="button" class="btn secondary small" onClick={() => post({ type: 'closeCallout', step, id: callout.id })}>Not a problem</button>}
+				<button type="button" class="btn secondary small" title="Shows the line in the side view of DataFlow, with its lens"
+					onClick={() => post({ type: 'showInDataFlow', path: callout.path, line: callout.line, source: callout.source })}>
+					Show in DataFlow
+				</button>
+			</div>
+		</div>
+	);
+}
+
+// A question of the user about a line, with the facts of DataFlow at the line and the answer of Claude
+function AnswerRow({ answer }: { answer: LineAnswerView }) {
+	return (
+		<li class={`answer-row${answer.resolved ? ' resolved' : ''}`}>
+			<div class="order-note user">
+				<span class="badge user">You</span>
+				<span>{answer.question} <PlaceLink place={{ name: answer.place, path: answer.path, line: answer.line }} /></span>
+			</div>
+			{answer.facts.length > 0 && (
+				<div class="order-note"><span class="badge engine">Engine</span><span>{answer.facts.map((f) => <span class="block">{f}</span>)}</span></div>
+			)}
+			<div class="order-note claude"><span class="badge claude">Model</span><span>{answer.answer}</span></div>
+			{answer.resolved ? <p class="muted small">You resolved this question.</p> : (
+				<div class="buttons">
+					<button type="button" class="btn secondary small" onClick={() => post({ type: 'resolveAnswer', id: answer.id })}>Resolve</button>
+				</div>
+			)}
+		</li>
+	);
+}
+
+// The navigator of stage 5: the voice of the callouts, the callouts on the lines of the user, and the questions on lines
+function Navigator({ nav }: { nav: NavigatorView }) {
+	const [selected, setSelected] = useState<string | undefined>(undefined);
+	const callout = nav.callouts.find((c) => c.id === selected);
+	const firstOpen = nav.callouts.find((c) => c.status === 'open');
+	return (
+		<section class="navigator">
+			{nav.step && (
+				<>
+					<div class="row-head"><span class="name">Voice of the navigator</span></div>
+					<div class="marks" role="group" aria-label="The voice of the callouts">
+						{VOICE_NAMES.map(([v, label]) => (
+							<button type="button" class={`mark-btn voice${nav.voice === v ? ' on' : ''}`} aria-pressed={nav.voice === v}
+								onClick={() => post({ type: 'setVoice', voice: v })}>
+								{label}
+							</button>
+						))}
+					</div>
+					<p class="muted small">{nav.voiceText}</p>
+					<div class="row-head">
+						<span class="name">Callouts on your lines</span>
+						<span class="badge engine">Engine</span>
+						<span class="muted">{nav.open} open</span>
+					</div>
+					{nav.callouts.length === 0 ? (
+						<p class="muted small">
+							No callout. A callout comes at a pause of {nav.pauseSeconds} seconds with no edit, from a new fact of DataFlow on your lines.
+						</p>
+					) : (
+						<ol class="callouts">
+							{nav.callouts.map((c) => (
+								<li>
+									<button type="button" class={`callout-row k-${c.kind} s-${c.status}${c.id === selected ? ' on' : ''}`} aria-pressed={c.id === selected}
+										onClick={() => setSelected(c.id === selected ? undefined : c.id)}>
+										<span class={`kind-chip k-${c.kind}`}>{KIND_TEXT[c.kind]}</span>
+										<span class="grow">{c.title}</span>
+										<span class="hole-state">{STATUS_TEXT[c.status]}</span>
+									</button>
+								</li>
+							))}
+						</ol>
+					)}
+					{callout && <CalloutDetail step={nav.step!} callout={callout} />}
+					{firstOpen && (
+						<>
+							<p class="muted">The callouts show facts of the engine. For the words of Claude, tell Claude:</p>
+							<TellClaude text={`Explain the callout on line ${firstOpen.line}.`} />
+						</>
+					)}
+					<p class="muted small">Limit: {nav.maxPerPause} callouts for each pause.</p>
+				</>
+			)}
+			<div class="row-head"><span class="name">Questions on the line</span></div>
+			{nav.answers.length === 0 ? (
+				<p class="muted small">Ask Claude in Claude Code, for example "Does the lambda on line 95 copy charge?". Claude puts its answer at the line.</p>
+			) : <ul class="answers">{nav.answers.map((a) => <AnswerRow answer={a} />)}</ul>}
+		</section>
+	);
+}
+
+// The panel in stage 5: the steps, the current step with its receipt, the navigator, and the gate
 export function BuildSummary({ task }: { task: TaskView }) {
 	const build = task.build;
 	return (
@@ -360,6 +477,7 @@ export function BuildSummary({ task }: { task: TaskView }) {
 					<StepList steps={build.steps} />
 					{build.current ? <CurrentStep step={build.current} request={task.request} maxNote={build.maxNote} />
 						: <p>Each step of the plan is done.</p>}
+					<Navigator nav={build.navigator} />
 				</>
 			)}
 			{task.gate && <GateBlock gate={task.gate} />}

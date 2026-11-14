@@ -4,6 +4,31 @@
 
 This version has no release yet. Each phase of `implementation-plan.md` adds its items.
 
+### Phase 8: callouts
+
+- The user writes a step of the user, or the holes of a frame. Meanwhile, Shotgun gets the facts of DataFlow for the lines of the user. These are the races of the threads, the warnings of the logic, and the hidden C++ of the functions.
+- At the start of the step, Shotgun keeps a key for each fact, with the text of the line of the fact. A fact on a line of the user with a new key is a callout. A fact that only moved keeps its key.
+- A callout has a kind. A problem is a race, or data after the end of its function. A warning is a check of the threads, or a warning of the logic. Info is the hidden C++.
+- Callouts never come while the user types. They come at a pause: 2 seconds with no edit (decision 19). A pause shows a maximum of 3 callouts, the problems first.
+- The voice filters the kinds: quiet, normal or talkative. The default is normal: problems and warnings. The panel and **Shotgun: Set the Voice of the Callouts** change it.
+- The text editor shows each open callout with a tag after its line. The hover shows the facts of the engine, the words of Claude, and the links "Show in DataFlow" and "Not a problem".
+- "Show in DataFlow" shows the line in the side view of DataFlow with the lens of the fact, only after a click of the user.
+- "Not a problem" closes a callout with a reason of the user. The ledger keeps the reason.
+- The new tools `shotgun_get_callouts` and `shotgun_submit_explanation`: on a request of the user, Claude explains a callout. The words of Claude show under the facts with the badge **Model**.
+- The new tool `shotgun_submit_line_answer`: Claude puts its answer to a question of the user at the line. The question must be in the words of the user. Shotgun adds the facts of DataFlow at the line with the badge **Engine**, so the facts and the words of Claude stay apart.
+- The status bar shows the number of the open problems on the lines of the user.
+- From the start of a step of the user, or of the holes of a frame, Shotgun follows the lines of the files of the scope. Thus a line that the user types is a line of the user at once, also in a file with no lines of a writer.
+- A step that changes while it opens does not open. Before, if the user clicked **I want a frame** while Shotgun opened the step, the step stayed a step of the user.
+- New settings: `shotgun.voice` and `shotgun.pauseSeconds`. New stage file: `callouts.json`.
+- The plugin of Shotgun has the new skill `shotgun-explain`.
+- DataFlow gives the lines of a race only in a text: gap 46 of `dataflow-gaps-2.md`.
+- The engine of DataFlow stops on a check of a `std::optional` with an error after it: gap 47 of `dataflow-gaps-2.md`.
+- The repository of DataFlow has fixes for the gaps 30 to 33, 41 to 47. Shotgun uses their data in the place of texts. A race gives its lines from `accesses`, and only an access that can run at the same time as a different thread counts (gap 46). The rule of the main loop uses `isMainLoop` and `mainLoops` (gap 32).
+- The base of a step also keeps each new file of the step. Thus the receipt shows the functions of a new file (gap 44). Each hole of a frame shows the names in scope at its line, with their types (gap 45).
+- Decision 13: Shotgun refuses a fact of the survey with a tool of DataFlow that Claude did not call in the stage (gap 43).
+- With DataFlow 0.6.0, Shotgun uses its procedures from before these fixes, and it does not check the calls of the tools.
+- Tests: 120 unit tests. `scripts/test-claude.mjs` adds a race on a line of the user, its callout, an explanation, an answer on a line, and "Not a problem".
+
 ### Phase 7: frames and hints
 
 - A step of level 3 gets a frame of Claude. Claude writes the lines with no decision, and a marker `/*@hole N: question */` in the place of each decision of the user. Decision 15 ends.

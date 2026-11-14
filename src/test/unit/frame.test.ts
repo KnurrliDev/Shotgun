@@ -190,6 +190,9 @@ suite('Frames', () => {
 			assert.match(String(out.next), /The panel of Shotgun shows the holes/);
 			const step = store.snapshot.build!.steps.S1;
 			assert.deepStrictEqual([step.state, step.holes?.length, step.holes?.[0].facts?.function], ['holes', 2, 'solve']);
+			// the names in scope at the line of the hole (item 45 of dataflow-gaps-2.md)
+			assert.deepStrictEqual(step.holes?.[0].facts?.names, ['plan: Plan &']);
+			assert.deepStrictEqual(model().task?.build?.current?.holes?.[0].facts?.names, ['plan: Plan &']);
 			assert.deepStrictEqual(lines.runs('src/solver.cpp').map((r) => [r.lines, r.writer, r.change]), [[[6, 8], 'claude', 'frame']]);
 			assert.match(guard(solver()).hookSpecificOutput.permissionDecisionReason, /The user fills the holes of the frame of step 1 of 3/);
 			let m = model();
@@ -235,6 +238,10 @@ suite('Frames', () => {
 			const current = store.current!;
 			assert.deepStrictEqual([current.writer, current.state, current.build?.isFrameRequested], ['frame', 'todo', true]);
 			assert.strictEqual(model().task?.build?.current?.writerText, 'You asked for a frame. Claude writes the frame, and you fill its holes');
+			// an open for the user that started before the request does not change the step
+			assert.throws(() => store.startStep('S2', { writer: 'user', level: 4, scope: ['tests/limit_test.cpp'], base: 'sg.base.S2' }),
+				/Step 2 changed while it opened\. Its writer is frame now, not user\./);
+			assert.deepStrictEqual([store.current?.writer, store.current?.state, store.current?.build?.isFrameRequested], ['frame', 'todo', true]);
 			// a new level in stage 5 removes the frame request: the step starts again with the writer of its level
 			const removed = store.setLevel('S2', 2);
 			assert.strictEqual(removed?.isFrameRequested, true);

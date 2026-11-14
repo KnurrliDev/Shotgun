@@ -4,23 +4,29 @@ import { ClaudeConnection, ClaudeState } from './claude/connection';
 import { isSamePath } from './claude/settings';
 import type { DataFlowApi } from './dataflow/dataflow-api';
 import { linkDataFlow } from './dataflow/dataflow';
+import { CalloutDecorations } from './editor/callouts';
 import { HoleDecorations } from './editor/holes';
 import { HookDecorations } from './editor/hooks';
 import { ClaudeLines } from './editor/lines';
 import { StepDecorations } from './editor/steps';
 import { parseBrief } from './session/brief';
 import { addedLines, ChangeMark, CurrentStep, markName, receiptCounts, scopeOf, stateOf } from './session/build';
+import {
+	CALLOUTS_FILE, DEFAULT_PAUSE_SECONDS, DEFAULT_VOICE, factKeys, isVoice, keepUserState, LENS_OF, revealCallouts, updateCallouts, Voice, VOICE_TEXT, VOICES,
+} from './session/callouts';
 import { readText } from './session/files';
 import { answerText, findMarkers, holeNow, isHoleDone } from './session/frame';
 import { LINES_FILE, LineStore } from './session/lines';
 import { orderWarnings } from './session/order';
 import { absolutePath, IS_CASE_SENSITIVE, isCppFile, isInside, projectPath } from './session/paths';
-import { levelOf } from './session/plan';
+import { levelOf, PlanPlace } from './session/plan';
 import { Level, LEVEL_INFO, LEVELS } from './session/risk';
 import { GATE_LABEL, stageText } from './session/stages';
 import { messageOf, SessionStore, Snapshot } from './session/store';
 import { findHook, MAX_ANSWER, movedHook } from './session/survey';
-import { BaseApi } from './tools/build';
+import { BaseApi, markScope } from './tools/build';
+import { ToolCallLog } from './tools/calls';
+import { fileFacts } from './tools/callouts';
 import { PromptLog } from './tools/prompts';
 import { planRisk } from './tools/plan';
 import { EngineApi, engineFacts } from './tools/survey';
@@ -81,12 +87,19 @@ class Shotgun implements vscode.Disposable {
 	private readonly claudeLines = new ClaudeLines();
 	// the holes of a frame of Claude in the text editor, and Tab between them
 	private readonly frameHoles = new HoleDecorations();
+	// the callouts on the lines of the user, and the answers of Claude on lines (phase 8)
+	private readonly calloutMarks = new CalloutDecorations();
+	private pauseTimer: NodeJS.Timeout | undefined;
+	private isCheckingCallouts = false;
+	private isCalloutCheckDue = false;
+	private isStartingCallouts = false;
 	private linesTask: string | undefined = undefined;
 	// the files of the project that changed while a step of Claude was open
 	private readonly stepChanges = new Map<string, FileChange>();
 	// the files of the scope with a warning about an edit of the user, while a step of Claude is open
 	private readonly warned = new Set<string>();
 	private isOpeningStep = false;
+	private readonly toolCalls = new ToolCallLog();
 	private readonly disposables: vscode.Disposable[] = [];
 	private dataflow: DataFlowView = { state: 'linking' };
 	private api: DataFlowApi | undefined;
@@ -102,7 +115,15 @@ class Shotgun implements vscode.Disposable {
 		this.status.name = 'Shotgun';
 		this.status.command = `${PANEL_ID}.focus`;
 		this.disposables.push(
-			this.log, this.status, this.views, this.hooks, this.steps, this.claudeLines, this.frameHoles,
+			this.log, this.status, this.views, this.hooks, this.steps, this.claudeLines, this.frameHoles, this.calloutMarks,
+			new vscode.Disposable(() => clearTimeout(this.pauseTimer)),
+			// the voice of the callouts: a new voice shows the callouts that it allows at once
+			vscode.workspace.onDidChangeConfiguration((e) => {
+				if (e.affectsConfiguration('shotgun')) {
+					this.update();
+					void this.checkCallouts();
+				}
+			}),
 			new vscode.Disposable(() => this.lines.dispose()),
 			this.store.onDidChange(() => this.update()),
 			...this.commands(),
@@ -118,6 +139,9 @@ class Shotgun implements vscode.Disposable {
 			// the panel checks the parts of the brief while the user writes, and the survey page follows the code of the hooks
 			vscode.workspace.onDidChangeTextDocument((e) => {
 				this.trackLines(e);
+				if (e.contentChanges.length > 0) {
+					this.onEditForCallouts(e.document);
+				}
 				if (this.isWatched(e.document)) {
 					this.updateSoon();
 				}
@@ -149,6 +173,11 @@ class Shotgun implements vscode.Disposable {
 		}
 		const { api } = link;
 		this.api = api;
+		// decision 13: the calls of the tools of DataFlow by Claude (item 43 of dataflow-gaps-2.md). DataFlow 0.6.0 has no event
+		if (typeof api.onDidCallTool === 'function') {
+			this.toolCalls.start();
+			this.disposables.push(api.onDidCallTool((e) => this.toolCalls.record(e)));
+		}
 		let toolsError: string | undefined;
 		try {
 			const tools = shotgunTools({
@@ -162,6 +191,8 @@ class Shotgun implements vscode.Disposable {
 				base: () => this.baseApi(),
 				saveFiles: (files) => this.saveFiles(files),
 				lines: this.lines,
+				voice: () => this.voice(),
+				calls: (since) => this.toolCalls.since(since),
 				changes: {
 					start: () => {
 						this.stepChanges.clear();
@@ -209,7 +240,208 @@ class Shotgun implements vscode.Disposable {
 			functionHeat: (file, name) => api.getHeat({ file, function: name }),
 			callGraph: () => api.getCallGraph(),
 			scan: () => this.startScan(),
+			threads: (file) => api.getThreads({ file }),
+			logic: (file, line) => api.getLogic({ file, line }),
+			hidden: (file, line) => api.getHidden({ file, line }),
 		};
+	}
+
+// The voice of the callouts and the time with no edit that makes a pause, from the settings (decision 19)
+	private voice(): Voice {
+		const value = vscode.workspace.getConfiguration('shotgun').get<string>('voice');
+		return isVoice(value) ? value : DEFAULT_VOICE;
+	}
+
+	private pauseSeconds(): number {
+		const value = vscode.workspace.getConfiguration('shotgun').get<number>('pauseSeconds', DEFAULT_PAUSE_SECONDS);
+		return typeof value === 'number' && Number.isFinite(value) ? Math.min(60, Math.max(0.5, value)) : DEFAULT_PAUSE_SECONDS;
+	}
+
+	// The current step with callouts: a step of the user, or a frame with its holes
+	private calloutStep(): { id: string; scope: readonly string[]; places: readonly PlanPlace[] } | undefined {
+		const current = this.store.current;
+		const b = current?.build;
+		if (!current || !b || !((b.writer === 'user' && b.state === 'open') || (b.writer === 'frame' && b.state === 'holes'))) {
+			return undefined;
+		}
+		return { id: current.step.id, scope: b.scope, places: current.step.places };
+	}
+
+	// The facts of DataFlow at the start of the step: a fact with one of these keys is no callout. The start waits for the
+	// engine of DataFlow
+	private async ensureCalloutStart(): Promise<void> {
+		const step = this.calloutStep();
+		const root = this.store.snapshot.root;
+		const engine = this.engineApi();
+		if (!step || !root || !engine || this.isStartingCallouts || this.dataflow.engine !== 'ready' || this.store.snapshot.callouts?.steps[step.id]) {
+			return;
+		}
+		this.isStartingCallouts = true;
+		try {
+			const keys: string[] = [];
+			for (const file of step.scope.filter((f) => isCppFile(f))) {
+				const full = absolutePath(file, root);
+				const text = this.textOf(full);
+				if (text === undefined) {
+					continue;
+				}
+				const placeLines = step.places.filter((p) => p.lines && isSamePath(absolutePath(p.file, root), full)).map((p) => p.lines![0]);
+				keys.push(...factKeys(await fileFacts(engine, full, placeLines.length > 0 ? placeLines : [1]), text.split(/\r?\n/)));
+			}
+			// the user can end the step while DataFlow works
+			if (this.calloutStep()?.id === step.id && !this.store.snapshot.callouts?.steps[step.id]) {
+				this.store.startCallouts(step.id, keys);
+				this.log.info(`Shotgun keeps ${keys.length} facts of DataFlow at the start of step ${step.id}. Only a new fact on a line of the user is a callout.`);
+			}
+		} catch (error) {
+			this.log.warn(`Shotgun did not get the facts at the start of step ${step.id}: ${messageOf(error)}`);
+		} finally {
+			this.isStartingCallouts = false;
+		}
+	}
+
+	// An edit in a C or C++ file of the project starts the time of a pause again. Callouts come only at a pause
+	private onEditForCallouts(doc: vscode.TextDocument): void {
+		const root = this.store.snapshot.root;
+		if (!root || doc.uri.scheme !== 'file' || !isCppFile(doc.uri.fsPath) || !isInside(doc.uri.fsPath, root) || !this.calloutStep()) {
+			return;
+		}
+		clearTimeout(this.pauseTimer);
+		this.pauseTimer = setTimeout(() => void this.checkCallouts(), this.pauseSeconds() * 1000);
+	}
+
+	// The check at a pause: the facts of DataFlow for the files with lines of the user in the step, the new callouts, and a
+	// maximum of 3 of them for this pause
+	private async checkCallouts(): Promise<void> {
+		if (this.isCheckingCallouts) {
+			this.isCalloutCheckDue = true;
+			return;
+		}
+		const step = this.calloutStep();
+		const root = this.store.snapshot.root;
+		const start = step ? this.store.snapshot.callouts?.steps[step.id] : undefined;
+		if (!step || !root) {
+			return;
+		}
+		if (!start) {
+			await this.ensureCalloutStart();
+			return;
+		}
+		this.isCheckingCallouts = true;
+		try {
+			const engine = this.engineApi();
+			let next = start;
+			const userFiles = this.lines.paths.filter((f) => isCppFile(f) && this.lines.runs(f).some((r) => r.writer === 'user' && r.step === step.id));
+			for (const file of [...new Set([...userFiles, ...start.callouts.map((c) => c.file)])]) {
+				const full = absolutePath(file, root);
+				const text = this.textOf(full);
+				if (text === undefined) {
+					continue;
+				}
+				const runs = this.lines.runs(file).filter((r) => r.writer === 'user' && r.step === step.id);
+				const userLines = new Set(runs.flatMap((r) => Array.from({ length: r.lines[1] - r.lines[0] + 1 }, (_v, i) => r.lines[0] + i)));
+				const facts = runs.length > 0 ? await fileFacts(engine, full, runs.map((r) => r.lines[0])) : [];
+				next = updateCallouts(next, file, facts, text.split(/\r?\n/), userLines);
+			}
+			const revealed = revealCallouts(next, this.voice(), new Date().toISOString());
+			// the user can end the step, or close a callout, while DataFlow works
+			const latest = this.store.snapshot.callouts?.steps[step.id];
+			if (this.calloutStep()?.id === step.id && latest) {
+				const merged = keepUserState(revealed.step, latest);
+				if (JSON.stringify(merged) !== JSON.stringify(latest)) {
+					this.store.writeStepCallouts(step.id, merged);
+				}
+				if (revealed.shown > 0) {
+					this.log.info(`A pause showed ${revealed.shown} ${revealed.shown === 1 ? 'callout' : 'callouts'} of step ${step.id}.`);
+				}
+			}
+		} catch (error) {
+			this.log.warn(`Shotgun did not check the callouts: ${messageOf(error)}`);
+		} finally {
+			this.isCheckingCallouts = false;
+			if (this.isCalloutCheckDue) {
+				this.isCalloutCheckDue = false;
+				void this.checkCallouts();
+			}
+		}
+	}
+
+	// "Not a problem": the reason of the user goes into the ledger
+	private async closeCallout(stepArg?: unknown, idArg?: unknown): Promise<void> {
+		const stepId = typeof stepArg === 'string' ? stepArg : this.calloutStep()?.id;
+		const callouts = stepId ? (this.store.snapshot.callouts?.steps[stepId]?.callouts ?? []).filter((c) => c.shown && !c.closed && !c.isGone) : [];
+		let id = typeof idArg === 'string' ? idArg : undefined;
+		if (!stepId || (id === undefined && callouts.length === 0)) {
+			void vscode.window.showInformationMessage('Shotgun: the current step has no open callout.');
+			return;
+		}
+		if (id === undefined) {
+			const pick = await vscode.window.showQuickPick(callouts.map((c) => ({ label: `${c.kind}: ${c.title}`, description: `${c.file}:${c.line}`, id: c.id })), {
+				title: 'Shotgun: Not a Problem', placeHolder: 'Select the callout',
+			});
+			id = pick?.id;
+		}
+		const callout = callouts.find((c) => c.id === id) ?? this.store.snapshot.callouts?.steps[stepId]?.callouts.find((c) => c.id === id);
+		if (!id || !callout) {
+			return;
+		}
+		const reason = await vscode.window.showInputBox({
+			title: `Shotgun: Not a Problem: ${callout.title}`,
+			prompt: 'Why is this callout not a problem? The ledger keeps your reason.',
+			ignoreFocusOut: true,
+			validateInput: (value) => (value.trim() ? undefined : 'Give your reason.'),
+		});
+		if (reason !== undefined) {
+			this.store.closeCallout(stepId, id, reason);
+		}
+	}
+
+	// Shows the line in the side view of DataFlow with the lens of the fact, after a click of the user
+	private async showInDataFlow(fileArg: unknown, lineArg: unknown, sourceArg: unknown): Promise<void> {
+		const api = this.api;
+		if (!api) {
+			throw new Error('Shotgun has no link to DataFlow.');
+		}
+		const file = typeof fileArg === 'string' ? fileArg : '';
+		const line = typeof lineArg === 'number' ? lineArg : 0;
+		if (!path.isAbsolute(file) || !this.folders().some((f) => isInside(file, f)) || line < 1) {
+			throw new Error('Shotgun shows only a line of a file in the workspace folders.');
+		}
+		await api.showLine({ file, line });
+		if (sourceArg === 'threads' || sourceArg === 'logic' || sourceArg === 'hidden') {
+			await api.setLens({ lens: LENS_OF[sourceArg], on: true });
+		}
+	}
+
+	private async setVoice(value?: unknown): Promise<void> {
+		let voice = isVoice(value) ? value : undefined;
+		if (!voice) {
+			const pick = await vscode.window.showQuickPick(VOICES.map((v) => ({ label: v, detail: VOICE_TEXT[v], voice: v })), {
+				title: 'Shotgun: Set the Voice of the Callouts', placeHolder: `Now: ${this.voice()}`,
+			});
+			voice = pick?.voice;
+		}
+		if (voice) {
+			await vscode.workspace.getConfiguration('shotgun').update('voice', voice, vscode.ConfigurationTarget.Global);
+		}
+	}
+
+	private async resolveAnswer(idArg?: unknown): Promise<void> {
+		let id = typeof idArg === 'string' ? idArg : undefined;
+		if (!id) {
+			const open = (this.store.snapshot.callouts?.answers ?? []).filter((a) => !a.resolved);
+			if (open.length === 0) {
+				void vscode.window.showInformationMessage('Shotgun: no question on a line is open.');
+				return;
+			}
+			const pick = await vscode.window.showQuickPick(open.map((a) => ({ label: a.question, description: `${a.file}:${a.line}`, id: a.id })), {
+				title: 'Shotgun: Resolve a Question on a Line', placeHolder: 'Select the question',
+			});
+			id = pick?.id;
+		}
+		if (id) {
+			this.store.resolveAnswer(id);
+		}
 	}
 
 	// The bases and the diffs of DataFlow for the build. undefined: no link to DataFlow
@@ -249,26 +481,27 @@ class Shotgun implements vscode.Disposable {
 			const scope = scopeOf(current.step);
 			const absolute = scope.map((f) => absolutePath(f, root));
 			await this.saveFiles(absolute);
-			const newFiles = scope.filter((_f, i) => this.textOf(absolute[i]) === undefined);
-			const existing = absolute.filter((_f, i) => !newFiles.includes(scope[i]));
+			const isThere = (file: string) => this.textOf(file) !== undefined;
+			let newFiles = scope.filter((_f, i) => !isThere(absolute[i]));
 			let base: string | undefined;
 			let baseError: string | undefined;
-			if (existing.length > 0) {
-				const api = this.baseApi();
-				if (!api) {
-					baseError = 'Shotgun has no link to DataFlow.';
-				} else {
-					const name = markName(task.id, current.step.id);
-					try {
-						await api.mark(name, existing);
-						base = name;
-					} catch (error) {
-						baseError = `DataFlow did not make the base: ${messageOf(error)}`;
-					}
+			const api = this.baseApi();
+			if (api) {
+				try {
+					({ base, newFiles } = await markScope(api, markName(task.id, current.step.id), scope, absolute, isThere));
+				} catch (error) {
+					baseError = `DataFlow did not make the base: ${messageOf(error)}`;
 				}
+			} else if (newFiles.length < scope.length) {
+				baseError = 'Shotgun has no link to DataFlow.';
 			}
-			// the user can open a different task while DataFlow works
-			if (this.store.snapshot.task?.id !== task.id || this.store.current?.step.id !== current.step.id || this.store.current.state !== 'todo') {
+			// the user can open a different task while DataFlow works, or select "I want a frame", or change the level
+			const now = this.store.current;
+			if (this.store.snapshot.task?.id !== task.id || now?.step.id !== current.step.id || now.state !== 'todo' || now.writer !== 'user') {
+				// no step uses the new base
+				if (base && now?.build?.base !== base) {
+					await this.deleteBase(base);
+				}
 				return;
 			}
 			this.store.startStep(current.step.id, {
@@ -344,6 +577,23 @@ class Shotgun implements vscode.Disposable {
 		const owner = doc.isDirty ? { writer: 'user' as const, step: isUserStep ? current!.step.id : '' } : undefined;
 		if (this.lines.sync(file, doc.getText().split(/\r?\n/), owner)) {
 			this.claudeLines.renderSoon();
+		}
+	}
+
+	// The files of the scope of an open step of the user, or of a frame with holes. Shotgun follows their lines from the
+	// start of the step. Thus a line that the user types is a line of the user at once, also in a file with no lines of a
+	// writer. The callouts need these lines before "The step is done"
+	private trackStepFiles(): void {
+		const step = this.calloutStep();
+		const root = this.store.snapshot.root;
+		if (!step || !root) {
+			return;
+		}
+		for (const file of step.scope) {
+			// a new file of the step has no text yet, so each line in it is a new line
+			if (!this.lines.has(file) && this.lines.track(file, (this.textOf(absolutePath(file, root)) ?? '').split(/\r?\n/))) {
+				this.log.info(`Shotgun follows the lines of ${file} for step ${step.id}.`);
+			}
 		}
 	}
 
@@ -557,6 +807,10 @@ class Shotgun implements vscode.Disposable {
 			vscode.commands.registerCommand('shotgun.previousHole', run(() => this.goToHole(-1))),
 			vscode.commands.registerCommand('shotgun.nextHint', run((step?: unknown, hole?: unknown) => this.nextHint(step, hole))),
 			vscode.commands.registerCommand('shotgun.requestFrame', run(() => this.requestFrame())),
+			vscode.commands.registerCommand('shotgun.closeCallout', run((step?: unknown, id?: unknown) => this.closeCallout(step, id))),
+			vscode.commands.registerCommand('shotgun.showInDataFlow', run((file?: unknown, line?: unknown, source?: unknown) => this.showInDataFlow(file, line, source))),
+			vscode.commands.registerCommand('shotgun.setVoice', run((voice?: unknown) => this.setVoice(voice))),
+			vscode.commands.registerCommand('shotgun.resolveAnswer', run((id?: unknown) => this.resolveAnswer(id))),
 			vscode.commands.registerCommand('shotgun.passGate', run(() => this.passGate())),
 			vscode.commands.registerCommand('shotgun.connectClaude', run(() => this.connectClaude())),
 			vscode.commands.registerCommand('shotgun.disconnectClaude', run(() => this.disconnectClaude())),
@@ -1155,6 +1409,21 @@ class Shotgun implements vscode.Disposable {
 				case 'requestFrame':
 					await this.requestFrame(message.step);
 					break;
+				case 'setVoice':
+					await this.setVoice(message.voice);
+					break;
+				case 'closeCallout':
+					await this.closeCallout(message.step, message.id);
+					break;
+				case 'reopenCallout':
+					this.store.closeCallout(message.step, message.id, undefined);
+					break;
+				case 'showInDataFlow':
+					await this.showInDataFlow(message.path, message.line, message.source);
+					break;
+				case 'resolveAnswer':
+					this.store.resolveAnswer(message.id);
+					break;
 				case 'showHint':
 					await this.showHint(message.step, message.hole, message.level);
 					break;
@@ -1179,8 +1448,8 @@ class Shotgun implements vscode.Disposable {
 		const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(vscode.Uri.file(root), '.shotgun/**/*.{json,md}'));
 		let timer: NodeJS.Timeout | undefined;
 		const reload = (uri: vscode.Uri) => {
-			// Shotgun writes lines.json after the edits of the user. The session does not need it
-			if (path.basename(uri.fsPath) === LINES_FILE) {
+			// Shotgun writes lines.json after the edits of the user, and callouts.json at a pause. It reloads them itself
+			if (path.basename(uri.fsPath) === LINES_FILE || path.basename(uri.fsPath) === CALLOUTS_FILE) {
 				return;
 			}
 			clearTimeout(timer);
@@ -1203,6 +1472,7 @@ class Shotgun implements vscode.Disposable {
 
 	private update(): void {
 		this.loadLines();
+		this.trackStepFiles();
 		const snapshot = this.store.snapshot;
 		const claude: ClaudeState = this.claude.state(snapshot.root);
 		const file = this.store.briefFile();
@@ -1215,11 +1485,14 @@ class Shotgun implements vscode.Disposable {
 			claude,
 			...(file && text !== undefined ? { brief: { file, text, isDirty: !!doc?.isDirty } } : {}),
 			readLines: (f) => this.textOf(f)?.split(/\r?\n/),
+			voice: this.voice(),
+			pauseSeconds: this.pauseSeconds(),
 		}));
 		this.hooks.update(snapshot);
 		this.steps.update(snapshot);
 		this.claudeLines.update(snapshot, this.lines);
 		this.frameHoles.update(snapshot, this.lines);
+		this.calloutMarks.update(snapshot);
 		const status = statusOf(snapshot);
 		this.status.text = `$(send) ${status.text}`;
 		this.status.tooltip = status.tooltip;
@@ -1236,6 +1509,10 @@ class Shotgun implements vscode.Disposable {
 		const current = task && !task.isDone && task.stage === 'build' ? this.store.current : undefined;
 		void vscode.commands.executeCommand('setContext', 'shotgun.hasReceipt', current?.state === 'receipt');
 		void vscode.commands.executeCommand('setContext', 'shotgun.hasHoles', current?.state === 'holes');
+		const stepCallouts = current ? snapshot.callouts?.steps[current.step.id]?.callouts ?? [] : [];
+		void vscode.commands.executeCommand('setContext', 'shotgun.hasCallouts', stepCallouts.some((c) => c.shown && !c.closed && !c.isGone));
+		void vscode.commands.executeCommand('setContext', 'shotgun.hasAnswers', (snapshot.callouts?.answers ?? []).some((a) => !a.resolved));
+		void this.ensureCalloutStart();
 		// decision 17: in stage 5, the user changes the level of a step that Claude did not start
 		void vscode.commands.executeCommand('setContext', 'shotgun.canSetLevel', !!task && !task.isDone && !!snapshot.plan
 			&& (task.stage === 'plan' || task.stage === 'build'));

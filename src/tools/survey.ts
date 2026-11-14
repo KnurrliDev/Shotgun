@@ -1,8 +1,9 @@
-import type { CallGraphFacts, HeatFacts, PlaceFacts } from '../dataflow/dataflow-api';
+import type { CallGraphFacts, HeatFacts, HiddenFacts, LogicFacts, PlaceFacts, ThreadFacts } from '../dataflow/dataflow-api';
 import { absolutePath, IS_CASE_SENSITIVE, isCppFile } from '../session/paths';
 import { stageText } from '../session/stages';
 import type { SessionStore } from '../session/store';
 import { checkSurvey, EngineFile, HookEngine, hookEngineOf, Lines, SurveyHook } from '../session/survey';
+import { stageStart } from './calls';
 
 // The submit tool of stage 2: submit_survey gives the survey of Claude. The tool checks all data and gives all problems
 // in 1 list (proposal P7). Then Shotgun gets the facts of DataFlow for each hook (decision 13: the badge Engine).
@@ -17,6 +18,11 @@ export interface EngineApi {
 	readonly functionHeat?: (file: string, name: string) => Promise<HeatFacts>;
 	readonly callGraph?: () => Promise<CallGraphFacts>;
 	readonly scan?: () => void;
+	// for the callouts of the build: the races of the threads of a file, and the logic and the hidden C++ of the function
+	// at a line
+	readonly threads?: (file: string) => Promise<ThreadFacts>;
+	readonly logic?: (file: string, line: number) => Promise<LogicFacts>;
+	readonly hidden?: (file: string, line: number) => Promise<HiddenFacts>;
 }
 
 export interface SurveyDeps {
@@ -24,6 +30,8 @@ export interface SurveyDeps {
 	readonly folders: () => readonly string[];
 	readonly readText: (file: string) => string | undefined; // the text of a file, from an open text editor first
 	readonly engine: () => EngineApi | undefined; // undefined: no link to DataFlow
+	// the tools of DataFlow that the MCP clients called since a time. undefined: DataFlow does not tell the calls
+	readonly calls?: (since: number) => ReadonlySet<string> | undefined;
 }
 
 const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error));
@@ -71,12 +79,14 @@ export async function submitSurvey(deps: SurveyDeps, args: Record<string, unknow
 			+ (task.stage === 'brief' ? 'The user selects "The brief is ready" first.' : 'The user passed the gate of the survey already.'));
 	}
 	const engine = deps.engine();
+	const called = task ? deps.calls?.(stageStart(task)) : undefined;
 	const checked = checkSurvey(args, {
 		root: root ?? process.cwd(),
 		folders: deps.folders(),
 		isCaseSensitive: IS_CASE_SENSITIVE,
 		readLines: (file) => deps.readText(file)?.split(/\r?\n/),
 		tools: engine?.tools() ?? [],
+		...(called ? { called } : {}),
 	});
 	problems.push(...checked.problems);
 	if (problems.length > 0) {

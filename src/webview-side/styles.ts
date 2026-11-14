@@ -288,6 +288,27 @@ progress.walk-track::-webkit-progress-value { border-radius: 2px; background: va
 .frame-request { margin: 8px 0 0; }
 .frame-request .btn { margin-bottom: 4px; }
 
+/* stage 5: the navigator. A callout is a fact of the engine: a problem, a warning or an other fact */
+.navigator { margin: 12px 0 0; padding-top: 6px; border-top: 1px solid color-mix(in srgb, var(--sg-border) 60%, transparent); }
+.callouts, .answers { display: flex; flex-direction: column; gap: 3px; margin: 6px 0; padding: 0; list-style: none; }
+.callout-row { display: flex; align-items: baseline; gap: 6px; width: 100%; padding: 3px 6px; box-sizing: border-box; border: 1px solid var(--sg-border);
+  border-left: 3px solid var(--k); border-radius: 4px; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.callout-row:hover { background: var(--vscode-list-hoverBackground, transparent); }
+.callout-row.on { border-color: var(--vscode-focusBorder); border-left-color: var(--k); background: var(--vscode-list-inactiveSelectionBackground, transparent); }
+.callout-row .grow { overflow-wrap: anywhere; }
+.callout-row.s-held, .callout-row.s-closed, .callout-row.s-waiting { opacity: 0.65; }
+.callout-row:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
+.k-problem { --k: var(--sg-issue); }
+.k-warning { --k: var(--sg-hot); }
+.k-info { --k: var(--sg-claude); }
+.kind-chip { flex: none; padding: 0 6px; border-radius: 999px; font-size: 10px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--k); background: color-mix(in srgb, var(--k) 16%, transparent); }
+.callout-detail { margin: 6px 0 0; padding: 6px 8px; border: 1px solid var(--sg-border); border-left: 3px solid var(--k); border-radius: 4px; }
+.answer-row { padding: 4px 0; }
+.answer-row + .answer-row { border-top: 1px solid color-mix(in srgb, var(--sg-border) 50%, transparent); }
+.answer-row.resolved { opacity: 0.65; }
+.mark-btn.voice.on { border-color: var(--vscode-focusBorder); background: var(--vscode-list-inactiveSelectionBackground, transparent); }
+
 /* lists: the setup, the decisions and the tasks */
 .list { margin: 4px 0 0; padding: 0; list-style: none; }
 .list li { display: flex; align-items: baseline; gap: 6px; padding: 3px 0; }

@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import * as path from 'path';
 import type { ClaudeState } from '../../claude/connection';
 import type { DiffFacts } from '../../dataflow/dataflow-api';
@@ -10,6 +10,7 @@ import {
 import { readText } from '../../session/files';
 import { LineStore } from '../../session/lines';
 import { SessionStore } from '../../session/store';
+import { markScope } from '../../tools/build';
 import type { BaseApi } from '../../tools/build';
 import { PromptLog } from '../../tools/prompts';
 import { shotgunTools } from '../../tools/tools';
@@ -35,11 +36,17 @@ const PLAN = {
 	],
 };
 
-// A fake of the bases and the diffs of DataFlow. The test gives the diff of each call
-function fakeBase(calls: string[]): BaseApi & { next: DiffFacts | undefined } {
+// A fake of the bases and the diffs of DataFlow. The test gives the diff of each call. As DataFlow 0.6.0, the fake refuses
+// a path that is not there, unless the test sets keepsMissing as DataFlow with the fix of item 44 of dataflow-gaps-2.md
+function fakeBase(calls: string[]): BaseApi & { next: DiffFacts | undefined; keepsMissing: boolean } {
 	const base = {
 		next: undefined as DiffFacts | undefined,
+		keepsMissing: false,
 		mark: async (name: string, paths: readonly string[]) => {
+			const missing = paths.filter((p) => !existsSync(p));
+			if (missing.length > 0 && !base.keepsMissing) {
+				throw new Error(`These paths are not there: ${missing.join(', ')}. No mark changed.`);
+			}
 			calls.push(`mark ${name} ${paths.map((p) => path.basename(p)).join(',')}`);
 			return {};
 		},
@@ -252,6 +259,30 @@ suite('Build', () => {
 		assert.strictEqual(model().task?.build?.current?.receipt?.changes[0].place, 'tests/limit_test.cpp (new)');
 	});
 
+	test('With the fix of DataFlow, the base keeps a new file too, and the diff gives it as a new file with its functions', async () => {
+		await buildStage();
+		store.startStep('S1', { writer: 'claude', level: 2, scope: ['src/solver.cpp'] });
+		store.writeReceipt('S1', { time: '', round: 1, changes: [], denies: [], outside: [], deleted: [], looseEnds: [] });
+		store.finishStep('S1', 'accept-receipt');
+		base.keepsMissing = true;
+		await call('start_step', { step: 'S2' });
+		assert.deepStrictEqual(calls, ['mark sg.a-cycle-limit-fo-0uo3xh4.S2 limit_test.cpp']);
+		assert.deepStrictEqual([store.snapshot.build!.steps.S2.base, store.snapshot.build!.steps.S2.newFiles], ['sg.a-cycle-limit-fo-0uo3xh4.S2', undefined]);
+		mkdirSync(path.join(root, 'tests'));
+		writeFileSync(path.join(root, 'tests', 'limit_test.cpp'), '#include "solver.h"\n\nint main() { return 0; }\n');
+		base.next = {
+			root, base: 'mark:x', suggestedSteps: [],
+			files: [{
+				file: 'tests/limit_test.cpp', lines: 3, isNew: true,
+				hunks: [{ id: 'h1', lines: [1, 3], added: 3, removed: 0, functions: ['main'], diff: '+    1 | #include "solver.h"\n+    2 | \n+    3 | int main() { return 0; }' }],
+			}],
+		};
+		await call('submit_errand', { step: 2, changes: [{ file: 'tests/limit_test.cpp', lines: [1, 3], title: 'The test', check: 'Does it run?' }] });
+		const receipt = store.snapshot.build!.steps.S2.receipt!;
+		assert.deepStrictEqual(receipt.changes.map((c) => [c.isNewFile, c.added, c.lines, c.hunks[0].functions]), [[true, 3, [1, 3], ['main']]]);
+		assert.strictEqual(model().task?.build?.current?.receipt?.changes[0].place, 'tests/limit_test.cpp (new)');
+	});
+
 	test('A step of the user: Claude cannot open it, and "The step is done" ends it. Then the task is done', async () => {
 		await buildStage();
 		for (const s of ['S1', 'S2']) {
@@ -281,5 +312,36 @@ suite('Build', () => {
 		assert.strictEqual(isFromView({ type: 'setMark', step: 'S1', change: 'C1', mark: 'ok' }), true);
 		assert.strictEqual(isFromView({ type: 'setMark', step: 'S1', change: 'C1', mark: 'maybe' }), false);
 		assert.strictEqual(isFromView({ type: 'setChangeNote', step: 'S1', change: 'C1', note: 'x' }), true);
+	});
+
+	test('The base has each file of the scope, also a new file. DataFlow 0.6.0 refuses a new file, and then Shotgun reads it itself', async () => {
+		const marks: string[][] = [];
+		const api = (isOld: boolean): BaseApi => ({
+			mark: async (_name, paths) => {
+				if (isOld && paths.some((p) => p.endsWith('new_test.cpp'))) {
+					throw new Error('These paths are not there: C:/p/tests/new_test.cpp. No mark changed.');
+				}
+				marks.push([...paths]);
+				return {};
+			},
+			diff: async () => {
+				throw new Error('no diff in this test');
+			},
+			deleteMark: async () => ({}),
+		});
+		const scope = ['src/solver.cpp', 'tests/new_test.cpp'];
+		const absolute = ['C:/p/src/solver.cpp', 'C:/p/tests/new_test.cpp'];
+		const isThere = (file: string) => file.endsWith('solver.cpp');
+		assert.deepStrictEqual(await markScope(api(false), 'sg.x.S1', scope, absolute, isThere), { base: 'sg.x.S1', newFiles: [] });
+		assert.deepStrictEqual(marks.pop(), absolute);
+		assert.deepStrictEqual(await markScope(api(true), 'sg.x.S1', scope, absolute, isThere), { base: 'sg.x.S1', newFiles: ['tests/new_test.cpp'] });
+		assert.deepStrictEqual(marks.pop(), ['C:/p/src/solver.cpp']);
+		// only a new file, and DataFlow 0.6.0: no base
+		assert.deepStrictEqual(await markScope(api(true), 'sg.x.S2', ['tests/new_test.cpp'], ['C:/p/tests/new_test.cpp'], () => false), { newFiles: ['tests/new_test.cpp'] });
+		// a different failure stays a failure
+		const full: BaseApi = { ...api(false), mark: async () => {
+			throw new Error('The mark has more than 500 files.');
+		} };
+		await assert.rejects(markScope(full, 'sg.x.S1', scope, absolute, isThere), /more than 500 files/);
 	});
 });

@@ -127,6 +127,26 @@
 				"category": "Shotgun"
 			},
 			{
+				"command": "shotgun.closeCallout",
+				"title": "Not a Problem",
+				"category": "Shotgun"
+			},
+			{
+				"command": "shotgun.showInDataFlow",
+				"title": "Show in DataFlow",
+				"category": "Shotgun"
+			},
+			{
+				"command": "shotgun.setVoice",
+				"title": "Set the Voice of the Callouts",
+				"category": "Shotgun"
+			},
+			{
+				"command": "shotgun.resolveAnswer",
+				"title": "Resolve a Question on a Line",
+				"category": "Shotgun"
+			},
+			{
 				"command": "shotgun.passGate",
 				"title": "Pass the Gate",
 				"category": "Shotgun"
@@ -142,6 +162,33 @@
 				"category": "Shotgun"
 			}
 		],
+		"configuration": {
+			"title": "Shotgun",
+			"properties": {
+				"shotgun.voice": {
+					"type": "string",
+					"enum": [
+						"quiet",
+						"normal",
+						"talkative"
+					],
+					"default": "normal",
+					"enumDescriptions": [
+						"Problems only, at each pause.",
+						"Problems and warnings, in 1 batch at each pause.",
+						"Each new fact of DataFlow on your lines, also the hidden C++."
+					],
+					"description": "The voice of the callouts: the kinds of the new facts of DataFlow that show on the lines that you write."
+				},
+				"shotgun.pauseSeconds": {
+					"type": "number",
+					"default": 2,
+					"minimum": 0.5,
+					"maximum": 60,
+					"description": "The time in seconds with no edit that makes a pause. Callouts come only at a pause, with a maximum of 3 for each pause."
+				}
+			}
+		},
 		"menus": {
 			"commandPalette": [
 				{
@@ -199,6 +246,22 @@
 				{
 					"command": "shotgun.requestFrame",
 					"when": "shotgun.canRequestFrame"
+				},
+				{
+					"command": "shotgun.closeCallout",
+					"when": "shotgun.hasCallouts"
+				},
+				{
+					"command": "shotgun.showInDataFlow",
+					"when": "false"
+				},
+				{
+					"command": "shotgun.setVoice",
+					"when": "shotgun.hasTask"
+				},
+				{
+					"command": "shotgun.resolveAnswer",
+					"when": "shotgun.hasAnswers"
 				},
 				{
 					"command": "shotgun.passGate",

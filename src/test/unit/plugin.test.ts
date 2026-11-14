@@ -73,9 +73,9 @@ suite('Plugin of Shotgun', () => {
 		assert.deepStrictEqual(readSkills(dir), { shotgun: 'text' });
 	});
 
-	test('The extension has the skills shotgun, shotgun-survey, shotgun-plan, shotgun-errand and shotgun-frame', () => {
+	test('The extension has the skills of each stage of Claude, and of the callouts', () => {
 		const skills = readSkills(repo);
-		assert.deepStrictEqual(Object.keys(skills).sort(), ['shotgun', 'shotgun-errand', 'shotgun-frame', 'shotgun-plan', 'shotgun-survey']);
+		assert.deepStrictEqual(Object.keys(skills).sort(), ['shotgun', 'shotgun-errand', 'shotgun-explain', 'shotgun-frame', 'shotgun-plan', 'shotgun-survey']);
 		assert.match(skills['shotgun-plan'], /^---\r?\nname: shotgun-plan\r?\ndescription: '[^']*Make the plan[^']*'\r?\n---/);
 		for (const tool of ['shotgun_get_order', 'shotgun_submit_task_survey', 'shotgun_submit_plan', 'shotgun_get_plan', 'get_heat']) {
 			assert.ok(skills['shotgun-plan'].includes(`mcp__plugin_dataflow_dataflow__${tool}`), tool);

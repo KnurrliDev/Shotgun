@@ -92,3 +92,5 @@ The steps of the plan go in sequence. The risk level of a step selects its write
 | 5 | The user. You change no file in the step, but you can answer questions in the chat. |
 
 Use the skill `shotgun-errand` when the user asks for a step, for example "Do step 5". Also use it for a fix, for example "Fix the issues of step 5". Use the skill `shotgun-frame` when the user asks for a frame, for example "Give me a frame for step 4". Do not change a file before `shotgun_start_step` opens the step.
+
+While the user writes a step, Shotgun shows the new facts of DataFlow on the lines of the user as callouts. Use the skill `shotgun-explain` when the user asks about a callout, for example "Explain the callout on line 129". Also use it for a question about a line, for example "Does the lambda on line 95 copy charge?".

@@ -89,6 +89,9 @@ export interface QuestionsFile {
 // - frame-request: the user selected "I want a frame" for a step of level 4 (decision 16)
 // - frame: Claude gave the frame of a step, with the number of its holes
 // - hint: the user opened a hint of a hole. level 4: the answer of Claude filled the hole
+// - callout-close: the user closed a callout with "Not a problem" and a reason. callout-open: the user opened it again
+// - explanation: Claude explained a callout
+// - line-answer: Claude answered a question of the user about a line. line-resolve: the user resolved the question
 export type Decision =
 	| { readonly version: 1; readonly time: string; readonly kind: 'task'; readonly by: 'user' | 'claude'; readonly title: string }
 	| { readonly version: 1; readonly time: string; readonly kind: 'gate'; readonly by: 'user'; readonly gate: Gate; readonly stage: Stage }
@@ -132,7 +135,18 @@ export type Decision =
 	}
 	| { readonly version: 1; readonly time: string; readonly kind: 'frame-request'; readonly by: 'user'; readonly step: string }
 	| { readonly version: 1; readonly time: string; readonly kind: 'frame'; readonly by: 'claude'; readonly step: string; readonly round: number; readonly holes: number }
-	| { readonly version: 1; readonly time: string; readonly kind: 'hint'; readonly by: 'user'; readonly step: string; readonly hole: number; readonly level: number };
+	| { readonly version: 1; readonly time: string; readonly kind: 'hint'; readonly by: 'user'; readonly step: string; readonly hole: number; readonly level: number }
+	| {
+		readonly version: 1; readonly time: string; readonly kind: 'callout-close'; readonly by: 'user'; readonly step: string; readonly callout: string;
+		readonly title: string; readonly reason: string;
+	}
+	| { readonly version: 1; readonly time: string; readonly kind: 'callout-open'; readonly by: 'user'; readonly step: string; readonly callout: string }
+	| { readonly version: 1; readonly time: string; readonly kind: 'explanation'; readonly by: 'claude'; readonly step: string; readonly callout: string }
+	| {
+		readonly version: 1; readonly time: string; readonly kind: 'line-answer'; readonly by: 'claude'; readonly answer: string; readonly file: string;
+		readonly line: number; readonly question: string;
+	}
+	| { readonly version: 1; readonly time: string; readonly kind: 'line-resolve'; readonly by: 'user'; readonly answer: string };
 
 // The gates of a step: the gate of an errand, and the gate of a step of the user
 export const STEP_GATES = ['accept-receipt', 'step-done'] as const;
@@ -312,6 +326,24 @@ function parseDecision(value: unknown): Decision | undefined {
 		case 'hint':
 			return value.by === 'user' && isText(value.step) && typeof value.hole === 'number' && typeof value.level === 'number'
 				? { version: FILE_VERSION, time, kind: 'hint', by: 'user', step: value.step, hole: value.hole, level: value.level } : undefined;
+		case 'callout-close':
+			return value.by === 'user' && isText(value.step) && isText(value.callout) && typeof value.title === 'string' && typeof value.reason === 'string'
+				? {
+					version: FILE_VERSION, time, kind: 'callout-close', by: 'user', step: value.step, callout: value.callout, title: value.title, reason: value.reason,
+				} : undefined;
+		case 'callout-open':
+			return value.by === 'user' && isText(value.step) && isText(value.callout)
+				? { version: FILE_VERSION, time, kind: 'callout-open', by: 'user', step: value.step, callout: value.callout } : undefined;
+		case 'explanation':
+			return value.by === 'claude' && isText(value.step) && isText(value.callout)
+				? { version: FILE_VERSION, time, kind: 'explanation', by: 'claude', step: value.step, callout: value.callout } : undefined;
+		case 'line-answer':
+			return value.by === 'claude' && isText(value.answer) && isText(value.file) && typeof value.line === 'number' && typeof value.question === 'string'
+				? {
+					version: FILE_VERSION, time, kind: 'line-answer', by: 'claude', answer: value.answer, file: value.file, line: value.line, question: value.question,
+				} : undefined;
+		case 'line-resolve':
+			return value.by === 'user' && isText(value.answer) ? { version: FILE_VERSION, time, kind: 'line-resolve', by: 'user', answer: value.answer } : undefined;
 		case 'step-gate':
 			return value.by === 'user' && isText(value.step) && (STEP_GATES as readonly unknown[]).includes(value.gate) && typeof value.notWalked === 'number'
 				? {

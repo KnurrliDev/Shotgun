@@ -20,8 +20,12 @@ The first analysis found 29 gaps in DataFlow 0.5.0. Then DataFlow got 9 commits 
 - Phase 3 of Shotgun found item 43 on 14 November 2026: an extension cannot see the tool calls of an MCP client.
 - Phase 6 of Shotgun found item 44 on 14 November 2026: a mark cannot keep a path that is not there.
 - Phase 7 of Shotgun found item 45 on 14 November 2026: no fact gives the names in scope at a line.
+- Phase 8 of Shotgun found item 46 on 14 November 2026: a race item gives the lines of its accesses only in a text.
+- Phase 8 of Shotgun found item 47 on 14 November 2026: the engine stops on a check of a `std::optional` with an error after it.
 
-No open gap stops the start of the work on Shotgun.
+No open gap stops the start of the work on Shotgun. Item 47 stops the engine on some code with an error, so it needs a fix before the release of Shotgun.
+
+Status, 14 November 2026: the repository of DataFlow has fixes for the items 30 to 33 and 41 to 47, with their tests. All tests of DataFlow pass: 247 unit tests, the fixture tests and 66 tests of the engine. The fixes are not committed and not in a release. The installed DataFlow 0.6.0 does not have them. Shotgun uses the new data when DataFlow gives it, else the procedure of "Until the fix". Item 11 stays open, because its score needs a calibration on real projects.
 
 The second analysis used the code and the documents of DataFlow. It did not run the new tools, and it did not run the tests.
 
@@ -161,7 +165,9 @@ Do the groups in this sequence. Do not do the items 34 to 40 for Shotgun.
 | --- | --- | --- |
 | 1 | 42 | A new user gets no tools of DataFlow and no guard of Shotgun in Claude Code. |
 | 2 | 30, 31, 32 | The heat can be too low. Then the model gets a wrong permission. |
-| 3 | 11, 33, 41, 43, 44, 45 | Shotgun has a procedure, but it needs more code or it gives less accuracy. |
+| 3 | 11, 33, 41, 43, 44, 45, 46 | Shotgun has a procedure, but it needs more code or it gives less accuracy. |
+
+Status, 14 November 2026: the groups 1, 2 and 3 are done, except item 11. Item 47 came after this list, and it is done too.
 
 ## Heat
 
@@ -171,6 +177,7 @@ Do the groups in this sequence. Do not do the items 34 to 40 for Shotgun.
 - **Use in Shotgun:** Many steps add a member to a type, or change a member. Such a step gets no band.
 - **Until the fix:** Shotgun uses the 2 rules for a data member. These rules are coarse.
 - **Possible fix:** After the calibration, add `score` and `band` to each type and each data member.
+- **Status, 14 November 2026:** open. The score of a member is a new model of the heat. Section 9.3 of `docs/api-gaps-strategy.md` needs its calibration on the fixture projects and on real projects first. This is a decision of the user.
 
 ### 30. A call in a lambda that runs later counts for the function around the lambda
 
@@ -178,6 +185,7 @@ Do the groups in this sequence. Do not do the items 34 to 40 for Shotgun.
 - **Use in Shotgun:** A function that a timer or a callback runs can get a cool band. Then the model writes its code. A lambda as a slot is the usual form in new Qt code.
 - **Until the fix:** For each function of a step, Shotgun calls `getCallers` with the depth 1. Then it calls `getPlace` for each line in `callLines`. If `around` has a lambda with `isSynchronous: false`, Shotgun uses the rule for `reachUnknown`.
 - **Possible fix:** Find each function that a lambda calls, if the lambda is not synchronous. Give it `reachUnknown` with the new cause `callback`. For a lambda as the slot of `connect`, add the edge from the signal.
+- **Status, 14 November 2026:** fixed in the repository of DataFlow. A function that a lambda calls gets the cause `callback` if the lambda can run later. A lambda of a standard algorithm, a lambda that the code calls at once, and a local lambda that the function only calls give no cause. A lambda as the slot of `connect` connects the signal to each function that it calls. Limit: a lambda that a function of the project or of a library runs at once still gives `callback`, for example a visitor. In the fixture `battery`, `solve_power_plan` now has the cause `callback`, through the lambda of `tf::Executor::async`.
 
 ### 31. A function that the reflection of a framework can call has no flag
 
@@ -187,6 +195,7 @@ Do the groups in this sequence. Do not do the items 34 to 40 for Shotgun.
 - **Use in Shotgun:** With no caller in the C++ code, DataFlow sets such a function to siloed, and it gets a cool band. In an Unreal Engine project, this is the usual case for the functions of a Blueprint.
 - **Until the fix:** Shotgun calls `getOutline` for the class of each function of a step. If the function has an annotation of this kind, Shotgun uses the rule for `reachUnknown`.
 - **Possible fix:** Add the cause `reflection` to `reachUnknown`. Use it for a function with such an annotation and with no caller in the graph.
+- **Status, 14 November 2026:** fixed in the repository of DataFlow. A function with no caller gets the cause `reflection` for `UFUNCTION`, `Q_INVOKABLE`, `Q_SCRIPTABLE`, `Q_SLOT`, and for a function that a `Q_PROPERTY` names. `via` gives the macro, for example `UFUNCTION(BlueprintCallable)`.
 
 ### 32. A line in the main loop is not on a frame path
 
@@ -195,6 +204,7 @@ Do the groups in this sequence. Do not do the items 34 to 40 for Shotgun.
 - **Data:** The fixture `battery` of DataFlow has the main loop `for (int cycle = 0; cycle < 100; ++cycle)` in `main()`. DataFlow calls it the main loop, but `get_place` gives `isOpenLoop` false for it, because it has a fixed number of iterations. Thus the procedure below does not find a line in this loop. Phase 5 of Shotgun found this on 14 November 2026.
 - **Until the fix:** Shotgun reads the reasons of the frame functions from `getCallGraph`. It takes the name after "called in the main loop of". A line in an open loop of that function gets the level 4 or higher. This procedure reads a text.
 - **Possible fix:** Add `isMainLoop` to a loop in `around` of `get_place`. Add `mainLoops` with the function, the file and the line to `get_call_graph`.
+- **Status, 14 November 2026:** fixed in the repository of DataFlow, as the possible fix tells. `isMainLoop` comes only with a complete call graph. Shotgun uses the 2 fields. The definition of a main loop did not change, so the fixture `battery` still has no main loop. Also, an open loop in `main` that calls no function of the project is no main loop. A different definition is a decision of the user.
 
 ### 33. The public functions of a library have callers out of the project
 
@@ -202,6 +212,7 @@ Do the groups in this sequence. Do not do the items 34 to 40 for Shotgun.
 - **Use in Shotgun:** In a library project, a public function with few tests gets a cool band. A change of its behavior can break each user of the library.
 - **Until the fix:** The user sets a higher level for such a step.
 - **Possible fix:** Add a setting for the folders of the public headers, for example `dataflow.heat.publicFolders`. A function with its declaration there gets `reachUnknown` with the cause `public`.
+- **Status, 14 November 2026:** fixed in the repository of DataFlow with the setting `dataflow.heat.publicFolders`. The cause `public` comes only for a function with no other cause, and not for a private member function.
 
 ## API
 
@@ -234,6 +245,7 @@ The items 36 and 37 are differences between the code and `docs/api-gaps-strategy
 - **Use in Shotgun:** Shotgun shows the loose ends of a step in its own view. For them, it needs the code that the changes since a mark reach. It must not change the side view of DataFlow, and it must not replace a review of the user.
 - **Until the fix:** Shotgun calls `startRipple` only after a click of the user. Then DataFlow opens its side view with the review.
 - **Possible fix:** Add `base` and `paths` to `get_ripple`. With them, the tool makes a review, and it does not change the side view.
+- **Status, 14 November 2026:** fixed in the repository of DataFlow. `get_ripple` and `getRipple({ base, paths })` make a new review. The side view and the review of the user do not change. Shotgun uses it for the loose ends of phase 9.
 
 ## MCP server
 
@@ -246,6 +258,7 @@ The items 36 and 37 are differences between the code and `docs/api-gaps-strategy
 - **Use in Shotgun:** The tools and the hooks of Shotgun are in the MCP server of DataFlow. After the first connection, a new user can have no tools of DataFlow and no guard of Shotgun in Claude Code.
 - **Until the fix:** The test of Shotgun starts the MCP server again after a 401. A user can run "DataFlow: Stop MCP Server" and "DataFlow: Start MCP Server", or reload the window.
 - **Possible fix:** Keep the promise of the first call, for example `this.tokenPromise ??= this.readToken()`. Then all calls get the same token. Add a unit test with 2 calls at the same time.
+- **Status, 14 November 2026:** fixed in the repository of DataFlow, as the possible fix tells, with the function `tokenSource` and its unit test. In the test of phase 8 of Shotgun, the restart of the server after the 401 let a letter go into the open `brief.md`.
 
 ### 43. An extension cannot see the tool calls of an MCP client
 
@@ -254,6 +267,7 @@ The items 36 and 37 are differences between the code and `docs/api-gaps-strategy
 - **Use in Shotgun:** Decision 13 of the plan of Shotgun: a fact of Claude shows the read tool of DataFlow that gave the fact. Shotgun must refuse a fact with a tool that Claude did not call.
 - **Until the fix:** The skill `shotgun-survey` tells Claude to give a fact only from a call of a read tool. Shotgun cannot check this. The badge "Model" shows that the fact is a text of Claude. A hook of the plugin of Shotgun after each tool call can record the calls, but only in Claude Code with this plugin.
 - **Possible fix:** Add the event `onDidCallTool` to the API. The event gives the client, the tool, the arguments and the time of each call of a read tool. Or add a method that gives the tool calls since a time.
+- **Status, 14 November 2026:** fixed in the repository of DataFlow. The event comes for each tool, also for the view tools and the tools of extensions, with `isReadOnly`, `isError` and `error`. A view tool can also show a fact, for example `show_flow`. Shotgun refuses a fact of the survey with a tool that Claude did not call in the stage. Limit: the server keeps no sessions, so with 2 clients at the same time, the name of the client can be wrong.
 
 ### 45. No fact gives the names in scope at a line
 
@@ -261,6 +275,35 @@ The items 36 and 37 are differences between the code and `docs/api-gaps-strategy
 - **Use in Shotgun:** The design canvas shows the names in scope for each hole of a frame, with their types and the badge "Engine", for example `home_battery_ctl.planning_cycles : int`. The user then sees the facts for the decision.
 - **Until the fix:** The hole shows the function, the threads and the locks at its line. The pointer hint of Claude names the places of the facts.
 - **Possible fix:** Add `inScope` to `get_place`. It gives the parameters, the local variables before the line, and the data members of the class, with their types.
+- **Status, 14 November 2026:** fixed in the repository of DataFlow. `inScope` gives a maximum of 60 names, each with its type and its kind, and `isInScopeCapped` tells that more names are in scope. A lambda sees only its captures and its parameters. Each hole of a frame of Shotgun shows the first 12 names.
+
+### 46. A race item gives the lines of its accesses only in a text
+
+- **Data:** each item of `get_threads` gives `caller` and `worker` as a text, for example "reads 94, 101 · writes 129". A line of a different file has the name of the file, for example "worker.cpp:12". The item has no field with the lines, the roles and the threads of its accesses.
+- **Use in Shotgun:** A callout needs the lines of a race. A race with an access on a line of the user is a callout on that line.
+- **Until the fix:** Shotgun reads the numbers of the lines from the 2 texts. A line with a file name is not a line of the file. A new form of the text can stop this procedure.
+- **Possible fix:** Add `accesses` to each item. Each access gives its file, its line, its role (read or write), its thread (caller or worker) and its locks.
+- **Status, 14 November 2026:** fixed in the repository of DataFlow. Each access gives its line, its role, `isWrite`, its thread and its locks, and its file only for a different file. `pair` tells that the access can run at the same time as an access of a different thread. Shotgun puts a callout of a race only on the lines with a pair. An item of the kind `capture` has no accesses.
+
+## Engine
+
+### 47. The engine stops on a check of a `std::optional` with an error after it
+
+- **Data:** the analysis of the unchecked optional accesses stops the engine with the exit code 3221225477 (0xC0000005, an access violation). The requests `dataflow/optionalAccess` and `dataflow/calls` use this analysis. `add_optional_findings` of `dataflow/flow` also uses it. This is the smallest text that stops the engine 0.6.0:
+
+  ```cpp
+  #include <optional>
+  void process(std::optional<int> &future, int n) {
+    const bool limit = future && n >= missing;
+  }
+  ```
+
+- **Data:** in the tests, the engine stopped only with a `std::optional` on the left side of `&&` and an error in a comparison on the right side. `future && missing` did not stop it. `c.n > 0 && c.n >= settings.cycle_limit` did not stop it. Without the error, all requests worked.
+- **Data:** the test of phase 8 of Shotgun found the fault on 14 November 2026. The frame of Claude used a setting that the test did not add: `future && home_battery_ctl.waited_cycles >= settings.cycle_limit`. DataFlow started the engine again 3 times, and each start stopped on the same text. Then the engine stayed stopped.
+- **Use in Shotgun:** the callouts and the facts of each stage need the engine. The code of the user often has an error while the user types.
+- **Until the fix:** the panel of Shotgun shows "the engine failed". The user removes the error, and runs **DataFlow: Restart Engine**.
+- **Possible fix:** do not run `diagnoseFunction` with `UncheckedOptionalAccessModel` on a function with an error, for example an expression in its body with `containsErrors()`. The 3 calls are in `analysis.hpp`, `calls.hpp` and `flow.hpp`. Add the text above as a test of the engine.
+- **Status, 14 November 2026:** fixed in the repository of DataFlow, with a test of the engine. The fix is not committed and not in a release. The installed DataFlow 0.6.0 still has the fault.
 
 ## Marks
 
@@ -270,6 +313,7 @@ The items 36 and 37 are differences between the code and `docs/api-gaps-strategy
 - **Use in Shotgun:** A step can make a new file, for example a test. The base of the step needs the path of the new file. Then `getDiff` with the mark gives the new file with its functions and its heat.
 - **Until the fix:** Shotgun makes the mark only with the files of the scope that are there. At the receipt, Shotgun reads each new file of the scope itself. All its lines are added lines, with no functions and no heat. A mark of the folder of the new file is not a good procedure, because the folder can have more than 500 files.
 - **Possible fix:** Let `markBase` keep a file path that is not there as a file with no text. Then `getDiff` gives the file as a new file when it is there.
+- **Status, 14 November 2026:** fixed in the repository of DataFlow, as the possible fix tells. `notFound` gives the paths that are not there, so a wrong path does not stay hidden. Shotgun marks each file of the scope. With DataFlow 0.6.0, Shotgun uses its procedure from before the fix.
 
 ## Limits that Shotgun gets from DataFlow
 

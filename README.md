@@ -16,7 +16,7 @@ A button of Shotgun records a decision of the user. It never starts Claude: you 
 
 ## Status
 
-Shotgun is in development. The phases 1 to 7 of 10 are complete:
+Shotgun is in development. The phases 1 to 8 of 10 are complete:
 
 - Phase 1: the tasks, the stages, the panel, the page, the guard and the connection to Claude Code.
 - Phase 2: the brief, the questions of Claude about the brief, and the gate of stage 1.
@@ -25,6 +25,7 @@ Shotgun is in development. The phases 1 to 7 of 10 are complete:
 - Phase 5: the plan of Claude, the risk level of each step from the facts of DataFlow, and the gate of stage 4.
 - Phase 6: the build: the steps in sequence, the errands of Claude with receipts, the steps of the user, and the writer of each line.
 - Phase 7: the frames of Claude with a hole for each decision of the user, the hints of each hole, and Tab between the holes.
+- Phase 8: the callouts with the new facts of DataFlow on your lines, and the answers of Claude to your questions about a line.
 
 `implementation-plan.md` gives the phases, and `CHANGELOG.md` gives the content of each phase.
 
@@ -60,8 +61,9 @@ Shotgun is in development. The phases 1 to 7 of 10 are complete:
 20. Select **Accept the receipt**.
 21. For a step of level 3, tell Claude "Give me a frame for step N." Fill each hole of the frame. Then select **The step is done**.
 22. For a step of yours, write its code. Then select **The step is done**. At level 4, you can select **I want a frame** first.
-23. After the last step, select **The task is done**.
-24. Follow the panel of Shotgun in the secondary side bar. It shows the next work and the requests for Claude Code.
+23. While you write a step, read the callouts of DataFlow on your lines. Tell Claude "Explain the callout on line N." for the words of Claude. Ask Claude about a line, for example "Does the lambda on line 95 copy charge?".
+24. After the last step, select **The task is done**.
+25. Follow the panel of Shotgun in the secondary side bar. It shows the next work and the requests for Claude Code.
 
 | Command | Function |
 | --- | --- |
@@ -78,6 +80,9 @@ Shotgun is in development. The phases 1 to 7 of 10 are complete:
 | Shotgun: Go to the Next Hole | Selects the next open hole of the frame. In a frame, Tab does the same. |
 | Shotgun: Go to the Hole Before | Selects the open hole before the cursor. In a frame, Shift+Tab does the same. |
 | Shotgun: Show the Next Hint | Shows the next hint of the hole at the cursor. The last hint puts the answer of Claude into the hole. |
+| Shotgun: Set the Voice of the Callouts | Sets the voice: quiet, normal or talkative. |
+| Shotgun: Not a Problem | Closes a callout with your reason. The ledger keeps the reason. |
+| Shotgun: Resolve a Question on a Line | Resolves a question that Claude answered at a line. |
 | Shotgun: Pass the Gate | Records the gate of the stage, for example "The brief is ready". |
 | Shotgun: Pause | Stops the guard for work outside of the task. The ledger records the pause. |
 | Shotgun: Continue | Starts the guard again. |
@@ -107,7 +112,7 @@ In stage 2, Claude reads your brief and the code. Claude gives the survey to Sho
 - The facts that the brief does not give. Each fact names the read tool of DataFlow that shows it.
 - The questions for you.
 
-Shotgun checks each part of the survey, and gives all problems back to Claude in 1 list. Claude then corrects the survey. Claude changes no file in this stage.
+Shotgun checks each part of the survey, and gives all problems back to Claude in 1 list. Claude then corrects the survey. Claude changes no file in this stage. When DataFlow tells the calls of its tools, Shotgun also refuses a fact with a tool that Claude did not call in this stage. DataFlow 0.6.0 does not tell them.
 
 The page of Shotgun shows the words of Claude with the badge **Model**. It shows the facts of DataFlow with the badge **Engine**. For each hook in a C or C++ file, Shotgun gets these facts from DataFlow: the function, the threads, the locks and the heat. The heat is a score from 0 to 100 for the risk of a change.
 
@@ -191,6 +196,35 @@ In the text editor, an open hole has a dashed box. Tab goes to the next open hol
 
 When each hole has code, select **The step is done**. The frame lines have the tag "Claude · frame" in the gutter, and they get no receipt. For a different frame, tell Claude "Give me a different frame for step N."
 
+## Callouts
+
+While you write a step of yours, or the holes of a frame, Shotgun gets the facts of DataFlow for your lines:
+
+- the races of the threads, and data that a thread uses after the end of its function: a **problem**
+- the checks of the threads, and the warnings of the logic: a **warning**
+- the hidden C++, for example a copy or a temporary: **info**
+
+A new fact on one of your lines is a callout. At the start of the step, Shotgun keeps the facts of DataFlow. Thus a fact that was there before your change is not a callout.
+
+Callouts never come while you type. They come at a pause: 2 seconds with no edit. A pause shows a maximum of 3 callouts, the problems first. The voice selects the kinds:
+
+| Voice | Callouts |
+| --- | --- |
+| Quiet | Only the problems. |
+| Normal | The problems and the warnings. This is the default. |
+| Talkative | Each new fact, also the hidden C++. |
+
+The text editor shows a tag after the line of each callout. The hover shows the facts of the engine with their places. "Show in DataFlow" opens the line in the side view of DataFlow. "Not a problem" closes the callout with your reason, and the ledger keeps the reason.
+
+The callouts show the facts of DataFlow with the badge **Engine**. For the words of Claude, tell Claude "Explain the callout on line N." The panel shows them with the badge **Model**.
+
+You can ask Claude about a line, for example "Does the lambda on line 95 copy charge?". Claude puts its answer at the line. Shotgun adds the facts of DataFlow at the line, so the facts and the words of Claude stay apart.
+
+| Setting | Function |
+| --- | --- |
+| `shotgun.voice` | The voice of the callouts. Default: `normal`. |
+| `shotgun.pauseSeconds` | The time with no edit that makes a pause. Default: 2. |
+
 `lines.json` keeps the writer of each changed line. The text editor shows a mark in the gutter for each line of Claude. The mark is dashed until you walk its change, and then it has the color of your mark. A line of Claude that you change becomes your line. If you change a file of the scope while Claude writes the step, Shotgun shows a warning.
 
 ## Files
@@ -210,6 +244,7 @@ When each hole has code, select **The step is done**. The frame lines have the t
 | `.shotgun/<task>/levels.json` | Your levels and your notes for the steps. |
 | `.shotgun/<task>/build.json` | The state of each step of the build, its scope and its base. Also the receipt with the notes of Claude and your marks, and the holes of a frame with their hints. |
 | `.shotgun/<task>/lines.json` | The writer of each changed line, with a hash of each line of the file. |
+| `.shotgun/<task>/callouts.json` | The facts of DataFlow at the start of each step, the callouts with your reasons and the words of Claude, and the answers on lines. |
 | `.shotgun/<task>/decisions.jsonl` | The ledger: 1 line for each decision of the user and for each deny of the guard. |
 | `~/.shotgun/claude` | The plugin of Shotgun for Claude Code, in a local marketplace. |
 | `.claude/settings.local.json` | The local settings of Claude Code in the project. The connection turns the plugin of Shotgun on there. |
@@ -231,9 +266,9 @@ The window uses the DataFlow extension of VS Code. To use DataFlow from its repo
 | Command | Tests |
 | --- | --- |
 | `npm test` | The unit tests in a test build of VS Code. The tests load DataFlow from `../DataFlow`, or from the folder of the environment variable `DATAFLOW_REPO`. If the environment variable `CLAUDE_EXE` gives the CLI of Claude Code, a test also checks the plugin with `claude plugin validate`. |
-| `node scripts/test-claude.mjs <run folder>` | The test with Claude Code. 2 tasks go from the brief to stage 2. Task 1 has a brief in a file, and task 2 has a brief from the chat. The guard denies a change in stage 1. Then Claude makes the survey of task 1, and task 1 goes to stage 3. On the order page, the test changes the order. Claude surveys the changed tasks, and task 1 goes to stage 4. Then Claude makes the plan, the test changes the levels, and task 1 goes to stage 5. In the build, the test writes step 1 as the user. Claude does step 2 and gives a receipt. The test puts an issue on a change, Claude fixes it, and the test accepts the receipt. Then the test sets step 3 to level 4 and asks for a frame. Claude gives the frame, and the test fills the holes with Tab and the hints. Use a new run folder outside of the repository. |
+| `node scripts/test-claude.mjs <run folder>` | The test with Claude Code. 2 tasks go from the brief to stage 2. Task 1 has a brief in a file, and task 2 has a brief from the chat. The guard denies a change in stage 1. Then Claude makes the survey of task 1, and task 1 goes to stage 3. On the order page, the test changes the order. Claude surveys the changed tasks, and task 1 goes to stage 4. Then Claude makes the plan, the test changes the levels, and task 1 goes to stage 5. In the build, the test writes step 1 as the user. Claude does step 2 and gives a receipt. The test puts an issue on a change, Claude fixes it, and the test accepts the receipt. Then the test sets step 3 to level 4 and asks for a frame. Claude gives the frame, and the test fills the holes with Tab and the hints. In step 4, the test writes a line with a race. The race shows as a callout, and Claude explains it and answers a question about a line. Use a new run folder outside of the repository. |
 
-NOTE: `scripts/test-claude.mjs` uses the Claude subscription of the user for 9 runs of Claude Code. It does not change the settings of the user.
+NOTE: `scripts/test-claude.mjs` uses the Claude subscription of the user for 10 runs of Claude Code. It does not change the settings of the user.
 
 ## License
 
