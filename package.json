@@ -1,0 +1,110 @@
+{
+	"name": "shotgun",
+	"displayName": "Shotgun",
+	"description": "Pair programming with Claude Code in 5 stages: brief, survey, order, plan and build. You make the decisions, and you write the steps with the most risk.",
+	"version": "0.1.0",
+	"publisher": "KnurrliDev",
+	"license": "MIT",
+	"private": true,
+	"categories": [
+		"AI",
+		"Other"
+	],
+	"engines": {
+		"vscode": "^1.143.0"
+	},
+	"extensionDependencies": [
+		"KnurrliDev.dataflow"
+	],
+	"main": "./out/extension.js",
+	"activationEvents": [
+		"workspaceContains:.shotgun/active.json",
+		"onWebviewPanel:shotgun.page"
+	],
+	"contributes": {
+		"viewsContainers": {
+			"secondarySidebar": [
+				{
+					"id": "shotgun",
+					"title": "Shotgun",
+					"icon": "media/shotgun.svg"
+				}
+			]
+		},
+		"views": {
+			"shotgun": [
+				{
+					"type": "webview",
+					"id": "shotgun.panel",
+					"name": "Shotgun"
+				}
+			]
+		},
+		"commands": [
+			{
+				"command": "shotgun.newTask",
+				"title": "New Task",
+				"category": "Shotgun"
+			},
+			{
+				"command": "shotgun.openTask",
+				"title": "Open Task",
+				"category": "Shotgun"
+			},
+			{
+				"command": "shotgun.pause",
+				"title": "Pause",
+				"category": "Shotgun"
+			},
+			{
+				"command": "shotgun.continue",
+				"title": "Continue",
+				"category": "Shotgun"
+			},
+			{
+				"command": "shotgun.showPage",
+				"title": "Show Page",
+				"category": "Shotgun"
+			},
+			{
+				"command": "shotgun.connectClaude",
+				"title": "Connect to Claude Code",
+				"category": "Shotgun"
+			},
+			{
+				"command": "shotgun.disconnectClaude",
+				"title": "Disconnect from Claude Code",
+				"category": "Shotgun"
+			}
+		],
+		"menus": {
+			"commandPalette": [
+				{
+					"command": "shotgun.pause",
+					"when": "shotgun.hasTask && !shotgun.isPaused"
+				},
+				{
+					"command": "shotgun.continue",
+					"when": "shotgun.hasTask && shotgun.isPaused"
+				}
+			]
+		}
+	},
+	"scripts": {
+		"vscode:prepublish": "npm run compile",
+		"compile": "tsc -p ./ && tsc -p ./tsconfig.webview.json && node scripts/build-webviews.mjs",
+		"watch": "node scripts/build-webviews.mjs --watch",
+		"pretest": "npm run compile",
+		"test": "vscode-test"
+	},
+	"devDependencies": {
+		"@types/mocha": "^10.0.10",
+		"@types/node": "24.x",
+		"@types/vscode": "1.120.0",
+		"@vscode/test-cli": "^0.0.15",
+		"@vscode/test-electron": "^3.0.0",
+		"esbuild": "^0.28.2",
+		"preact": "^11.0.2",
+		"typescript": "^6.0.3"
+	}
+}

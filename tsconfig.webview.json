@@ -1,0 +1,25 @@
+{
+	// The type check of the scripts of the page and of the panel. They run in a webview, so they need the DOM types and
+	// no Node types. esbuild makes the bundles, see scripts/build-webviews.mjs.
+	"compilerOptions": {
+		"module": "ESNext",
+		"moduleResolution": "Bundler",
+		"target": "ES2022",
+		"lib": [
+			"ES2022",
+			"DOM",
+			"DOM.Iterable"
+		],
+		"types": [],
+		// JSX of the webviews, with the runtime of Preact
+		"jsx": "react-jsx",
+		"jsxImportSource": "preact",
+		"noEmit": true,
+		"strict": true
+	},
+	"include": [
+		"src/webview-side/**/*.ts",
+		"src/webview-side/**/*.tsx",
+		"src/views/protocol.d.ts"
+	]
+}

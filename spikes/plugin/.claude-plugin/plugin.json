@@ -1,0 +1,44 @@
+{
+	"name": "shotgun-spike",
+	"version": "0.0.2",
+	"description": "The hooks and the skill of the phase 0 spikes of Shotgun. It is not a part of Shotgun. spikes/run.mjs replaces __RUNTIME__ with the path of the test build of VS Code.",
+	"author": { "name": "Shotgun spike" },
+	"hooks": {
+		"PreToolUse": [
+			{
+				"matcher": "Edit|MultiEdit|Write|NotebookEdit",
+				"hooks": [
+					{
+						"type": "mcp_tool",
+						"server": "plugin:dataflow:dataflow",
+						"tool": "shotgun_guard",
+						"input": { "tool": "${tool_name}", "file": "${tool_input.file_path}", "cwd": "${cwd}" }
+					}
+				]
+			}
+		],
+		"UserPromptSubmit": [
+			{
+				"hooks": [
+					{
+						"type": "mcp_tool",
+						"server": "plugin:dataflow:dataflow",
+						"tool": "shotgun_session_context",
+						"input": { "event": "${hook_event_name}", "cwd": "${cwd}" }
+					}
+				]
+			}
+		],
+		"SessionStart": [
+			{
+				"hooks": [
+					{
+						"type": "command",
+						"command": "ELECTRON_RUN_AS_NODE=1 \"__RUNTIME__\" \"${CLAUDE_PLUGIN_ROOT}/hooks/session-start.js\"",
+						"timeout": 10
+					}
+				]
+			}
+		]
+	}
+}

@@ -1,0 +1,135 @@
+import { randomBytes } from 'crypto';
+import * as vscode from 'vscode';
+import type { FromView, ToView, ViewCommand, ViewModel } from './protocol';
+
+// The 2 webviews of Shotgun: the panel beside the text editor (a webview view in the secondary side bar) and the page
+// in the editor area. Both get the same view model. A webview sends the actions of the user, and the extension runs the
+// commands of Shotgun for them. A button never starts Claude: the user types each request in Claude Code.
+
+export const PANEL_ID = 'shotgun.panel';
+export const PAGE_ID = 'shotgun.page';
+
+const COMMANDS: readonly ViewCommand[] = ['newTask', 'openTask', 'pause', 'continue', 'showPage', 'connectClaude', 'connectDataFlow'];
+
+// A message of a webview, with a check of its form. A webview runs scripts, so the extension trusts no message
+export function isFromView(value: unknown): value is FromView {
+	if (typeof value !== 'object' || value === null) {
+		return false;
+	}
+	const m = value as Record<string, unknown>;
+	switch (m.type) {
+		case 'ready':
+			return true;
+		case 'command':
+			return typeof m.command === 'string' && (COMMANDS as readonly string[]).includes(m.command);
+		case 'selectTask':
+			return typeof m.id === 'string';
+		case 'copy':
+			return typeof m.text === 'string' && m.text.length <= 2000;
+		default:
+			return false;
+	}
+}
+
+// The HTML of a webview. The policy allows only the script of the bundle, and the styles that the script adds with
+// constructable stylesheets
+function html(webview: vscode.Webview, extensionUri: vscode.Uri, script: 'panel' | 'page'): string {
+	const nonce = randomBytes(16).toString('base64');
+	const src = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'out', 'webview', `${script}.js`));
+	return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}';">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body>
+<div id="root"></div>
+<script type="module" nonce="${nonce}" src="${src}"></script>
+</body>
+</html>`;
+}
+
+export class Views implements vscode.Disposable {
+	private model: ViewModel | undefined;
+	private panel: vscode.WebviewView | undefined;
+	private page: vscode.WebviewPanel | undefined;
+	private readonly disposables: vscode.Disposable[] = [];
+
+	constructor(private readonly extensionUri: vscode.Uri, private readonly onMessage: (message: FromView) => void) {
+		this.disposables.push(
+			vscode.window.registerWebviewViewProvider(PANEL_ID, { resolveWebviewView: (view) => this.attachPanel(view) }),
+			vscode.window.registerWebviewPanelSerializer(PAGE_ID, { deserializeWebviewPanel: async (panel) => this.attachPage(panel) }),
+		);
+	}
+
+	update(model: ViewModel): void {
+		this.model = model;
+		this.post(this.panel?.webview);
+		this.post(this.page?.webview);
+	}
+
+	// Opens the page in the editor area, or shows it
+	showPage(): void {
+		if (this.page) {
+			this.page.reveal();
+			return;
+		}
+		this.attachPage(vscode.window.createWebviewPanel(PAGE_ID, 'Shotgun', vscode.ViewColumn.Active, this.options()));
+	}
+
+	dispose(): void {
+		this.page?.dispose();
+		this.disposables.forEach((d) => d.dispose());
+	}
+
+	private options(): vscode.WebviewOptions {
+		return { enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, 'out', 'webview')] };
+	}
+
+	private attachPanel(view: vscode.WebviewView): void {
+		this.panel = view;
+		view.webview.options = this.options();
+		view.webview.html = html(view.webview, this.extensionUri, 'panel');
+		const listener = this.listen(view.webview);
+		view.onDidDispose(() => {
+			listener.dispose();
+			if (this.panel === view) {
+				this.panel = undefined;
+			}
+		});
+	}
+
+	private attachPage(panel: vscode.WebviewPanel): void {
+		this.page = panel;
+		panel.iconPath = vscode.Uri.joinPath(this.extensionUri, 'media', 'shotgun.svg');
+		panel.webview.options = this.options();
+		panel.webview.html = html(panel.webview, this.extensionUri, 'page');
+		const listener = this.listen(panel.webview);
+		panel.onDidDispose(() => {
+			listener.dispose();
+			if (this.page === panel) {
+				this.page = undefined;
+			}
+		});
+	}
+
+	private listen(webview: vscode.Webview): vscode.Disposable {
+		return webview.onDidReceiveMessage((message: unknown) => {
+			if (!isFromView(message)) {
+				return;
+			}
+			if (message.type === 'ready') {
+				this.post(webview);
+			} else {
+				this.onMessage(message);
+			}
+		});
+	}
+
+	private post(webview: vscode.Webview | undefined): void {
+		if (webview && this.model) {
+			void webview.postMessage({ type: 'model', model: this.model } satisfies ToView);
+		}
+	}
+}

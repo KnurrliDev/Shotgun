@@ -1,0 +1,71 @@
+{
+	"name": "shotgun-spike",
+	"displayName": "Shotgun Spike",
+	"description": "The spikes of phase 0 of Shotgun for the test build of VS Code. It is not a part of Shotgun.",
+	"publisher": "shotgun-test",
+	"version": "0.0.1",
+	"private": true,
+	"engines": {
+		"vscode": "^1.120.0"
+	},
+	"main": "./extension.js",
+	"activationEvents": [
+		"onStartupFinished"
+	],
+	"contributes": {
+		"viewsContainers": {
+			"secondarySidebar": [
+				{
+					"id": "shotgunSpikeA",
+					"title": "Shotgun A",
+					"icon": "media/icon.svg"
+				}
+			],
+			"activitybar": [
+				{
+					"id": "shotgunSpikeB",
+					"title": "Shotgun B",
+					"icon": "media/icon.svg"
+				}
+			]
+		},
+		"views": {
+			"shotgunSpikeA": [
+				{
+					"type": "webview",
+					"id": "shotgunSpike.panelA",
+					"name": "Panel A"
+				}
+			],
+			"shotgunSpikeB": [
+				{
+					"type": "webview",
+					"id": "shotgunSpike.panelB",
+					"name": "Panel B"
+				}
+			]
+		},
+		"commands": [
+			{
+				"command": "shotgunSpike.nextHole",
+				"title": "Shotgun Spike: Next Hole"
+			},
+			{
+				"command": "shotgunSpike.previousHole",
+				"title": "Shotgun Spike: Previous Hole"
+			}
+		],
+		"keybindings": [
+			{
+				"command": "shotgunSpike.nextHole",
+				"key": "tab",
+				"when": "editorTextFocus && shotgunSpike.inFrame"
+			},
+			{
+				"command": "shotgunSpike.previousHole",
+				"key": "shift+tab",
+				"when": "editorTextFocus && shotgunSpike.inFrame"
+			}
+		]
+	}
+}
