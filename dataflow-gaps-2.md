@@ -18,6 +18,7 @@ The first analysis found 29 gaps in DataFlow 0.5.0. Then DataFlow got 9 commits 
 - Shotgun does not need the items 34 to 40 now.
 - Phase 1 of Shotgun found item 42 on 14 November 2026: a fault of the token of the MCP server at the first start.
 - Phase 3 of Shotgun found item 43 on 14 November 2026: an extension cannot see the tool calls of an MCP client.
+- Phase 6 of Shotgun found item 44 on 14 November 2026: a mark cannot keep a path that is not there.
 
 No open gap stops the start of the work on Shotgun.
 
@@ -159,7 +160,7 @@ Do the groups in this sequence. Do not do the items 34 to 40 for Shotgun.
 | --- | --- | --- |
 | 1 | 42 | A new user gets no tools of DataFlow and no guard of Shotgun in Claude Code. |
 | 2 | 30, 31, 32 | The heat can be too low. Then the model gets a wrong permission. |
-| 3 | 11, 33, 41, 43 | Shotgun has a procedure, but it needs more code or it gives less accuracy. |
+| 3 | 11, 33, 41, 43, 44 | Shotgun has a procedure, but it needs more code or it gives less accuracy. |
 
 ## Heat
 
@@ -252,6 +253,15 @@ The items 36 and 37 are differences between the code and `docs/api-gaps-strategy
 - **Use in Shotgun:** Decision 13 of the plan of Shotgun: a fact of Claude shows the read tool of DataFlow that gave the fact. Shotgun must refuse a fact with a tool that Claude did not call.
 - **Until the fix:** The skill `shotgun-survey` tells Claude to give a fact only from a call of a read tool. Shotgun cannot check this. The badge "Model" shows that the fact is a text of Claude. A hook of the plugin of Shotgun after each tool call can record the calls, but only in Claude Code with this plugin.
 - **Possible fix:** Add the event `onDidCallTool` to the API. The event gives the client, the tool, the arguments and the time of each call of a read tool. Or add a method that gives the tool calls since a time.
+
+## Marks
+
+### 44. A mark cannot keep a path that is not there
+
+- **Data:** `create` in `src/review/marks.ts` gives the error "These paths are not there" for a path that is not there, and no mark changes. `markDiff` finds the new files only under the paths of the mark.
+- **Use in Shotgun:** A step can make a new file, for example a test. The base of the step needs the path of the new file. Then `getDiff` with the mark gives the new file with its functions and its heat.
+- **Until the fix:** Shotgun makes the mark only with the files of the scope that are there. At the receipt, Shotgun reads each new file of the scope itself. All its lines are added lines, with no functions and no heat. A mark of the folder of the new file is not a good procedure, because the folder can have more than 500 files.
+- **Possible fix:** Let `markBase` keep a file path that is not there as a file with no text. Then `getDiff` gives the file as a new file when it is there.
 
 ## Limits that Shotgun gets from DataFlow
 

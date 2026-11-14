@@ -3,9 +3,12 @@ import { EventEmitter } from 'events';
 import * as path from 'path';
 import { BRIEF_FILE, briefTemplate, PartId } from './brief';
 import {
+	BUILD_FILE, BuildFile, BuildStep, BuildWriter, ChangeMark, currentStep, CurrentStep, MAX_CHANGE_NOTE, parseBuild, Receipt, receiptCounts,
+} from './build';
+import {
 	ACTIVE_FILE, ActiveFile, ANSWERS_FILE, Decision, DECISIONS_FILE, decisionLine, DecisionInput, ENGINE_FILE, FILE_VERSION, jsonText, LEVELS_FILE,
 	ORDER_FILE, parseActive, parseDecisions, parseQuestions, parseTask, PLAN_FILE, Question, QUESTIONS_FILE, readText, RISK_FILE, SHOTGUN_DIR,
-	SURVEY_FILE, TASK_FILE, TASK_ID, TaskFile, taskIdOf, writeTextAtomic,
+	StepGate, SURVEY_FILE, TASK_FILE, TASK_ID, TaskFile, taskIdOf, writeTextAtomic,
 } from './files';
 import { applyEdit, Order, OrderEdit, OrderFile, orderOf, OrderTask, parseOrder, surveyIds, TaskSurvey } from './order';
 import { LevelsFile, MAX_LEVEL_NOTE, parseLevels, parsePlan, parseRisk, Plan, PlanFile, RiskFile, UserLevel } from './plan';
@@ -39,7 +42,18 @@ export interface Snapshot {
 	readonly plan: PlanFile | undefined; // the plan of Claude in stage 4
 	readonly risk: RiskFile | undefined; // the facts of DataFlow and the levels of the rules for the steps of the plan
 	readonly levels: LevelsFile | undefined; // the levels and the notes of the user for the steps
+	readonly build: BuildFile | undefined; // the state of the steps of the build in stage 5, and their receipts
 	readonly problems: readonly string[]; // the stage files that Shotgun cannot read
+}
+
+// The start of a step of the build. base: the name of the mark of DataFlow. baseError: why the step has no base
+export interface StepStart {
+	readonly writer: BuildWriter;
+	readonly level: Level | null;
+	readonly scope: readonly string[];
+	readonly newFiles?: readonly string[];
+	readonly base?: string;
+	readonly baseError?: string;
 }
 
 // A question of Claude before Shotgun gives it an id
@@ -60,7 +74,7 @@ export class SessionStore {
 	constructor(private readonly root: string | undefined, private readonly now: () => Date = () => new Date()) {
 		this.state = {
 			root, task: undefined, isPaused: false, tasks: [], decisions: [], questions: [], survey: undefined, engine: undefined, answers: {},
-			order: undefined, plan: undefined, risk: undefined, levels: undefined, problems: [],
+			order: undefined, plan: undefined, risk: undefined, levels: undefined, build: undefined, problems: [],
 		};
 	}
 
@@ -128,6 +142,7 @@ export class SessionStore {
 		let plan: PlanFile | undefined;
 		let risk: RiskFile | undefined;
 		let levels: LevelsFile | undefined;
+		let build: BuildFile | undefined;
 		// a stage file that is there, but that Shotgun cannot read, is a problem
 		const readFile = <T>(name: string, parse: (text: string, id: string) => T): T | undefined => {
 			const text = task && dir ? readText(path.join(dir, task.id, name)) : undefined;
@@ -149,6 +164,7 @@ export class SessionStore {
 			plan = readFile(PLAN_FILE, parsePlan);
 			risk = readFile(RISK_FILE, parseRisk);
 			levels = readFile(LEVELS_FILE, parseLevels);
+			build = readFile(BUILD_FILE, parseBuild);
 			const parsed = parseDecisions(readText(path.join(dir, task.id, DECISIONS_FILE)) ?? '');
 			decisions = parsed.decisions.slice(-MAX_DECISIONS);
 			if (parsed.invalid > 0) {
@@ -177,8 +193,15 @@ export class SessionStore {
 			plan,
 			risk,
 			levels,
+			build,
 			problems,
 		});
+	}
+
+	// The current step of the build: the first step of the plan that is not done
+	get current(): CurrentStep | undefined {
+		const { plan, risk, levels, build } = this.state;
+		return currentStep(plan, risk, levels, build);
 	}
 
 	// The order of the active task: order.json, else the tasks of the survey in their sequence
@@ -387,6 +410,112 @@ export class SessionStore {
 		return this.passGate('accept-plan');
 	}
 
+	// Opens the current step of the build: Claude opens an errand, or Shotgun opens a step of the user. Claude can open its
+	// step again after the receipt, for example to fix an issue. Then the step keeps its base and the old receipt until
+	// the new receipt
+	startStep(id: string, start: StepStart): BuildStep {
+		const task = this.requireStage('build', 'A step opens only in stage 5, the build.');
+		const current = this.requireCurrent(id);
+		const old = current.build;
+		if (current.state === 'open') {
+			throw new Error(`Step ${current.n} is open already.`);
+		}
+		if (current.state === 'receipt' && start.writer !== 'claude') {
+			throw new Error(`Step ${current.n} has a receipt of Claude.`);
+		}
+		const isAgain = current.state === 'receipt';
+		const base = isAgain ? old?.base : start.base;
+		const baseError = isAgain ? old?.baseError : start.baseError;
+		const newFiles = isAgain ? old?.newFiles : start.newFiles;
+		const step: BuildStep = {
+			state: 'open',
+			writer: start.writer,
+			level: start.level,
+			scope: [...start.scope],
+			...(newFiles && newFiles.length > 0 ? { newFiles: [...newFiles] } : {}),
+			...(base ? { base } : {}),
+			...(baseError ? { baseError } : {}),
+			round: start.writer === 'claude' ? (old?.round ?? 0) + 1 : 0,
+			opened: this.time(),
+			...(old?.receipt ? { receipt: old.receipt } : {}),
+		};
+		this.writeStep(task.id, id, step);
+		if (start.writer === 'claude') {
+			this.append(task.id, { kind: 'step', by: 'claude', step: id, round: step.round });
+		}
+		this.load();
+		return step;
+	}
+
+	// The receipt of an errand of Claude. The scope of the step closes, and the user walks the receipt
+	writeReceipt(id: string, receipt: Receipt): void {
+		const task = this.requireStage('build', 'A receipt comes only in stage 5, the build.');
+		const current = this.requireCurrent(id);
+		if (current.state !== 'open' || current.writer !== 'claude') {
+			throw new Error(`Step ${current.n} is not open for Claude.`);
+		}
+		this.writeStep(task.id, id, { ...current.build!, state: 'receipt', receipt });
+		const counts = receiptCounts(receipt);
+		this.append(task.id, {
+			kind: 'errand', by: 'claude', step: id, round: receipt.round, changes: counts.changes, added: counts.added, removed: counts.removed,
+			looseEnds: receipt.looseEnds.length,
+		});
+		this.load();
+	}
+
+	// The mark of the user on a change of the receipt of the current step
+	setMark(id: string, change: string, mark: ChangeMark): void {
+		const { task, step, receipt, found } = this.requireChange(id, change);
+		if (found.mark === mark) {
+			return;
+		}
+		const changes = receipt.changes.map((c) => (c === found ? { ...c, mark, markTime: this.time() } : c));
+		this.writeStep(task.id, id, { ...step, receipt: { ...receipt, changes } });
+		this.append(task.id, { kind: 'mark', by: 'user', step: id, change, mark });
+		this.load();
+	}
+
+	// The note of the user for a change of the receipt of the current step. An empty note removes the note
+	setChangeNote(id: string, change: string, note: string): void {
+		const { task, step, receipt, found } = this.requireChange(id, change);
+		const text = note.trim().replace(/\s+/g, ' ');
+		if (text.length > MAX_CHANGE_NOTE) {
+			throw new Error(`A note has a maximum of ${MAX_CHANGE_NOTE} characters.`);
+		}
+		if ((found.userNote ?? '') === text) {
+			return;
+		}
+		const changes = receipt.changes.map((c) => {
+			if (c !== found) {
+				return c;
+			}
+			const { userNote: _old, ...rest } = c;
+			return text ? { ...rest, userNote: text } : rest;
+		});
+		this.writeStep(task.id, id, { ...step, receipt: { ...receipt, changes } });
+		this.append(task.id, { kind: 'change-note', by: 'user', step: id, change, text });
+		this.load();
+	}
+
+	// The gate of a step: the user accepts the receipt of Claude, or the user ends a step of the user. The next step of
+	// the plan is then the current step
+	finishStep(id: string, gate: StepGate): BuildStep {
+		const task = this.requireStage('build', 'A step ends only in stage 5, the build.');
+		const current = this.requireCurrent(id);
+		if (gate === 'accept-receipt' && current.state !== 'receipt') {
+			throw new Error(`Step ${current.n} has no receipt to accept.`);
+		}
+		if (gate === 'step-done' && (current.writer !== 'user' || current.state !== 'open')) {
+			throw new Error(`Step ${current.n} is not an open step of the user.`);
+		}
+		const step: BuildStep = { ...current.build!, state: 'done', done: this.time() };
+		this.writeStep(task.id, id, step);
+		const counts = receiptCounts(current.build?.receipt);
+		this.append(task.id, { kind: 'step-gate', by: 'user', step: id, gate, notWalked: counts.changes - counts.walked });
+		this.load();
+		return step;
+	}
+
 	// The user closes a question of Claude, for example after the answer in the brief
 	closeQuestion(id: string): void {
 		const dir = this.requireDir();
@@ -493,6 +622,43 @@ export class SessionStore {
 		if (!this.state.plan?.steps.some((s) => s.id === step)) {
 			throw new Error(`The plan has no step ${step}.`);
 		}
+	}
+
+	// The step of the build with the id, if it is the current step
+	private requireCurrent(id: string): CurrentStep {
+		const current = this.current;
+		const n = this.state.plan?.steps.findIndex((s) => s.id === id) ?? -1;
+		if (n < 0) {
+			throw new Error(`The plan has no step ${id}.`);
+		}
+		if (!current) {
+			throw new Error('Each step of the plan is done.');
+		}
+		if (current.step.id !== id) {
+			throw new Error(`Step ${n + 1} is not the current step. The steps go in sequence, and the current step is step ${current.n}, "${current.step.title}".`);
+		}
+		return current;
+	}
+
+	// A change of the receipt of the current step, while the user walks the receipt
+	private requireChange(id: string, change: string): { task: TaskFile; step: BuildStep; receipt: Receipt; found: Receipt['changes'][number] } {
+		const task = this.requireStage('build', 'A receipt is only in stage 5, the build.');
+		const current = this.requireCurrent(id);
+		const step = current.build;
+		const receipt = step?.receipt;
+		if (current.state !== 'receipt' || !step || !receipt) {
+			throw new Error(`Step ${current.n} has no receipt to walk now.`);
+		}
+		const found = receipt.changes.find((c) => c.id === change);
+		if (!found) {
+			throw new Error(`The receipt of step ${current.n} has no change ${change}.`);
+		}
+		return { task, step, receipt, found };
+	}
+
+	private writeStep(id: string, step: string, value: BuildStep): void {
+		const steps: Record<string, BuildStep> = { ...(this.state.build?.steps ?? {}), [step]: value };
+		writeTextAtomic(path.join(this.requireDir(), id, BUILD_FILE), jsonText({ version: FILE_VERSION, steps } satisfies BuildFile));
 	}
 
 	private writeLevel(id: string, step: string, level: Level | undefined, note: string | undefined): void {

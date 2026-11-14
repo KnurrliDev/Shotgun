@@ -16,7 +16,7 @@ import type { EngineApi } from '../../tools/survey';
 import { shotgunTools } from '../../tools/tools';
 import { buildModel, decisionText } from '../../views/model';
 import { isFromView } from '../../views/views';
-import { fakeEngine, heatFacts, makeProject, placeFacts, SURVEY } from './fixture';
+import { fakeEngine, heatFacts, makeProject, noBuild, placeFacts, SURVEY } from './fixture';
 
 // A plan for the fixture: S1 changes the loop of solve(), S2 makes a new file, and S3 changes the README
 const PLAN = {
@@ -43,7 +43,7 @@ suite('Plan', () => {
 	const solver = () => path.join(root, 'src', 'solver.cpp');
 	const context = (): SurveyContext => ({ root, folders: [root], isCaseSensitive: true, readLines: (f) => readText(f)?.split(/\r?\n/), tools: [] });
 	const tool = (name: string, engine: EngineApi = fakeEngine()) => shotgunTools({
-		store, folders: () => [root], log: () => undefined, prompts: new PromptLog(), readText, openFile: () => undefined, engine: () => engine,
+		store, folders: () => [root], log: () => undefined, prompts: new PromptLog(), readText, openFile: () => undefined, engine: () => engine, ...noBuild(),
 	}).find((t) => t.name === name)!;
 	const call = (name: string, args: Record<string, unknown>, engine?: EngineApi) => tool(name, engine).call(args) as Promise<Record<string, unknown>>;
 	// the task of the fixture in stage 4, with the order of the survey
@@ -258,7 +258,9 @@ suite('Plan', () => {
 		assert.strictEqual(model().task!.gate!.isEnabled, true);
 		store.acceptPlan();
 		const after = model().task!;
-		assert.deepStrictEqual([after.stage, after.plan?.isEditable, after.gate], ['build', false, undefined]);
+		// in stage 5, the gate is the gate of the current step. The user writes step 1 at level 4, and Shotgun opens it first
+		assert.deepStrictEqual([after.stage, after.plan?.isEditable, after.gate?.label, after.gate?.isEnabled, after.build?.current?.writer],
+			['build', false, 'The step is done', false, 'user']);
 		assert.strictEqual(decisionText(store.snapshot.decisions[store.snapshot.decisions.length - 1]), 'You passed the gate "Accept the plan" of stage 4.');
 	});
 

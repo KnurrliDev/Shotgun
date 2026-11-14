@@ -11,7 +11,7 @@ import type { EngineApi } from '../../tools/survey';
 import { shotgunTools } from '../../tools/tools';
 import { buildModel, decisionText } from '../../views/model';
 import { isFromView } from '../../views/views';
-import { fakeEngine, makeProject, SURVEY } from './fixture';
+import { fakeEngine, makeProject, noBuild, SURVEY } from './fixture';
 
 // A survey with 3 tasks for the functions of the order. T3 needs T1 and T2, and T2 needs T1
 const hook = (id: string, lines: [number, number], code: string) => ({ id, title: id, kind: 'check', file: 'src/solver.cpp', lines, code });
@@ -33,7 +33,7 @@ suite('Order', () => {
 	const solver = () => path.join(root, 'src', 'solver.cpp');
 	const context = (): SurveyContext => ({ root, folders: [root], isCaseSensitive: true, readLines: (f) => readText(f)?.split(/\r?\n/), tools: [] });
 	const tool = (name: string, engine: EngineApi = fakeEngine()) => shotgunTools({
-		store, folders: () => [root], log: () => undefined, prompts: new PromptLog(), readText, openFile: () => undefined, engine: () => engine,
+		store, folders: () => [root], log: () => undefined, prompts: new PromptLog(), readText, openFile: () => undefined, engine: () => engine, ...noBuild(),
 	}).find((t) => t.name === name)!;
 	const call = (name: string, args: Record<string, unknown>, engine?: EngineApi) => tool(name, engine).call(args) as Promise<Record<string, unknown>>;
 	// the task of the fixture in stage 3, with the survey of the fixture: T1 "A cycle limit", and T2 "A note in the README" that needs T1

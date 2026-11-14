@@ -9,11 +9,14 @@ import { contextOutput, contextText, GET_SESSION_TOOL } from '../../tools/contex
 import { decide, GuardState, hookOutput } from '../../tools/guard';
 import { PromptLog } from '../../tools/prompts';
 import { shotgunTools, ToolDeps } from '../../tools/tools';
+import { noBuild } from './fixture';
 
 // The dependencies of the tools for a test: the files on the disk, a list of the files that a tool opens, and no link to
 // DataFlow
 function testDeps(store: SessionStore, root: string, prompts: PromptLog, opened: string[]): ToolDeps {
-	return { store, folders: () => [root], log: () => undefined, prompts, readText, openFile: (file) => opened.push(file), engine: () => undefined };
+	return {
+		store, folders: () => [root], log: () => undefined, prompts, readText, openFile: (file) => opened.push(file), engine: () => undefined, ...noBuild(),
+	};
 }
 
 // The tools of Shotgun for the MCP server of DataFlow: the guard, the context and get_session
@@ -42,7 +45,7 @@ suite('Tools of Shotgun', () => {
 		}
 		const denies = store.snapshot.decisions.filter((d) => d.kind === 'deny');
 		assert.strictEqual(denies.length, 4);
-		assert.deepStrictEqual(denies[0], { ...denies[0], tool: 'Edit', file: path.join('src', 'a.cpp') });
+		assert.deepStrictEqual(denies[0], { ...denies[0], tool: 'Edit', file: 'src/a.cpp' });
 	});
 
 	test('In stage 5 with no open step, the guard denies; after the last gate, it gives no decision', () => {
@@ -50,7 +53,7 @@ suite('Tools of Shotgun', () => {
 		for (const stage of STAGES.slice(0, 4)) {
 			store.passGate(GATE_OF[stage]);
 		}
-		assert.match(guard('a.cpp').hookSpecificOutput.permissionDecisionReason, /stage 5 of 5, the build, and no step of Claude is open/);
+		assert.match(guard('a.cpp').hookSpecificOutput.permissionDecisionReason, /stage 5 of 5, the build\. No step of Claude is open\./);
 		store.passGate('task-done');
 		assert.deepStrictEqual(guard('a.cpp'), {});
 	});

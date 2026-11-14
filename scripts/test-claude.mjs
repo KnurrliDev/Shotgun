@@ -1,6 +1,6 @@
 // The test of Shotgun with Claude Code. It starts the test build of VS Code with DataFlow and Shotgun from their
 // repository folders. In VS Code, it makes a task with "Shotgun: New Task", and connects DataFlow and Shotgun to Claude
-// Code with their commands. Then it runs 6 prompts of the CLI of Claude Code in print mode:
+// Code with their commands. Then it runs 8 prompts of the CLI of Claude Code in print mode:
 // 1. Task 1: the test writes the brief into brief.md, as the user does. "Ask me questions about my brief." loads the
 //    skill shotgun, and Claude gives its questions with shotgun_submit_questions. The test closes the questions.
 // 2. Claude tries to change a file of the project in stage 1, and the guard denies the change (phase 1).
@@ -14,14 +14,19 @@
 //    passes the gate "Accept the order" on the page (the condition of phase 4).
 // 6. "Make the plan." loads the skill shotgun-plan, and Claude gives the steps with shotgun_submit_plan. The rules give
 //    each step a level from the facts of DataFlow. The test changes a level and writes a note on the page, and passes
-//    the gate "Accept the plan" (the condition of phase 5).
+//    the gate "Accept the plan" (the condition of phase 5). It sets step 1 to level 4 and step 2 to level 2 first.
+// 7. In stage 5, Shotgun opens step 1 for the user. The test writes a line, and passes "The step is done". Then "Do step
+//    2." loads the skill shotgun-errand: Claude opens the step, changes its scope, and gives the receipt. The test puts
+//    the marks and an issue with a note on the receipt in the panel.
+// 8. "Fix the issues of step 2." opens the step again, and Claude gives a new receipt. The test marks each change OK,
+//    and passes "Accept the receipt" (the condition of phase 6).
 // The commands write the settings of proposal P15, and the test checks these files. The CLI loads the 2 plugins with
 // --plugin-dir from the folders that the commands wrote. The CLI uses the login and thus the config folder of the user,
 // and a marketplace from settings would go into the plugin data of the user.
 // The settings of the user do not change: the test build has its own user data, MCP registry, folder for the settings
 // of Claude Code and Shotgun folder. The test records the plugin data of Claude Code of the user before the runs, and
 // checks it after them. It removes the empty folders that the CLI makes there.
-// The test uses the Claude subscription of the user for 6 runs of Claude Code, so it runs only on request.
+// The test uses the Claude subscription of the user for 8 runs of Claude Code, so it runs only on request.
 // Usage: node scripts/test-claude.mjs <new run folder>
 // Environment: DATAFLOW_REPO (default: ../DataFlow), CLAUDE_EXE (default: the CLI of the VS Code extension of Claude Code)
 import { execFileSync, spawn } from 'node:child_process';
@@ -47,11 +52,14 @@ const GET_ORDER = 'mcp__plugin_dataflow_dataflow__shotgun_get_order';
 const SUBMIT_TASK_SURVEY = 'mcp__plugin_dataflow_dataflow__shotgun_submit_task_survey';
 const SUBMIT_PLAN = 'mcp__plugin_dataflow_dataflow__shotgun_submit_plan';
 const GET_PLAN = 'mcp__plugin_dataflow_dataflow__shotgun_get_plan';
+const GET_STEP = 'mcp__plugin_dataflow_dataflow__shotgun_get_step';
+const START_STEP = 'mcp__plugin_dataflow_dataflow__shotgun_start_step';
+const SUBMIT_ERRAND = 'mcp__plugin_dataflow_dataflow__shotgun_submit_errand';
 // The read tools of DataFlow for the survey
 const READ_TOOLS = ['list_functions', 'get_outline', 'get_place', 'get_callers', 'get_calls', 'get_threads', 'get_heat', 'get_flow', 'get_logic',
 	'get_structure', 'get_member_sites', 'get_includes', 'get_call_graph', 'get_hidden'].map((t) => `mcp__plugin_dataflow_dataflow__${t}`);
 // The number of the tools of Shotgun in the MCP server of DataFlow
-const SHOTGUN_TOOLS = 10;
+const SHOTGUN_TOOLS = 13;
 // The brief of task 1, as the user writes it in brief.md
 const BRIEF_1 = [
 	`# Brief: ${TITLE}`, '',
@@ -376,6 +384,11 @@ function shotgunLog() {
 }
 
 const taskFile = (id, name) => path.join(p.project, '.shotgun', id, name);
+// The changed files of the project in git, with no file of .shotgun
+const gitChanges = () => execFileSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: p.project, encoding: 'utf8', windowsHide: true })
+	.split('\n').filter((l) => l.trim() && !l.includes('.shotgun/')).map((l) => l.slice(3).trim().replace(/^"|"$/g, ''));
+// The changed files of the project with the hash of their text now
+const fileHashes = () => new Map(gitChanges().map((f) => [f, fs.existsSync(path.join(p.project, f)) ? hashOf(path.join(p.project, f)) : 'deleted']));
 const ledgerOf = (id) => (fs.existsSync(taskFile(id, 'decisions.jsonl'))
 	? fs.readFileSync(taskFile(id, 'decisions.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
 
@@ -664,8 +677,8 @@ async function main() {
 		check('Claude gets the reason of the deny', edit.toolResults.some((r) => r.isError && r.text.includes('stage 1 of 5, the brief')), edit.toolResults);
 		check('The file did not change', hashOf(file) === hash);
 		const deny = ledgerOf(TASK_1).find((d) => d.kind === 'deny');
-		check('The ledger records the deny', deny?.tool === 'Edit' && deny?.file === path.join('src', 'battery.cpp'), deny);
-		text = await poll(async () => (await panelText())?.includes(`The guard stopped Edit of ${path.join('src', 'battery.cpp')}.`) && true, 15);
+		check('The ledger records the deny', deny?.tool === 'Edit' && deny?.file === 'src/battery.cpp', deny);
+		text = await poll(async () => (await panelText())?.includes('The guard stopped Edit of src/battery.cpp.') && true, 15);
 		check('The panel shows the deny', !!text, await panelText());
 
 		// the gate of task 1
@@ -1044,6 +1057,21 @@ async function main() {
 			ledgerOf(TASK_1).filter((d) => d.kind === 'level' || d.kind === 'level-note'));
 		await wb.shot('page-plan-level.png');
 
+		// for the build: the user writes step 1 (level 4), and Claude writes step 2 (level 2). "Shotgun: Set Risk Level" sets them
+		for (const [n, level] of [[0, 4], [1, 2]]) {
+			await command(wb, 'Shotgun: Set Risk Level');
+			await quickPickNth(wb, 'Shotgun: Set Risk Level', n);
+			await quickPickNth(wb, 'Shotgun: Set Risk Level of', level - 1);
+			await sleep(600);
+		}
+		const setLevels = await poll(() => {
+			const l = readJson(taskFile(TASK_1, 'levels.json'))?.levels ?? {};
+			return l[steps[0]?.id]?.level === 4 && l[steps[1]?.id]?.level === 2 ? l : undefined;
+		}, 15);
+		check('"Shotgun: Set Risk Level" sets step 1 to level 4 and step 2 to level 2', !!setLevels, readJson(taskFile(TASK_1, 'levels.json')));
+		await command(wb, 'Shotgun: Show Page');
+		await poll(async () => (await pageText())?.includes('Accept the plan') && true, 15);
+
 		// the gate "Accept the plan" on the page
 		await inWebview('.page', `() => {
 			const b = [...d.querySelectorAll('.gate button')].find((x) => x.textContent.includes('Accept the plan'));
@@ -1052,9 +1080,168 @@ async function main() {
 		}`);
 		const built = await poll(() => (readJson(taskFile(TASK_1, 'task.json'))?.stage === 'build' ? readJson(taskFile(TASK_1, 'task.json')) : undefined), 20);
 		check('The gate "Accept the plan" of the page takes task 1 to stage 5', built?.gates?.[3]?.gate === 'accept-plan', readJson(taskFile(TASK_1, 'task.json')));
-		text = await poll(async () => (await panelText())?.includes('Do step 1.') && true, 15);
-		check('The panel shows stage 5 of task 1 with its request', !!text, await panelText());
+		// the CSS of the panel shows the name of the step in capitals, so the checks of the panel text ignore the case
+		text = await poll(async () => /step 1 of/i.test((await panelText()) ?? ''), 15);
+		check('The panel shows stage 5 of task 1 with step 1', !!text, await panelText());
 		await wb.shot('panel-build.png');
+		// 7: the build of task 1 (phase 6). Step 1 is a step of the user, and step 2 is an errand of Claude
+		const s1 = steps[0];
+		const s2 = steps[1];
+		const buildOf = () => readJson(taskFile(TASK_1, 'build.json'));
+		const opened1 = await poll(() => (buildOf()?.steps?.[s1.id]?.state === 'open' ? buildOf().steps[s1.id] : undefined), 30);
+		check('Shotgun opens step 1 for the user, with the base of its files', opened1?.writer === 'user'
+			&& (!!opened1?.base || (opened1?.newFiles ?? []).length === opened1?.scope?.length), buildOf());
+		text = await poll(async () => (await panelText())?.includes('The step is done') && true, 15);
+		check('The panel shows step 1 of the user with the gate "The step is done"', !!text, await panelText());
+		await wb.shot('panel-user-step.png');
+		// the user writes step 1: a comment line above the first place of the step, or a new file
+		const place1 = s1.places.find((pl) => pl.lines) ?? s1.places[0];
+		const file1 = path.join(p.project, place1.file);
+		const mark1 = /\.(c|cc|cpp|cxx|h|hh|hpp|hxx|inl)$/i.test(place1.file) ? '//' : /\.(md|markdown)$/i.test(place1.file) ? '' : '#';
+		const userLine = `${mark1 ? `${mark1} ` : ''}The user wrote this line in step 1.`;
+		if (place1.lines && fs.existsSync(file1)) {
+			const t = fs.readFileSync(file1, 'utf8').split('\n');
+			t.splice(place1.lines[0] - 1, 0, userLine);
+			fs.writeFileSync(file1, t.join('\n'));
+		} else {
+			fs.mkdirSync(path.dirname(file1), { recursive: true });
+			fs.writeFileSync(file1, `${userLine}\n`);
+		}
+		await sleep(1500);
+		await inWebview('.panel', `() => {
+			const b = [...d.querySelectorAll('.gate button')].find((x) => x.textContent.includes('The step is done'));
+			b?.click();
+			return !!b;
+		}`);
+		const done1 = await poll(() => (buildOf()?.steps?.[s1.id]?.state === 'done' ? buildOf() : undefined), 20);
+		check('The gate "The step is done" ends step 1', !!done1, buildOf());
+		const userRuns = await poll(() => {
+			const runs = readJson(taskFile(TASK_1, 'lines.json'))?.files?.[place1.file]?.runs ?? [];
+			return runs.some((r) => r.writer === 'user' && r.step === s1.id) ? runs : undefined;
+		}, 10);
+		check('lines.json records the line of the user in step 1', !!userRuns, readJson(taskFile(TASK_1, 'lines.json')));
+
+		// "Do step 2.": Claude opens the step, changes the files of its scope, and gives the receipt
+		text = await poll(async () => (await panelText())?.includes('Do step 2.') && true, 15);
+		check('The panel shows step 2 of Claude with its request', !!text, await panelText());
+		const before2 = fileHashes();
+		const errandTools = [GET_SESSION, GET_STEP, START_STEP, SUBMIT_ERRAND, GET_PLAN, 'Skill', 'Read', 'Edit', 'Write', 'MultiEdit', ...READ_TOOLS];
+		const errandRun = await runClaude('errand', 'Do step 2.', { tools: errandTools, maxTurns: 40, seconds: 900 });
+		const errandNames = errandRun.toolUses.map((t) => t.name);
+		check('The request loads the skill shotgun-errand', errandRun.toolUses.some((t) => t.name === 'Skill' && String(t.input?.skill).includes('shotgun-errand')), errandNames);
+		const firstEdit = errandNames.findIndex((n) => ['Edit', 'Write', 'MultiEdit'].includes(n));
+		check('Claude opens the step with shotgun_start_step before its first file change', errandNames.includes(START_STEP)
+			&& (firstEdit < 0 || errandNames.indexOf(START_STEP) < firstEdit), errandNames);
+		check('Claude gives the receipt with shotgun_submit_errand', errandNames.includes(SUBMIT_ERRAND), errandNames);
+		const refusedReceipts = errandRun.toolResults.filter((r) => r.isError && r.text.includes('did not take the receipt')).length;
+		if (refusedReceipts > 0) {
+			results.notes = [...(results.notes ?? []), `Shotgun refused ${refusedReceipts} receipt of Claude before it took the receipt.`];
+			console.log(`NOTE Shotgun refused ${refusedReceipts} receipt of Claude before it took the receipt.`);
+		}
+		const step2 = buildOf()?.steps?.[s2.id];
+		const receipt = step2?.receipt;
+		check('The receipt has a change with a title and a check for each hunk since the base', step2?.state === 'receipt'
+			&& (!!step2?.base || (step2?.newFiles ?? []).length === step2?.scope?.length)
+			&& (receipt?.changes?.length ?? 0) > 0 && receipt.changes.every((c) => c.title && c.check && c.hunks.length > 0), step2);
+		const scope2 = new Set((step2?.scope ?? []).map((f) => f.toLowerCase()));
+		const changed2 = [...fileHashes()].filter(([f, h]) => before2.get(f) !== h).map(([f]) => f);
+		check('Claude changed only the files of the scope of step 2', changed2.length > 0 && changed2.every((f) => scope2.has(f.toLowerCase())), { changed2, scope: step2?.scope });
+		const claudeLines = Object.entries(readJson(taskFile(TASK_1, 'lines.json'))?.files ?? {})
+			.flatMap(([f, x]) => x.runs.filter((r) => r.writer === 'claude' && r.step === s2.id).map((r) => `${f}:${r.lines[0]}-${r.lines[1]} ${r.change}`));
+		check('lines.json records the lines of Claude in step 2', claudeLines.length > 0, readJson(taskFile(TASK_1, 'lines.json')));
+		results.errand = { step: s2.id, scope: step2?.scope, changes: receipt?.changes?.map((c) => ({ id: c.id, file: c.file, lines: c.lines, title: c.title, check: c.check, note: c.note, added: c.added, removed: c.removed })), denies: receipt?.denies, outside: receipt?.outside, looseEnds: receipt?.looseEnds, claudeLines };
+		console.log(`INFO The receipt of step 2: ${JSON.stringify(results.errand.changes?.map((c) => `${c.id} ${c.file}:${c.lines.join('-')} +${c.added} -${c.removed} ${c.title}`))}`);
+		text = await poll(async () => {
+			const t = await panelText();
+			return t?.includes('Accept the receipt') && t.includes(receipt?.changes?.[0]?.title ?? '?') ? t : undefined;
+		}, 15);
+		check('The panel shows the receipt with the gate "Accept the receipt"', !!text, await panelText());
+		// the place of the first change opens in the text editor, with a mark in the gutter for each line of Claude
+		await inWebview('.panel', `() => {
+			const b = d.querySelector('.change .change-place .link');
+			b?.click();
+			return !!b;
+		}`);
+		const gutter = await poll(() => wb.evaluate(`[...document.querySelectorAll('.part.editor .monaco-editor .margin *, .part.editor .monaco-editor .glyph-margin-widgets *')]
+			.filter((e) => getComputedStyle(e).backgroundImage.includes('svg')).length`), 15);
+		check('The text editor shows the lines of Claude in the gutter', gutter > 0, gutter);
+		await wb.shot('editor-claude-lines.png');
+		await wb.shot('panel-receipt.png');
+
+		// the user walks the receipt: OK on each change after the first, and an issue with a note on the first change
+		const clickMark = (i, label) => inWebview('.panel', `() => {
+			const card = d.querySelectorAll('.change')[${i}];
+			const b = card && [...card.querySelectorAll('.mark-btn')].find((x) => x.textContent.includes(${JSON.stringify(label)}));
+			if (b && !b.classList.contains('on')) { b.click(); }
+			return !!b;
+		}`);
+		const changeCount = receipt?.changes?.length ?? 0;
+		for (let i = 1; i < changeCount; i++) {
+			await clickMark(i, 'OK');
+			await sleep(400);
+		}
+		await clickMark(0, 'Issue');
+		await sleep(400);
+		const issueNote = 'Add a short comment above this change that tells what it does.';
+		await inWebview('.panel', `() => {
+			const input = d.querySelectorAll('.change')[0].querySelector('.note-field input');
+			input.value = ${JSON.stringify(issueNote)};
+			input.dispatchEvent(new d.defaultView.Event('input', { bubbles: true }));
+			return true;
+		}`);
+		await sleep(400);
+		await inWebview('.panel', `() => {
+			d.querySelectorAll('.change')[0].querySelector('.note-field input').dispatchEvent(new d.defaultView.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+			return true;
+		}`);
+		const marked = await poll(() => {
+			const r = buildOf()?.steps?.[s2.id]?.receipt;
+			return r && r.changes[0]?.mark === 'issue' && r.changes[0]?.userNote === issueNote && r.changes.slice(1).every((c) => c.mark === 'ok') ? r : undefined;
+		}, 15);
+		check('The panel puts the marks and the note of the user on the receipt', !!marked, buildOf()?.steps?.[s2.id]?.receipt?.changes?.map((c) => [c.id, c.mark, c.userNote]));
+		const isGateOff = await inWebview('.panel', `() => {
+			const b = [...d.querySelectorAll('.gate button')].find((x) => x.textContent.includes('Accept the receipt'));
+			return b ? String(b.disabled) : undefined;
+		}`);
+		text = await poll(async () => (await panelText())?.includes('Fix the issues of step 2.') && true, 10);
+		check('An issue stops the gate, and the panel shows the request "Fix the issues of step 2."', isGateOff === 'true' && !!text, { isGateOff, panel: await panelText() });
+		await wb.shot('panel-receipt-issue.png');
+
+		// 8: "Fix the issues of step 2.": Claude reads the issue, opens the step again, and gives a new receipt
+		const fixRun = await runClaude('fix', 'Fix the issues of step 2.', { tools: errandTools, maxTurns: 40, seconds: 900 });
+		const fixNames = fixRun.toolUses.map((t) => t.name);
+		check('Claude reads the issue with shotgun_get_step, and opens the step again', fixNames.includes(GET_STEP) && fixNames.includes(START_STEP)
+			&& fixNames.includes(SUBMIT_ERRAND), fixNames);
+		const step2b = buildOf()?.steps?.[s2.id];
+		check('The step keeps its base, and the new receipt is round 2', step2b?.state === 'receipt' && step2b.round === 2 && step2b.base === step2?.base
+			&& step2b.receipt?.round === 2, step2b);
+		const kept = (step2b?.receipt?.changes ?? []).filter((c) => c.mark === 'ok').length;
+		results.fix = { changes: step2b?.receipt?.changes?.map((c) => ({ id: c.id, file: c.file, lines: c.lines, title: c.title, note: c.note, mark: c.mark })), kept };
+		console.log(`INFO The receipt of round 2: ${JSON.stringify(results.fix.changes?.map((c) => `${c.id} ${c.mark} ${c.title}`))}. ${kept} changes kept the mark OK.`);
+		text = await poll(async () => /round 2/i.test((await panelText()) ?? ''), 15);
+		check('The panel shows the receipt of round 2', !!text, await panelText());
+		// the user marks each change OK, and accepts the receipt
+		for (let i = 0; i < (step2b?.receipt?.changes?.length ?? 0); i++) {
+			await clickMark(i, 'OK');
+			await sleep(400);
+		}
+		const allOk = await poll(() => (buildOf()?.steps?.[s2.id]?.receipt?.changes ?? []).every((c) => c.mark === 'ok') || undefined, 15);
+		check('Each change of round 2 has the mark OK', !!allOk, buildOf()?.steps?.[s2.id]?.receipt?.changes?.map((c) => [c.id, c.mark]));
+		await sleep(500);
+		await inWebview('.panel', `() => {
+			const b = [...d.querySelectorAll('.gate button')].find((x) => x.textContent.includes('Accept the receipt'));
+			b?.click();
+			return !!b;
+		}`);
+		const accepted2 = await poll(() => (buildOf()?.steps?.[s2.id]?.state === 'done' ? buildOf() : undefined), 20);
+		check('The gate "Accept the receipt" ends step 2', !!accepted2, buildOf());
+		const kinds = ledgerOf(TASK_1).map((d) => d.kind);
+		check('The ledger records the starts, the receipts, the marks, the note and the gates of the steps',
+			['step', 'errand', 'mark', 'change-note', 'step-gate'].every((k) => kinds.includes(k)) && kinds.filter((k) => k === 'step-gate').length === 2, kinds);
+		text = await poll(async () => new RegExp(`step 3 of ${steps.length}`, 'i').test((await panelText()) ?? ''), 15);
+		check('The panel shows step 3 after the gate', steps.length < 3 || !!text, await panelText());
+		await wb.shot('panel-build-step-3.png');
+
 		wb.ws.close();
 	} catch (error) {
 		check('The test runs to its end', false, String(error?.stack ?? error));

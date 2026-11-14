@@ -29,6 +29,7 @@ export interface TaskView {
 	survey?: SurveyView; // stage 2 and later: the survey of Claude
 	order?: OrderView; // stage 3 and later: the order of the user
 	plan?: PlanView; // stage 4 and later: the plan of Claude with the risk levels
+	build?: BuildView; // stage 5: the steps of the build and the current step
 	gate?: GateView; // the gate of the stage, if this version of Shotgun has it
 	isDone: boolean;
 	isPaused: boolean;
@@ -217,6 +218,84 @@ export interface PlanView {
 	maxNote: number;
 }
 
+// A step of the plan in the build (stage 5)
+export interface BuildStepView {
+	id: string;
+	n: number; // the place of the step in the plan, from 1
+	title: string;
+	level: number | null;
+	levelName: string; // for example "Low, level 2 of 5"
+	writer: 'claude' | 'user';
+	writerText: string; // for example "Claude writes it"
+	state: 'todo' | 'open' | 'receipt' | 'done';
+	isCurrent: boolean;
+	walked?: string; // the marks of the receipt, for example "2 of 3 changes walked: 1 issue"
+}
+
+export interface DiffLineView {
+	mark: '+' | '-' | ' ';
+	line?: number; // the line in the text now. A removed line has no line
+	text: string;
+}
+
+// A change of a receipt: the words of Claude, the facts of the diff, and the mark of the user
+export interface ReceiptChangeView {
+	id: string;
+	n: number;
+	title: string;
+	check: string; // what the user checks
+	note?: string; // the note of Claude
+	place: string; // for example "src/battery.cpp:44-45", or "tests/a.cpp (new)"
+	path: string;
+	line: number;
+	added: number;
+	removed: number;
+	functions: string[];
+	heat?: { function: string; score: number; band: 'cool' | 'warm' | 'hot' | 'very hot' };
+	diff: DiffLineView[]; // empty: the diff was too long
+	mark: 'todo' | 'ok' | 'issue' | 'question';
+	userNote: string;
+}
+
+export interface ReceiptView {
+	round: number; // the number of the times that Claude opened the step
+	time: string;
+	added: number;
+	removed: number;
+	total: number; // the number of the changes
+	walked: number; // the changes with a mark
+	issues: number;
+	questions: number;
+	walkText: string; // for example "2 of 3 changes walked: 1 issue"
+	changes: ReceiptChangeView[];
+	denies: { tool: string; file: string }[]; // the edits that the guard denied while the step was open
+	outside: string[]; // the files outside of the scope that changed while the step was open
+	deleted: string[];
+	looseEnds: { text: string; place?: string; path?: string; line?: number }[];
+	notice?: string;
+}
+
+// The current step of the build, with its text, its places and its receipt
+export interface CurrentStepView extends BuildStepView {
+	total: number;
+	text: string;
+	checks: string[];
+	places: PlanPlaceView[];
+	scope: string[];
+	round: number;
+	baseError?: string; // why the step has no base
+	receipt?: ReceiptView;
+	isEditable: boolean; // the user can put marks on the receipt now
+}
+
+export interface BuildView {
+	steps: BuildStepView[];
+	current: CurrentStepView | null; // null: each step is done
+	done: number;
+	total: number;
+	maxNote: number; // the maximum length of a note of the user for a change
+}
+
 export interface GateView {
 	label: string; // the text of the button
 	note: string;
@@ -287,4 +366,6 @@ export type FromView =
 	| { type: 'editOrder'; edit: OrderEditView }
 	| { type: 'setLevel'; step: string; level: number | null } // null: the level of the rules again
 	| { type: 'setLevelNote'; step: string; note: string }
-	| { type: 'checkLevels' };
+	| { type: 'checkLevels' }
+	| { type: 'setMark'; step: string; change: string; mark: 'todo' | 'ok' | 'issue' | 'question' } // todo: no mark
+	| { type: 'setChangeNote'; step: string; change: string; note: string };

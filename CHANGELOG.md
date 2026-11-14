@@ -4,6 +4,26 @@
 
 This version has no release yet. Each phase of `implementation-plan.md` adds its items.
 
+### Phase 6: build
+
+- In stage 5, the steps of the plan go in sequence. The current step is the first step that is not done. The risk level of a step selects its writer: Claude at the levels 1 and 2, the user at the levels 3, 4 and 5. Until the frames of phase 7, the user writes a step of level 3 (decision 15 of the plan). The plan page, the CodeLens lines and the tools show this writer.
+- The new tool `shotgun_start_step` opens the current step for an errand of Claude. Shotgun saves the files of the scope, and makes the base of the step with `markBase` of DataFlow. The scope is the files of the places of the step.
+- The guard lets Claude change only the files of the scope of the open step. Its reason names the scope. With no open step of Claude, its reason names the current step and its writer.
+- The new tool `shotgun_submit_errand` closes the step, and makes the receipt from `getDiff` since the base. Each hunk needs a change of Claude with its lines, a title and a check for the user. Claude can give a note for each change, and the loose ends of the step.
+- The receipt also shows the edits that the guard denied, and the files outside of the scope that changed while the step was open.
+- In the panel, the user walks the receipt and puts a mark on each change: OK, issue or question. The user can write a note for Claude. **Shotgun: Mark a Change** does the same with the keyboard. The ledger records each mark and each note.
+- The new tool `shotgun_get_step` gives a step with the marks and the notes of the user. After "Fix the issues of step N", Claude opens the step again. The step keeps its base, and a change with no new code keeps the mark OK.
+- The gate **Accept the receipt** deletes the base of the step. An issue stops the gate. With changes that have no mark, or with questions, a modal message asks the user first.
+- Shotgun opens a step of the user with a base of its files. The gate **The step is done** records the lines of the user since the base. After the last step, the gate is **The task is done**.
+- `lines.json` keeps the writer of each changed line, with a hash of each line of the file. After each change of a file, the lines of each writer move with a diff of the lines. A line of Claude that the user changes becomes a line of the user.
+- The text editor shows a mark in the gutter for each line of Claude. The mark is dashed until the user walks its change, and then it has the color of the mark of the user. The first line gets a tag, for example "Claude · not walked". An edit of the user in the scope of an open step of Claude gets a warning.
+- The CodeLens line of a step shows its writer and its state in stage 5. The plan page shows the state of each step.
+- `shotgun_get_session`, `shotgun_get_plan` and the context hook give the current step and the next work.
+- The plugin of Shotgun has the new skill `shotgun-errand`.
+- New stage files: `build.json` and `lines.json`.
+- A new file of a step has no base in DataFlow: gap 44 of `dataflow-gaps-2.md`. Shotgun reads the new file at the receipt.
+- Tests: 103 unit tests. `scripts/test-claude.mjs` adds a step of the user and an errand of Claude with a receipt. Then it adds an issue, the fix of the issue and the gate of the receipt.
+
 ### Phase 5: plan
 
 - The risk rules of the decisions 8 and 14 of the plan are pure functions. They give a level from 1 to 5 from the facts of DataFlow. Tables of facts and levels test them, also the example plan of the design canvas.

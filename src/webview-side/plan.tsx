@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import type { PlanHeatView, PlanStepView, PlanView, TaskView, ToView, ViewModel } from '../views/protocol';
+import type { BuildView, PlanHeatView, PlanStepView, PlanView, TaskView, ToView, ViewModel } from '../views/protocol';
+import { StateChip } from './build';
 import { CommandButton, GateBlock, StageBar, TellClaude, timeText, WriterBadges } from './common';
 import { post } from './vscode';
 
@@ -105,7 +106,13 @@ function NoteField({ step, maxNote }: { step: PlanStepView; maxNote: number }) {
 	);
 }
 
-function StepDetail({ step, view }: { step: PlanStepView; view: PlanView }) {
+// The state of a step in the build, in stage 5
+function BuildState({ build, id }: { build?: BuildView; id: string }) {
+	const s = build?.steps.find((b) => b.id === id);
+	return s ? <StateChip state={s.state} writer={s.writer} /> : null;
+}
+
+function StepDetail({ step, view, build }: { step: PlanStepView; view: PlanView; build?: BuildView }) {
 	const setLevel = (level: number | null) => post({ type: 'setLevel', step: step.id, level });
 	let setBy = '';
 	if (step.level !== null) {
@@ -117,7 +124,10 @@ function StepDetail({ step, view }: { step: PlanStepView; view: PlanView }) {
 				<span class="name">Step</span>
 				<span class="step-num">{step.n}</span>
 				<span class="step-title">{step.title}</span>
+				<BuildState build={build} id={step.id} />
 			</div>
+			{build && <p class="muted small">{build.steps.find((b) => b.id === step.id)?.writerText}{build.steps.find((b) => b.id === step.id)?.walked
+				? `. Receipt: ${build.steps.find((b) => b.id === step.id)?.walked}.` : ''}</p>}
 			<p class="muted small">For task {step.task}: {step.taskText}</p>
 			<p class="places">
 				{step.places.map((p) => (p.isNew ? <span class="mono small">{p.name}</span> : (
@@ -204,7 +214,7 @@ function Writers({ view }: { view: PlanView }) {
 			</div>
 			<p class="writers">
 				<span><WriterMark writer="user" /> You write <strong>{w.user}</strong></span>
-				<span><WriterMark writer="frame" /> Frame <strong>{w.frame}</strong></span>
+				{w.frame > 0 && <span><WriterMark writer="frame" /> Frame <strong>{w.frame}</strong></span>}
 				<span><WriterMark writer="claude" /> Claude writes <strong>{w.claude}</strong></span>
 				{w.none > 0 && <span>No level <strong>{w.none}</strong></span>}
 			</p>
@@ -252,13 +262,14 @@ export function PlanPage({ task, model }: { task: TaskView; model: ViewModel }) 
 								<button type="button" class={s.id === step?.id ? 'step-row on' : 'step-row'} aria-pressed={s.id === step?.id} onClick={() => setSelected(s.id)}>
 									<span class="step-num">{s.n}</span>
 									<span class="grow">{s.title}</span>
+									<BuildState build={task.build} id={s.id} />
 									<RiskBar level={s.level} />
 									<WriterMark writer={s.writer} />
 								</button>
 							))}
 						</div>
 					</section>
-					{step && <StepDetail step={step} view={view} />}
+					{step && <StepDetail step={step} view={view} build={task.build} />}
 				</div>
 				<div class="column">
 					{step && <PlaceCard step={step} />}
@@ -290,7 +301,8 @@ export function PlanPage({ task, model }: { task: TaskView; model: ViewModel }) 
 								<TellClaude text={CHANGE_EXAMPLE} />
 							</>
 						)}
-						{task.gate ? <GateBlock gate={task.gate} /> : <p class="muted">You accepted the plan.</p>}
+						{task.build ? <p class="muted">You accepted the plan. The panel of Shotgun shows the current step of the build.</p>
+							: task.gate ? <GateBlock gate={task.gate} /> : <p class="muted">You accepted the plan.</p>}
 					</section>
 				</div>
 			</div>
@@ -322,8 +334,8 @@ export function PlanSummary({ task }: { task: TaskView }) {
 			) : (
 				<>
 					<p>
-						The plan of Claude: {count(view.steps.length, 'step')}. You write {view.writers.user}, a frame has {view.writers.frame}, and Claude
-						writes {view.writers.claude}.
+						The plan of Claude: {count(view.steps.length, 'step')}. You write {view.writers.user}
+						{view.writers.frame > 0 ? `, a frame has ${view.writers.frame},` : ''} and Claude writes {view.writers.claude}.
 					</p>
 					<Writers view={view} />
 					{view.waiting > 0 && <p class="notice">{count(view.waiting, 'step')} wait for the end of the scan of the call graph.</p>}

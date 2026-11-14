@@ -102,6 +102,11 @@
 				"category": "Shotgun"
 			},
 			{
+				"command": "shotgun.markChange",
+				"title": "Mark a Change",
+				"category": "Shotgun"
+			},
+			{
 				"command": "shotgun.passGate",
 				"title": "Pass the Gate",
 				"category": "Shotgun"
@@ -154,6 +159,10 @@
 				{
 					"command": "shotgun.showStep",
 					"when": "false"
+				},
+				{
+					"command": "shotgun.markChange",
+					"when": "shotgun.hasReceipt"
 				},
 				{
 					"command": "shotgun.passGate",

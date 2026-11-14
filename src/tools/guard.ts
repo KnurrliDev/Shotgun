@@ -20,11 +20,17 @@ export interface GuardState {
 	readonly task: { readonly title: string; readonly stage: Stage; readonly isDone: boolean } | undefined; // the active task
 	readonly isPaused: boolean;
 	readonly isCaseSensitive: boolean; // false on Windows
+	// stage 5: the scope of the open step of Claude, and the reason of a deny with no open step of Claude
+	readonly build?: {
+		readonly scope?: { readonly files: readonly string[]; readonly names: readonly string[] }; // absolute paths, and the names for Claude
+		readonly step: string; // for example step 5 of 8, "Read the limit"
+		readonly closed: string;
+	};
 }
 
 // why: the cause of no decision, for the log and the tests
 export type GuardDecision =
-	| { readonly decision: 'none'; readonly why: 'no file' | 'outside' | 'no task' | 'paused' | 'done' }
+	| { readonly decision: 'none'; readonly why: 'no file' | 'outside' | 'no task' | 'paused' | 'done' | 'scope' }
 	| { readonly decision: 'deny'; readonly reason: string };
 
 // A value of the input that Claude Code did not fill, for example ${tool_input.file_path} for a different tool
@@ -74,9 +80,22 @@ export function decide(input: GuardInput, state: GuardState): GuardDecision {
 				+ 'Give your results to Shotgun with its tools. For work outside of the task, the user selects "Shotgun: Pause".',
 		};
 	}
+	const build = state.build;
+	const scope = build?.scope;
+	if (scope) {
+		const key = (f: string) => (state.isCaseSensitive ? path.resolve(f) : path.resolve(f).toLowerCase());
+		if (scope.files.some((f) => key(f) === key(file))) {
+			return { decision: 'none', why: 'scope' };
+		}
+		return {
+			decision: 'deny',
+			reason: `Shotgun: ${build.step} is open, and its scope is ${scope.names.join(', ')}. The file ${input.file} is not in the scope. `
+				+ 'Change only the files of the scope. Give each other place that the step needs as a loose end to shotgun_submit_errand.',
+		};
+	}
 	return {
 		decision: 'deny',
-		reason: `Shotgun: the task "${task.title}" is in ${stageText(task.stage)}, and no step of Claude is open. ${STAGE_INFO.build.guard} `
+		reason: `Shotgun: the task "${task.title}" is in ${stageText(task.stage)}. ${build?.closed || `No step of Claude is open. ${STAGE_INFO.build.guard}`} `
 			+ 'For work outside of the task, the user selects "Shotgun: Pause".',
 	};
 }

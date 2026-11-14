@@ -1,7 +1,7 @@
 # Shotgun: implementation plan
 
 - Date: 13 November 2026, changed on 14 November 2026
-- Status: a plan. Shotgun has no code yet.
+- Status: the phases 0 to 6 are done. Section 8 gives the status of each phase.
 - Sources:
   - the design canvas: https://claude.ai/artifact/Sxm9DJ8WPE6LAFqW8PVD6z
   - `dataflow-gaps.md` and `dataflow-gaps-2.md` in this folder
@@ -52,8 +52,9 @@ These items are not in the scope of version 1:
 
 13. In the survey, a fact that Claude writes gets the badge "Model", with the DataFlow tool that Claude names and the place as a link. The facts that Shotgun gets from DataFlow for each hook (the function, the threads, the locks, the frame path and the heat) get the badge "Engine".
 14. The risk rules of D1: before the end of the scan of the call graph, a step gets no level. After a stopped scan or a failed scan, the level is 3 or higher. A frame path past the limit, or a line in the main loop, gives level 4 or higher. A lock at the line gives 1 level more. A change of a data member gets the level of the hottest function that uses it. A file that is not C or C++ gets level 2, with the label "no facts".
+15. Until the frames of phase 7, the user writes a step of risk level 3, as a step of level 4. Claude never writes a step of level 3 with no frame.
 
-The user gave decision 10 on 13 November 2026, and the decisions 11 to 14 on 14 November 2026. Decision 10 changes the buttons of the canvas that started Claude. Section 12 lists these changes.
+The user gave decision 10 on 13 November 2026, and the decisions 11 to 15 on 14 November 2026. Decision 10 changes the buttons of the canvas that started Claude. Section 12 lists these changes.
 
 ## 3. Proposals of this plan
 
@@ -152,8 +153,8 @@ The other stages of Claude run in the same way: the user asks, Claude reads, and
 | `plan.json` | Claude | The steps of the plan: the task, the hooks, the places, the text and the checks of each step. |
 | `risk.json` | Shotgun | The facts of DataFlow and the level of the rules for each step. |
 | `levels.json` | User | The levels and the notes of the user for the steps. A level stays with the id of its step. |
-| `build.json` | Shotgun | The state of each step, the holes, the receipts and the loose ends. |
-| `lines.json` | Shotgun | The writer of each changed line. |
+| `build.json` | Shotgun | The state of each step, its scope and its base, and its receipt with the notes and the loose ends of Claude and the marks and the notes of the user. Phase 7 adds the holes. |
+| `lines.json` | Shotgun | The writer of each changed line, with a hash of each line of the file. |
 | `decisions.jsonl` | Shotgun | The ledger: 1 line for each decision of the user and for each deny of the guard. |
 
 Each JSON file has a `version` field. Shotgun writes each file in 1 step, as `writeTextAtomic` of DataFlow does.
@@ -470,6 +471,32 @@ Differences from the plan:
 - **Writer of each line:** `lines.json`, as section 6.9 tells.
 - **Skill:** `shotgun-errand`: open the step, change only the files of the scope, submit a note for each change, and list the loose ends.
 - **Done when:** step 5 of the fixture runs as an errand with a receipt, and step 2 runs as a step of the user.
+
+**Status, 14 November 2026:** done. `scripts/test-claude.mjs` passed all 104 checks with 8 prompts of Claude Code:
+
+- Before the gate "Accept the plan", the test set step 1 to level 4 and step 2 to level 2 with **Shotgun: Set Risk Level**.
+- Step 1 of the user: Shotgun opened the step with a base of its file. The test wrote a line in `include/battery/types.hpp`, and selected "The step is done" in the panel. `lines.json` recorded the line of the user.
+- "Do step 2." loaded the skill `shotgun-errand`. Claude called `shotgun_get_step`, opened the step with `shotgun_start_step`, and changed only the file of the scope with Edit. Then it gave the receipt with `shotgun_submit_errand`, and Shotgun took the receipt at the first call.
+- The receipt had 1 change of 1 line, with a title and a check. It did not have the line of the user from step 1, because the base of step 2 came after step 1. The guard denied no edit, and no file outside of the scope changed.
+- The text editor showed the line of Claude with a dashed mark in the gutter and the tag "Claude · not walked". After the mark of the user, the tag was "Claude · issue".
+- The test put an issue with a note on the change in the panel. The gate stopped, and the panel showed the request "Fix the issues of step 2.".
+- "Fix the issues of step 2." opened the step again. Claude read the note of the user with `shotgun_get_step`, added the comment, and gave a new receipt with a note. The step kept its base. The receipt of round 2 had a new hunk, so its change had no mark.
+- The test marked the change OK, and the gate "Accept the receipt" ended step 2. The ledger recorded the starts, the receipts, the marks, the note and the 2 gates of the steps.
+- Done when: the plan of Claude is different from the example plan of the design canvas. Thus the test used step 1 as the step of the user, and step 2 as the errand.
+
+Differences from the plan:
+
+- Decision 15: until the frames of phase 7, the user writes a step of level 3. The plan page, the CodeLens lines and the tools show this writer.
+- The steps go in a strict sequence. The current step is the first step that is not done, and Claude can open only the current step.
+- The scope of a step is the files of its places. The guard denies each other file. The receipt also shows the files outside of the scope that changed while the step was open. A watcher of the file system gives them.
+- Claude gives the receipt as changes. Each change has its lines, a title, a check for the user and an optional note. Each hunk of the diff needs a change, and each change needs a hunk. Thus the receipt has the form of the design canvas.
+- DataFlow cannot make a mark of a path that is not there: gap 44 of `dataflow-gaps-2.md`. Shotgun reads a new file of the scope at the receipt. All its lines are added lines, with no facts of DataFlow.
+- A step of the user also gets a base. At "The step is done", the diff since the base gives the lines of the user.
+- `lines.json` keeps a hash of each line of a file with lines of a writer. After each change of the file, a diff of the lines moves the lines of each writer. A change of the spaces only keeps the writer of a line.
+- The user can accept a receipt with a change that has no mark, after a modal message. The ledger keeps the number of these changes. An issue stops the gate.
+- In a new round, a change with the same hunks keeps the mark OK. A change with an issue or a question starts with no mark, because Claude can answer in its note.
+- New command: **Shotgun: Mark a Change**. The ledger keeps the file of a deny with `/`.
+- After the test with Claude Code, 2 changes came. The row of the current step in the panel breaks between its parts now. Level 3 got the writer "user" in the views. The unit tests and a check in a browser ran after these changes. The test with Claude Code did not run again.
 
 ### Phase 7: frames and hints
 

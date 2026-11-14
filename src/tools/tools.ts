@@ -1,13 +1,16 @@
 import * as path from 'path';
 import type { ExtensionTool } from '../dataflow/dataflow-api';
 import { parseBrief, partSummary, questionLine } from '../session/brief';
+import { buildGuard, buildNext, CurrentStep, receiptCounts, stateOf } from '../session/build';
+import type { LineStore } from '../session/lines';
 import { changedTasks, Order, orderWarnings } from '../session/order';
 import { levelOf } from '../session/plan';
-import { IS_CASE_SENSITIVE } from '../session/paths';
+import { absolutePath, IS_CASE_SENSITIVE } from '../session/paths';
 import { GATE_LABEL, GATE_OF, STAGE_INFO, STAGES } from '../session/stages';
 import type { Snapshot, SessionStore } from '../session/store';
 import { SIZES } from '../session/survey';
 import { submitBrief, submitQuestions } from './brief';
+import { BaseApi, getStep, START_STEP_TOOL, startStep, StepChanges, submitErrand } from './build';
 import { contextOutput, contextText } from './context';
 import { decide, GuardInput, hookOutput, isInside, targetOf } from './guard';
 import { orderData, submitTaskSurvey } from './order';
@@ -20,7 +23,7 @@ export { IS_CASE_SENSITIVE };
 // The tools of Shotgun for the MCP server of DataFlow. DataFlow puts "shotgun_" before each name, so Claude Code sees
 // for example mcp__plugin_dataflow_dataflow__shotgun_get_session. Phase 1 has the read tool get_session and the 2 tools
 // of the hooks. Phase 2 adds submit_brief and submit_questions, phase 3 submit_survey, phase 4 get_order and
-// submit_task_survey, and phase 5 get_plan and submit_plan.
+// submit_task_survey, phase 5 get_plan and submit_plan, and phase 6 get_step, start_step and submit_errand.
 
 // A hook in the survey of stage 2 and in the survey of a task in stage 3
 const HOOK_SCHEMA = {
@@ -46,6 +49,10 @@ export interface ToolDeps {
 	readonly readText: (file: string) => string | undefined; // the text of a file, from an open text editor first
 	readonly openFile: (file: string) => void; // shows a file in the text editor
 	readonly engine: () => EngineApi | undefined; // the facts of DataFlow for the survey. undefined: no link to DataFlow
+	readonly base: () => BaseApi | undefined; // the bases and the diffs of DataFlow for the build. undefined: no link to DataFlow
+	readonly saveFiles: (files: readonly string[]) => Promise<void>; // saves the open text editors of the files
+	readonly lines: LineStore; // the writer of each changed line
+	readonly changes: StepChanges; // the files that changed while a step was open
 }
 
 const textOf = (value: unknown): string => (typeof value === 'string' ? value : '');
@@ -53,7 +60,8 @@ const textOf = (value: unknown): string => (typeof value === 'string' ? value : 
 // The result of get_session: the active task, its stage and gates, the brief, the survey, the order, the rule of the guard
 // and the next work. brief: the file brief.md of the active task and its text. surveyFile: the file survey.json. order:
 // the order of the user, for stage 3 and later
-export function sessionData(snapshot: Snapshot, brief?: { file: string; text: string }, surveyFile?: string, order?: Order): Record<string, unknown> {
+export function sessionData(snapshot: Snapshot, brief?: { file: string; text: string }, surveyFile?: string, order?: Order,
+	current?: CurrentStep): Record<string, unknown> {
 	const task = snapshot.task;
 	let guard: string;
 	let next: string;
@@ -68,9 +76,11 @@ export function sessionData(snapshot: Snapshot, brief?: { file: string; text: st
 		next = 'The user selects "Shotgun: Continue" to continue the task.';
 	} else {
 		guard = STAGE_INFO[task.stage].guard;
-		next = STAGE_INFO[task.stage].next;
+		next = task.stage === 'build' ? buildNext(current).next : STAGE_INFO[task.stage].next;
 	}
 	const parsed = brief ? parseBrief(brief.text) : undefined;
+	const done = (snapshot.plan?.steps ?? []).filter((s) => stateOf(snapshot.build, s.id) === 'done').length;
+	const request = buildNext(current).request;
 	return {
 		folder: snapshot.root ?? null,
 		task: task ? {
@@ -121,6 +131,18 @@ export function sessionData(snapshot: Snapshot, brief?: { file: string; text: st
 				tool: 'Call shotgun_get_plan for the steps with their levels.',
 			},
 		} : {}),
+		...(task && snapshot.plan && task.stage === 'build' ? {
+			build: {
+				done,
+				total: snapshot.plan.steps.length,
+				current: current ? {
+					n: current.n, id: current.step.id, title: current.step.title, level: current.level, writer: current.writer, state: current.state,
+					...(current.build?.receipt ? { receipt: receiptCounts(current.build.receipt) } : {}),
+				} : null,
+				...(request ? { request } : {}),
+				tool: 'Call shotgun_get_step for the current step, its scope and its receipt.',
+			},
+		} : {}),
 		isPaused: snapshot.isPaused,
 		guard,
 		next,
@@ -146,7 +168,7 @@ export function shotgunTools(deps: ToolDeps): ExtensionTool[] {
 				const text = file ? deps.readText(file) : undefined;
 				const task = deps.store.snapshot.task;
 				const surveyFile = task && deps.store.dir ? path.join(deps.store.dir, task.id, 'survey.json') : undefined;
-				return sessionData(deps.store.snapshot, file && text !== undefined ? { file, text } : undefined, surveyFile, deps.store.order);
+				return sessionData(deps.store.snapshot, file && text !== undefined ? { file, text } : undefined, surveyFile, deps.store.order, deps.store.current);
 			},
 		},
 		{
@@ -232,6 +254,78 @@ export function shotgunTools(deps: ToolDeps): ExtensionTool[] {
 				required: ['steps'],
 			},
 			call: (args) => submitPlan(deps, args),
+		},
+		{
+			name: 'get_step',
+			title: 'Shotgun step',
+			description: 'Gives a step of the build, in stage 5: by default the current step. It gives the text, the places, the checks, the level, '
+				+ 'the writer, the state and the scope of the step, and its receipt with the marks and the notes of the user: the issues and '
+				+ 'the questions. The steps go in sequence. Claude writes only the steps of risk level 1 and 2.',
+			inputSchema: {
+				type: 'object',
+				properties: { step: { type: 'string', description: 'The id of the step, for example S5, or its number. Default: the current step.' } },
+			},
+			isReadOnly: true,
+			call: (args) => getStep(deps, args),
+		},
+		{
+			name: 'start_step',
+			title: 'Shotgun: open a step',
+			description: 'Opens the current step of the build for your errand, in stage 5, before you change a file. Shotgun saves the files of '
+				+ 'its scope, keeps their text as the base of the step, and the guard opens the scope. Call it again after the receipt to fix '
+				+ 'the issues of the user: the step keeps its base. Only for the steps of risk level 1 and 2.',
+			inputSchema: {
+				type: 'object',
+				properties: {
+					step: { type: 'string', description: 'The id of the step, for example S5, or its number.' },
+					kind: { type: 'string', enum: ['errand'], description: 'Default: errand. Frames come in a later version.' },
+				},
+				required: ['step'],
+			},
+			call: (args) => startStep(deps, args),
+		},
+		{
+			name: 'submit_errand',
+			title: 'Shotgun: give the receipt',
+			description: 'Closes the open step after your changes, in stage 5. Give a change for each change since the base of the step: its file, '
+				+ 'its lines in the text now, a title, a check for the user, and a note for a change that the user did not ask for. Shotgun gets '
+				+ 'the diff since the base from DataFlow, and refuses a change with no note. Give the places outside of the scope that the step '
+				+ 'can also need as loose ends.',
+			inputSchema: {
+				type: 'object',
+				properties: {
+					step: { type: 'string', description: 'The id of the open step, or its number.' },
+					changes: {
+						type: 'array',
+						items: {
+							type: 'object',
+							properties: {
+								file: { type: 'string', description: 'A file of the scope, relative to the first folder of the project.' },
+								lines: { type: 'array', items: { type: 'integer' }, minItems: 2, maxItems: 2, description: '[first, last] of the change in the text now, from 1.' },
+								title: { type: 'string', description: 'What the change does, for example "Read the new limit".' },
+								check: { type: 'string', description: 'What the user checks, for example "Is 8 the correct value when the file has no key?".' },
+								note: { type: 'string', description: 'Optional: a change that the user did not ask for, a risk, or an answer to a question of the user.' },
+							},
+							required: ['file', 'lines', 'title', 'check'],
+						},
+					},
+					looseEnds: {
+						type: 'array',
+						items: {
+							type: 'object',
+							properties: {
+								text: { type: 'string', description: 'What the place can also need, for example "describe() does not name the limit".' },
+								file: { type: 'string' },
+								lines: { type: 'array', items: { type: 'integer' }, minItems: 2, maxItems: 2 },
+							},
+							required: ['text'],
+						},
+						description: 'The places outside of the scope that the step can also need. The user decides about them.',
+					},
+				},
+				required: ['step', 'changes'],
+			},
+			call: (args) => submitErrand(deps, args),
 		},
 		{
 			name: 'submit_survey',
@@ -343,13 +437,22 @@ export function shotgunTools(deps: ToolDeps): ExtensionTool[] {
 				const input: GuardInput = { tool: textOf(args.tool), file: textOf(args.file), cwd: textOf(args.cwd) };
 				const folders = deps.folders();
 				const snapshot = deps.store.snapshot;
+				const root = snapshot.root;
+				const build = snapshot.task?.stage === 'build' && root && snapshot.plan ? buildGuard(deps.store.current, START_STEP_TOOL) : undefined;
 				const decision = decide(input, {
 					folders, shotgunDir: deps.store.dir, task: snapshot.task, isPaused: snapshot.isPaused, isCaseSensitive: IS_CASE_SENSITIVE,
+					...(build && root ? {
+						build: {
+							step: build.step,
+							closed: build.closed,
+							...(build.scope ? { scope: { files: build.scope.map((f) => absolutePath(f, root)), names: [...build.scope] } } : {}),
+						},
+					} : {}),
 				});
 				if (decision.decision === 'deny') {
 					const target = targetOf(input, folders) ?? input.file;
-					const root = folders.find((f) => isInside(target, f, IS_CASE_SENSITIVE));
-					const file = root ? path.relative(root, target) : target;
+					const folder = folders.find((f) => isInside(target, f, IS_CASE_SENSITIVE));
+					const file = folder ? path.relative(folder, target).split(path.sep).join('/') : target;
 					deps.store.recordDeny(input.tool || 'unknown', file, decision.reason);
 					deps.log(`The guard denied ${input.tool || 'a change'} of ${file}.`);
 				}
@@ -369,7 +472,8 @@ export function shotgunTools(deps: ToolDeps): ExtensionTool[] {
 			call: (args) => {
 				deps.prompts.add(textOf(args.prompt));
 				const snapshot = deps.store.snapshot;
-				return contextOutput(contextText(snapshot.task, snapshot.isPaused), textOf(args.event));
+				const now = snapshot.task?.stage === 'build' ? buildNext(deps.store.current).next : undefined;
+				return contextOutput(contextText(snapshot.task, snapshot.isPaused, now), textOf(args.event));
 			},
 		},
 	];

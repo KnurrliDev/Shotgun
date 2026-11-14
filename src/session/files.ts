@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs';
 import * as path from 'path';
 import { isPartId, PartId } from './brief';
+import { ChangeMark, isChangeMark } from './build';
 import { Gate, GateRecord, isGate, isStage, Stage } from './stages';
 
 // The stage files of Shotgun, in the folder .shotgun of the first workspace folder:
@@ -13,6 +14,8 @@ import { Gate, GateRecord, isGate, isStage, Stage } from './stages';
 // - <task>/survey.json, engine.json and answers.json: the survey of stage 2 (survey.ts).
 // - <task>/order.json: the order of the user in stage 3 (order.ts).
 // - <task>/plan.json, risk.json and levels.json: the plan of stage 4 (plan.ts).
+// - <task>/build.json: the state of each step of the build and its receipt (build.ts).
+// - <task>/lines.json: the writer of each changed line (lines.ts).
 // Each JSON file and each line has the field version. Shotgun writes each JSON file in 1 step. These functions use no
 // VS Code API, so the unit tests can call them directly.
 
@@ -78,6 +81,11 @@ export interface QuestionsFile {
 // - level: the user set the level of a step, or set it back to the level of the rules (level null). rule: the level of
 //   the rules at that time
 // - level-note: the note of the user for a step. An empty text removes the note
+// - step: Claude opened a step of the build. round: the number of the times that Claude opened it
+// - errand: Claude gave the receipt of a step, with the number of its changes, its lines and its loose ends
+// - mark: the user put a mark on a change of a receipt. todo: the user removed the mark
+// - change-note: the note of the user for a change of a receipt. An empty text removes the note
+// - step-gate: the user accepted a receipt, or the user ended a step of the user. notWalked: the changes with no mark
 export type Decision =
 	| { readonly version: 1; readonly time: string; readonly kind: 'task'; readonly by: 'user' | 'claude'; readonly title: string }
 	| { readonly version: 1; readonly time: string; readonly kind: 'gate'; readonly by: 'user'; readonly gate: Gate; readonly stage: Stage }
@@ -104,7 +112,25 @@ export type Decision =
 		readonly version: 1; readonly time: string; readonly kind: 'level'; readonly by: 'user'; readonly step: string; readonly level: number | null;
 		readonly rule: number | null;
 	}
-	| { readonly version: 1; readonly time: string; readonly kind: 'level-note'; readonly by: 'user'; readonly step: string; readonly text: string };
+	| { readonly version: 1; readonly time: string; readonly kind: 'level-note'; readonly by: 'user'; readonly step: string; readonly text: string }
+	| { readonly version: 1; readonly time: string; readonly kind: 'step'; readonly by: 'claude'; readonly step: string; readonly round: number }
+	| {
+		readonly version: 1; readonly time: string; readonly kind: 'errand'; readonly by: 'claude'; readonly step: string; readonly round: number;
+		readonly changes: number; readonly added: number; readonly removed: number; readonly looseEnds: number;
+	}
+	| { readonly version: 1; readonly time: string; readonly kind: 'mark'; readonly by: 'user'; readonly step: string; readonly change: string; readonly mark: ChangeMark }
+	| {
+		readonly version: 1; readonly time: string; readonly kind: 'change-note'; readonly by: 'user'; readonly step: string; readonly change: string;
+		readonly text: string;
+	}
+	| {
+		readonly version: 1; readonly time: string; readonly kind: 'step-gate'; readonly by: 'user'; readonly step: string;
+		readonly gate: StepGate; readonly notWalked: number;
+	};
+
+// The gates of a step: the gate of an errand, and the gate of a step of the user
+export const STEP_GATES = ['accept-receipt', 'step-done'] as const;
+export type StepGate = (typeof STEP_GATES)[number];
 
 // A decision before Shotgun adds the version and the time
 type WithoutStamp<T> = T extends unknown ? Omit<T, 'version' | 'time'> : never;
@@ -255,6 +281,28 @@ function parseDecision(value: unknown): Decision | undefined {
 		case 'level-note':
 			return value.by === 'user' && isText(value.step) && typeof value.text === 'string'
 				? { version: FILE_VERSION, time, kind: 'level-note', by: 'user', step: value.step, text: value.text } : undefined;
+		case 'step':
+			return value.by === 'claude' && isText(value.step) && typeof value.round === 'number'
+				? { version: FILE_VERSION, time, kind: 'step', by: 'claude', step: value.step, round: value.round } : undefined;
+		case 'errand': {
+			const counts = [value.round, value.changes, value.added, value.removed, value.looseEnds];
+			return value.by === 'claude' && isText(value.step) && counts.every((n) => typeof n === 'number')
+				? {
+					version: FILE_VERSION, time, kind: 'errand', by: 'claude', step: value.step, round: value.round as number, changes: value.changes as number,
+					added: value.added as number, removed: value.removed as number, looseEnds: value.looseEnds as number,
+				} : undefined;
+		}
+		case 'mark':
+			return value.by === 'user' && isText(value.step) && isText(value.change) && isChangeMark(value.mark)
+				? { version: FILE_VERSION, time, kind: 'mark', by: 'user', step: value.step, change: value.change, mark: value.mark } : undefined;
+		case 'change-note':
+			return value.by === 'user' && isText(value.step) && isText(value.change) && typeof value.text === 'string'
+				? { version: FILE_VERSION, time, kind: 'change-note', by: 'user', step: value.step, change: value.change, text: value.text } : undefined;
+		case 'step-gate':
+			return value.by === 'user' && isText(value.step) && (STEP_GATES as readonly unknown[]).includes(value.gate) && typeof value.notWalked === 'number'
+				? {
+					version: FILE_VERSION, time, kind: 'step-gate', by: 'user', step: value.step, gate: value.gate as StepGate, notWalked: value.notWalked,
+				} : undefined;
 		default:
 			return undefined;
 	}

@@ -13,7 +13,7 @@ The full names of the tools start with `mcp__plugin_dataflow_dataflow__shotgun_`
 
 - Call `shotgun_get_session` first for each request about Shotgun. It gives the active task, its stage, the brief, the rule of the guard and the next work.
 - Give your results only with the tools of Shotgun. Do not change the files in the folder `.shotgun`.
-- The guard of Shotgun stops each change of a file in the stages 1 to 4. If the guard stops a change, do not try a different way, for example a shell command. Tell the user the reason of the guard.
+- The guard of Shotgun stops each change of a file in the stages 1 to 4. In stage 5, it lets you change only the files of the scope of your open step. If the guard stops a change, do not try a different way, for example a shell command. Tell the user the reason of the guard.
 - A gate is a decision of the user. Only the user selects a gate, with a button of Shotgun. Tell the user which gate comes next.
 - The tools of Shotgun check your data. If a tool gives problems, correct all of them, and call the tool again.
 
@@ -79,3 +79,15 @@ When the user asks for the survey of the changed tasks, for example "Survey my c
 ## Stage 4: the plan
 
 When the user asks for the plan, for example "Make the plan", use the skill `shotgun-plan`. Shotgun gives each step a risk level from the facts of DataFlow. Do not choose a level: only the user changes a level. When the plan is correct, the user selects "Accept the plan".
+
+## Stage 5: the build
+
+The steps of the plan go in sequence. The risk level of a step selects its writer:
+
+| Level | Writer |
+| --- | --- |
+| 1 and 2 | You. The step is an errand with a receipt for the user. |
+| 3 | The user. A later version of Shotgun gives you a frame with holes for the decisions of the user. |
+| 4 and 5 | The user. You change no file in the step, but you can answer questions in the chat. |
+
+Use the skill `shotgun-errand` when the user asks for a step, for example "Do step 5". Also use it for a fix, for example "Fix the issues of step 5". Do not change a file before `shotgun_start_step` opens the step.

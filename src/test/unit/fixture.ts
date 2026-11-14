@@ -2,6 +2,8 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import type { HeatFacts, HeatTypeFacts, PlaceFacts } from '../../dataflow/dataflow-api';
+import { LineStore } from '../../session/lines';
+import type { BaseApi, StepChanges } from '../../tools/build';
 import type { EngineApi } from '../../tools/survey';
 
 // The fixture of the tests of the survey and of the order: a project with a C++ file with a loop and a text file, a fake
@@ -67,6 +69,11 @@ export function fakeEngine(calls: string[] = [], over: Partial<EngineApi> = {}):
 		},
 		...over,
 	};
+}
+
+// The dependencies of the tools of the build with no link to DataFlow: no base, no diff, and no other changed file
+export function noBuild(): { base: () => BaseApi | undefined; saveFiles: () => Promise<void>; lines: LineStore; changes: StepChanges } {
+	return { base: () => undefined, saveFiles: async () => undefined, lines: new LineStore(), changes: { start: () => undefined, files: () => [] } };
 }
 
 // A correct survey of the project

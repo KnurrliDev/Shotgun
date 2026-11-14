@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { isSamePath } from '../claude/settings';
+import { buildWriterOf, stateOf } from '../session/build';
 import { absolutePath } from '../session/paths';
 import { levelOf, PlanStep } from '../session/plan';
 import { Level, LEVEL_INFO } from '../session/risk';
@@ -14,6 +15,8 @@ import { findHook, Lines } from '../session/survey';
 const COLORS = ['#7f8794', '#8a97a8', '#a3adba', '#d9a36a', '#f0835a', '#ff5c6c'];
 
 const WRITER_TEXT = { claude: 'Claude writes', frame: 'frame of Claude, you write each decision', user: 'you write' } as const;
+// The state of a step in stage 5
+const STATE_TEXT = { todo: 'to do', open: 'open', receipt: 'receipt to walk', done: 'done' } as const;
 
 export interface StepPlace {
 	readonly step: PlanStep;
@@ -108,8 +111,13 @@ export class StepDecorations implements vscode.Disposable {
 	}
 
 	private lenses(doc: vscode.TextDocument): vscode.CodeLens[] {
+		const s = this.snapshot;
+		const isBuild = s?.task?.stage === 'build';
 		return this.placesOf(doc).map((p) => {
-			const level = p.level ? `risk ${p.level} of 5, ${LEVEL_INFO[p.level].name.toLowerCase()} · ${WRITER_TEXT[LEVEL_INFO[p.level].writer]}` : 'no level yet';
+			// decision 15: in the build, the user writes a step of level 3 until the frames of phase 7
+			const writer = !p.level ? '' : isBuild ? WRITER_TEXT[buildWriterOf(p.level)] : WRITER_TEXT[LEVEL_INFO[p.level].writer];
+			const state = isBuild ? ` · ${STATE_TEXT[stateOf(s?.build, p.step.id)]}` : '';
+			const level = p.level ? `risk ${p.level} of 5, ${LEVEL_INFO[p.level].name.toLowerCase()} · ${writer}${state}` : 'no level yet';
 			const range = new vscode.Range(p.lines[0] - 1, 0, p.lines[0] - 1, 0);
 			return new vscode.CodeLens(range, {
 				title: `Step ${p.n} of ${p.total} · ${p.step.title} · ${level}`,

@@ -13,7 +13,8 @@ export const GET_SESSION_TOOL = 'mcp__plugin_dataflow_dataflow__shotgun_get_sess
 // The hook events that can give a text to Claude
 const CONTEXT_EVENTS = new Set(['UserPromptSubmit', 'SessionStart']);
 
-export function contextText(task: TaskFile | undefined, isPaused: boolean): string | undefined {
+// now: the current work in stage 5, for example the current step and its writer
+export function contextText(task: TaskFile | undefined, isPaused: boolean, now?: string): string | undefined {
 	if (!task || task.isDone) {
 		return undefined;
 	}
@@ -21,7 +22,7 @@ export function contextText(task: TaskFile | undefined, isPaused: boolean): stri
 		return `Shotgun: the user paused the task "${task.title}". The guard of Shotgun is off until the user selects "Shotgun: Continue".`;
 	}
 	const info = STAGE_INFO[task.stage];
-	return `Shotgun: the active task is "${task.title}", in ${stageText(task.stage)}. ${info.guard} `
+	return `Shotgun: the active task is "${task.title}", in ${stageText(task.stage)}. ${info.guard} ${now ? `${now} ` : ''}`
 		+ `For the details, call the tool ${GET_SESSION_TOOL}.`;
 }
 

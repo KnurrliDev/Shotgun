@@ -16,13 +16,14 @@ A button of Shotgun records a decision of the user. It never starts Claude: you 
 
 ## Status
 
-Shotgun is in development. The phases 1 to 5 of 10 are complete:
+Shotgun is in development. The phases 1 to 6 of 10 are complete:
 
 - Phase 1: the tasks, the stages, the panel, the page, the guard and the connection to Claude Code.
 - Phase 2: the brief, the questions of Claude about the brief, and the gate of stage 1.
 - Phase 3: the survey of Claude with the facts of DataFlow, the hooks in the text editor, and the gate of stage 2.
 - Phase 4: your order of the tasks, the survey of the changed tasks, and the gate of stage 3.
 - Phase 5: the plan of Claude, the risk level of each step from the facts of DataFlow, and the gate of stage 4.
+- Phase 6: the build: the steps in sequence, the errands of Claude with receipts, the steps of the user, and the writer of each line.
 
 `implementation-plan.md` gives the phases, and `CHANGELOG.md` gives the content of each phase.
 
@@ -51,7 +52,14 @@ Shotgun is in development. The phases 1 to 5 of 10 are complete:
 13. Tell Claude "Make the plan." Claude makes the steps in your sequence, and Shotgun gives each step a risk level.
 14. Check the levels on the plan page. To change a level, select **Lower**, **Raise** or **Shotgun: Set Risk Level**. Write your reason in the note of the step.
 15. When the plan is correct, select **Accept the plan**.
-16. Follow the panel of Shotgun in the secondary side bar. It shows the next work and the requests for Claude Code.
+16. In stage 5, the panel shows the current step. The steps go in sequence.
+17. For a step of Claude, tell Claude "Do step N." Claude changes the files of the step, and gives a receipt.
+18. Walk the receipt in the panel. Put a mark on each change: **OK**, **Issue** or **Question**. Write a note for Claude if necessary.
+19. For an issue or a question, tell Claude "Fix the issues of step N." Then walk the new receipt.
+20. Select **Accept the receipt**.
+21. For a step of yours, write its code. Then select **The step is done**.
+22. After the last step, select **The task is done**.
+23. Follow the panel of Shotgun in the secondary side bar. It shows the next work and the requests for Claude Code.
 
 | Command | Function |
 | --- | --- |
@@ -63,6 +71,7 @@ Shotgun is in development. The phases 1 to 5 of 10 are complete:
 | Shotgun: Check the Hooks Again | Gets the facts of DataFlow for the hooks of the survey again, at their lines now. |
 | Shotgun: Set Risk Level | Sets your level for a step of the plan, or sets the level of the rules again. |
 | Shotgun: Check the Levels Again | Gets the facts of DataFlow and the levels of the rules for the steps of the plan again. |
+| Shotgun: Mark a Change | Puts your mark on a change of the receipt of the current step, with a note for Claude. |
 | Shotgun: Pass the Gate | Records the gate of the stage, for example "The brief is ready". |
 | Shotgun: Pause | Stops the guard for work outside of the task. The ledger records the pause. |
 | Shotgun: Continue | Starts the guard again. |
@@ -72,10 +81,10 @@ Shotgun is in development. The phases 1 to 5 of 10 are complete:
 
 ## The guard
 
-Before each file change of Claude Code, the plugin of Shotgun asks the guard. In the stages 1 to 4, the guard denies each change of a file of the project, and Claude gets the reason. The guard helps you, but it is not a security boundary:
+Before each file change of Claude Code, the plugin of Shotgun asks the guard. In the stages 1 to 4, the guard denies each change of a file of the project, and Claude gets the reason. In stage 5, the guard lets Claude change only the files of the scope of its open step. The guard helps you, but it is not a security boundary:
 
 - If VS Code does not run, Claude Code continues the change.
-- The guard does not see a change through a shell command.
+- The guard does not see a change through a shell command. The receipt of a step shows each change of its scope since the base of the step. It also shows the files outside of the scope that changed while the step was open.
 
 ## A brief from the chat
 
@@ -140,9 +149,29 @@ More rules make a level only higher:
 - A data member of a type: level 2, or level 3 if threads share a member or a member is on a frame path. A change of a data member gets the level of the hottest function that uses it.
 - Before the end of the scan of the call graph, a function with an incomplete reach has no level. After a stopped scan or a failed scan, the level is 3 or higher.
 
-In stage 5, the level selects the writer of the step. At the levels 1 and 2, Claude writes. At level 3, Claude writes a frame with holes for you. At the levels 4 and 5, you write. Only you change a level. The ledger records each level and each note of yours.
+In stage 5, the level selects the writer of the step. At the levels 1 and 2, Claude writes. At the levels 3, 4 and 5, you write. A later version of Shotgun gives you a frame of Claude with holes at level 3. Only you change a level. The ledger records each level and each note of yours.
 
 In the stages 4 and 5, the text editor shows each place of a step with the color of its level, and a CodeLens line. A click on the CodeLens line shows the step on the page.
+
+## The build
+
+In stage 5, the steps of the plan go in sequence. The current step is the first step that is not done.
+
+A step of Claude is an errand:
+
+1. You tell Claude "Do step N." Claude opens the step with the tool `shotgun_start_step`.
+2. Shotgun saves the files of the scope of the step: the files of its places. DataFlow keeps their text as the base of the step. Then the guard lets Claude change these files.
+3. Claude changes the files, and gives the receipt with the tool `shotgun_submit_errand`. Shotgun gets the diff since the base from DataFlow. Each change in the diff needs a change of Claude with its lines, a title and a check for you. The scope closes again.
+
+The panel shows the receipt. Each change shows the title and the check of Claude, its lines, the added and the removed lines, the heat of DataFlow, and its diff. A note of Claude has the badge **Model**, for example for a change that you did not ask for. The receipt also shows the edits that the guard denied, and the loose ends of Claude. It also shows the files outside of the scope that changed while the step was open.
+
+Put a mark on each change: **OK**, **Issue** or **Question**, and write a note for Claude if necessary. An issue stops the gate. Tell Claude "Fix the issues of step N." Claude reads your marks and your notes with the tool `shotgun_get_step`, and opens the step again. The step keeps its base, so the new receipt has all changes since the first start. A change with no new code keeps your mark OK.
+
+The gate **Accept the receipt** deletes the base of the step. If a change has no mark, a modal message asks you first. The ledger keeps such a change as not walked.
+
+You write a step of the levels 3, 4 and 5. Shotgun keeps the text of the files of its places as the base of the step. Write the code of the step, and select **The step is done**. Shotgun records your lines since the base. Claude changes no file in your step, but it can answer your questions in the chat.
+
+`lines.json` keeps the writer of each changed line. The text editor shows a mark in the gutter for each line of Claude. The mark is dashed until you walk its change, and then it has the color of your mark. A line of Claude that you change becomes your line. If you change a file of the scope while Claude writes the step, Shotgun shows a warning.
 
 ## Files
 
@@ -159,6 +188,8 @@ In the stages 4 and 5, the text editor shows each place of a step with the color
 | `.shotgun/<task>/plan.json` | The steps of the plan of Claude. |
 | `.shotgun/<task>/risk.json` | The facts of DataFlow and the level of the rules for each step. |
 | `.shotgun/<task>/levels.json` | Your levels and your notes for the steps. |
+| `.shotgun/<task>/build.json` | The state of each step of the build, its scope and its base, and the receipt with the notes of Claude and your marks. |
+| `.shotgun/<task>/lines.json` | The writer of each changed line, with a hash of each line of the file. |
 | `.shotgun/<task>/decisions.jsonl` | The ledger: 1 line for each decision of the user and for each deny of the guard. |
 | `~/.shotgun/claude` | The plugin of Shotgun for Claude Code, in a local marketplace. |
 | `.claude/settings.local.json` | The local settings of Claude Code in the project. The connection turns the plugin of Shotgun on there. |
@@ -180,9 +211,9 @@ The window uses the DataFlow extension of VS Code. To use DataFlow from its repo
 | Command | Tests |
 | --- | --- |
 | `npm test` | The unit tests in a test build of VS Code. The tests load DataFlow from `../DataFlow`, or from the folder of the environment variable `DATAFLOW_REPO`. If the environment variable `CLAUDE_EXE` gives the CLI of Claude Code, a test also checks the plugin with `claude plugin validate`. |
-| `node scripts/test-claude.mjs <run folder>` | The test with Claude Code. 2 tasks go from the brief to stage 2. Task 1 has a brief in a file, and task 2 has a brief from the chat. The guard denies a change in stage 1. Then Claude makes the survey of task 1, and task 1 goes to stage 3. On the order page, the test changes the order. Claude surveys the changed tasks, and task 1 goes to stage 4. Then Claude makes the plan, the test changes a level, and task 1 goes to stage 5. Use a new run folder outside of the repository. |
+| `node scripts/test-claude.mjs <run folder>` | The test with Claude Code. 2 tasks go from the brief to stage 2. Task 1 has a brief in a file, and task 2 has a brief from the chat. The guard denies a change in stage 1. Then Claude makes the survey of task 1, and task 1 goes to stage 3. On the order page, the test changes the order. Claude surveys the changed tasks, and task 1 goes to stage 4. Then Claude makes the plan, the test changes the levels, and task 1 goes to stage 5. In the build, the test writes step 1 as the user. Claude does step 2 and gives a receipt. The test puts an issue on a change, Claude fixes it, and the test accepts the receipt. Use a new run folder outside of the repository. |
 
-NOTE: `scripts/test-claude.mjs` uses the Claude subscription of the user for 6 runs of Claude Code. It does not change the settings of the user.
+NOTE: `scripts/test-claude.mjs` uses the Claude subscription of the user for 8 runs of Claude Code. It does not change the settings of the user.
 
 ## License
 

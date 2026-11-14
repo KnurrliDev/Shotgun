@@ -16,7 +16,7 @@ import { PromptLog } from '../../tools/prompts';
 import type { EngineApi } from '../../tools/survey';
 import { shotgunTools } from '../../tools/tools';
 import { buildModel, decisionText } from '../../views/model';
-import { fakeEngine, heatFacts, makeProject, placeFacts, SOLVER, SURVEY, TYPE } from './fixture';
+import { fakeEngine, heatFacts, makeProject, noBuild, placeFacts, SOLVER, SURVEY, TYPE } from './fixture';
 
 suite('Survey', () => {
 	let root: string;
@@ -26,7 +26,7 @@ suite('Survey', () => {
 		root, folders: [root], isCaseSensitive: true, readLines: (file) => readText(file)?.split(/\r?\n/), tools,
 	});
 	const tool = (name: string, engine?: EngineApi) => shotgunTools({
-		store, folders: () => [root], log: () => undefined, prompts: new PromptLog(), readText, openFile: () => undefined, engine: () => engine,
+		store, folders: () => [root], log: () => undefined, prompts: new PromptLog(), readText, openFile: () => undefined, engine: () => engine, ...noBuild(),
 	}).find((t) => t.name === name)!;
 	const submit = (args: Record<string, unknown>, engine?: EngineApi) => tool('submit_survey', engine).call(args) as Promise<Record<string, unknown>>;
 	// a task in stage 2

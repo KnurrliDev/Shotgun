@@ -1,5 +1,6 @@
 import { randomBytes } from 'crypto';
 import * as vscode from 'vscode';
+import { isChangeMark } from '../session/build';
 import type { FromView, ToView, ViewCommand, ViewModel } from './protocol';
 
 // The 2 webviews of Shotgun: the panel beside the text editor (a webview view in the secondary side bar) and the page
@@ -46,6 +47,11 @@ export function isFromView(value: unknown): value is FromView {
 			return typeof m.step === 'string' && m.step.length <= 64 && typeof m.note === 'string' && m.note.length <= 2000;
 		case 'checkLevels':
 			return true;
+		case 'setMark':
+			return typeof m.step === 'string' && m.step.length <= 64 && typeof m.change === 'string' && m.change.length <= 16 && isChangeMark(m.mark);
+		case 'setChangeNote':
+			return typeof m.step === 'string' && m.step.length <= 64 && typeof m.change === 'string' && m.change.length <= 16 && typeof m.note === 'string'
+				&& m.note.length <= 2000;
 		default:
 			return false;
 	}

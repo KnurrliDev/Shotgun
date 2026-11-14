@@ -90,7 +90,7 @@ export async function placeRisk(engine: EngineApi | undefined, root: string, pla
 }
 
 // A place at its lines now: the code of the place can move after the plan
-function placeNow(place: PlanPlace, root: string, readLines: (file: string) => readonly string[] | undefined): PlanPlace {
+export function placeNow(place: PlanPlace, root: string, readLines: (file: string) => readonly string[] | undefined): PlanPlace {
 	if (!place.lines || !place.code) {
 		return place;
 	}

@@ -5,16 +5,20 @@ import { isSamePath } from './claude/settings';
 import type { DataFlowApi } from './dataflow/dataflow-api';
 import { linkDataFlow } from './dataflow/dataflow';
 import { HookDecorations } from './editor/hooks';
+import { ClaudeLines } from './editor/lines';
 import { StepDecorations } from './editor/steps';
 import { parseBrief } from './session/brief';
+import { addedLines, ChangeMark, CurrentStep, markName, receiptCounts, scopeOf } from './session/build';
 import { readText } from './session/files';
+import { LINES_FILE, LineStore } from './session/lines';
 import { orderWarnings } from './session/order';
-import { absolutePath, isCppFile, isInside } from './session/paths';
+import { absolutePath, IS_CASE_SENSITIVE, isCppFile, isInside, projectPath } from './session/paths';
 import { levelOf } from './session/plan';
 import { Level, LEVEL_INFO, LEVELS } from './session/risk';
 import { GATE_LABEL, stageText } from './session/stages';
 import { messageOf, SessionStore, Snapshot } from './session/store';
 import { findHook, MAX_ANSWER, movedHook } from './session/survey';
+import { BaseApi } from './tools/build';
 import { PromptLog } from './tools/prompts';
 import { planRisk } from './tools/plan';
 import { EngineApi, engineFacts } from './tools/survey';
@@ -49,6 +53,14 @@ const VIEW_COMMANDS: Readonly<Record<ViewCommand, string>> = {
 
 // The button of a modal message that passes a gate with open questions
 const PASS_GATE = 'Pass the Gate';
+const ACCEPT_RECEIPT = 'Accept the Receipt';
+
+// The folders that the watcher of the files outside of the scope ignores: the folders of tools and of builds
+const IGNORED_FOLDERS = /(^|[\\/])(\.git|\.shotgun|\.claude|\.vs|\.vscode|\.cache|node_modules|out|build|bin|obj|dist|target|cmake-build-[^\\/]*)([\\/]|$)/i;
+
+// The kind of the change of a file while a step of Claude is open. transient: a file that came and went again, for
+// example a temporary file of a tool
+type FileChange = 'created' | 'changed' | 'deleted' | 'transient';
 
 class Shotgun implements vscode.Disposable {
 	private readonly log = vscode.window.createOutputChannel('Shotgun', { log: true });
@@ -61,6 +73,15 @@ class Shotgun implements vscode.Disposable {
 	// the hooks of the survey in the text editor, in the stages 2 and 3, and the steps of the plan in the stages 4 and 5
 	private readonly hooks = new HookDecorations();
 	private readonly steps = new StepDecorations();
+	// the writer of each changed line in stage 5, and the lines of Claude in the text editor
+	private readonly lines = new LineStore();
+	private readonly claudeLines = new ClaudeLines();
+	private linesTask: string | undefined = undefined;
+	// the files of the project that changed while a step of Claude was open
+	private readonly stepChanges = new Map<string, FileChange>();
+	// the files of the scope with a warning about an edit of the user, while a step of Claude is open
+	private readonly warned = new Set<string>();
+	private isOpeningStep = false;
 	private readonly disposables: vscode.Disposable[] = [];
 	private dataflow: DataFlowView = { state: 'linking' };
 	private api: DataFlowApi | undefined;
@@ -76,10 +97,12 @@ class Shotgun implements vscode.Disposable {
 		this.status.name = 'Shotgun';
 		this.status.command = `${PANEL_ID}.focus`;
 		this.disposables.push(
-			this.log, this.status, this.views, this.hooks, this.steps,
+			this.log, this.status, this.views, this.hooks, this.steps, this.claudeLines,
+			new vscode.Disposable(() => this.lines.dispose()),
 			this.store.onDidChange(() => this.update()),
 			...this.commands(),
 			this.watchFiles(),
+			this.watchProject(),
 			// a different program can change the settings of Claude Code, for example the command of DataFlow
 			vscode.window.onDidChangeWindowState((state) => state.focused && this.update()),
 			vscode.workspace.onDidChangeWorkspaceFolders(() => {
@@ -88,7 +111,14 @@ class Shotgun implements vscode.Disposable {
 				}
 			}),
 			// the panel checks the parts of the brief while the user writes, and the survey page follows the code of the hooks
-			vscode.workspace.onDidChangeTextDocument((e) => this.isWatched(e.document) && this.updateSoon()),
+			vscode.workspace.onDidChangeTextDocument((e) => {
+				this.trackLines(e);
+				if (this.isWatched(e.document)) {
+					this.updateSoon();
+				}
+			}),
+			// a file with lines of a writer can change while it is closed
+			vscode.workspace.onDidOpenTextDocument((doc) => doc.uri.scheme === 'file' && this.syncLines(doc.uri.fsPath, doc.getText())),
 			vscode.workspace.onDidSaveTextDocument((doc) => this.isWatched(doc) && this.update()),
 			vscode.workspace.onDidCloseTextDocument((doc) => this.isWatched(doc) && this.update()),
 			new vscode.Disposable(() => clearTimeout(this.updateTimer)),
@@ -124,6 +154,16 @@ class Shotgun implements vscode.Disposable {
 				readText: (file) => this.textOf(file),
 				openFile: (file) => void vscode.window.showTextDocument(vscode.Uri.file(file), { preview: false, preserveFocus: true }),
 				engine: () => this.engineApi(),
+				base: () => this.baseApi(),
+				saveFiles: (files) => this.saveFiles(files),
+				lines: this.lines,
+				changes: {
+					start: () => {
+						this.stepChanges.clear();
+						this.warned.clear();
+					},
+					files: () => [...this.stepChanges].filter(([, kind]) => kind !== 'transient').map(([file]) => file),
+				},
 			});
 			this.disposables.push(api.registerTools(tools));
 			this.log.info(`DataFlow ${link.version} has the tools of Shotgun: ${tools.map((t) => `shotgun_${t.name}`).join(', ')}.`);
@@ -165,6 +205,211 @@ class Shotgun implements vscode.Disposable {
 			callGraph: () => api.getCallGraph(),
 			scan: () => this.startScan(),
 		};
+	}
+
+	// The bases and the diffs of DataFlow for the build. undefined: no link to DataFlow
+	private baseApi(): BaseApi | undefined {
+		const api = this.api;
+		if (!api) {
+			return undefined;
+		}
+		return {
+			mark: (name, paths) => api.markBase({ name, paths: [...paths] }),
+			diff: (base, paths) => api.getDiff({ base, paths: [...paths], allFiles: true }),
+			deleteMark: (name) => api.deleteMark({ name }),
+		};
+	}
+
+	// Saves the open text editors of the files that have changes, because Claude Code writes the files on the disk
+	private async saveFiles(files: readonly string[]): Promise<void> {
+		for (const file of files) {
+			const doc = this.documentOf(file);
+			if (doc?.isDirty) {
+				await doc.save();
+			}
+		}
+	}
+
+	// Opens the current step of the build if the user writes it: Shotgun saves the files of its places, and makes the base
+	// of the step. At "The step is done", the diff since the base gives the lines of the user
+	private async openUserStep(): Promise<void> {
+		const { task, root } = this.store.snapshot;
+		const current = this.store.current;
+		if (this.isOpeningStep || this.dataflow.state === 'linking' || !task || !root || task.isDone || task.stage !== 'build'
+			|| !current || current.writer !== 'user' || current.state !== 'todo') {
+			return;
+		}
+		this.isOpeningStep = true;
+		try {
+			const scope = scopeOf(current.step);
+			const absolute = scope.map((f) => absolutePath(f, root));
+			await this.saveFiles(absolute);
+			const newFiles = scope.filter((_f, i) => this.textOf(absolute[i]) === undefined);
+			const existing = absolute.filter((_f, i) => !newFiles.includes(scope[i]));
+			let base: string | undefined;
+			let baseError: string | undefined;
+			if (existing.length > 0) {
+				const api = this.baseApi();
+				if (!api) {
+					baseError = 'Shotgun has no link to DataFlow.';
+				} else {
+					const name = markName(task.id, current.step.id);
+					try {
+						await api.mark(name, existing);
+						base = name;
+					} catch (error) {
+						baseError = `DataFlow did not make the base: ${messageOf(error)}`;
+					}
+				}
+			}
+			// the user can open a different task while DataFlow works
+			if (this.store.snapshot.task?.id !== task.id || this.store.current?.step.id !== current.step.id || this.store.current.state !== 'todo') {
+				return;
+			}
+			this.store.startStep(current.step.id, {
+				writer: 'user', level: current.level, scope, ...(newFiles.length > 0 ? { newFiles } : {}), ...(base ? { base } : {}), ...(baseError ? { baseError } : {}),
+			});
+			this.log.info(`Step ${current.n} of the task ${task.id} is open for the user.${baseError ? ` It has no base: ${baseError}` : ''}`);
+		} catch (error) {
+			this.log.warn(`Shotgun did not open step ${current.n} for the user: ${messageOf(error)}`);
+		} finally {
+			this.isOpeningStep = false;
+		}
+	}
+
+	// The lines of the user in a step of the user: the added lines since the base of the step, and each new file
+	private async recordUserLines(current: CurrentStep, root: string): Promise<void> {
+		const step = current.build;
+		if (!step) {
+			return;
+		}
+		const newFiles = step.newFiles ?? [];
+		const parts = new Map<string, number[]>();
+		if (step.base) {
+			const api = this.baseApi();
+			if (!api) {
+				this.log.warn(`Shotgun has no link to DataFlow, so it did not record the lines of step ${current.n}.`);
+			} else {
+				const marked = step.scope.filter((f) => !newFiles.includes(f)).map((f) => absolutePath(f, root));
+				const facts = await api.diff(`mark:${step.base}`, marked);
+				for (const f of facts.files) {
+					const file = projectPath(absolutePath(f.file, facts.root), root, IS_CASE_SENSITIVE);
+					const lines = f.hunks.flatMap((h) => addedLines({ ...h, lines: [h.lines[0], h.lines[1]], key: '' }));
+					parts.set(file, [...(parts.get(file) ?? []), ...lines]);
+				}
+			}
+		}
+		for (const file of newFiles) {
+			const text = this.textOf(absolutePath(file, root));
+			if (text) {
+				const lines = text.split(/\r?\n/);
+				const count = lines[lines.length - 1] === '' ? lines.length - 1 : lines.length;
+				parts.set(file, Array.from({ length: count }, (_v, i) => i + 1));
+			}
+		}
+		for (const [file, lines] of parts) {
+			const text = this.textOf(absolutePath(file, root));
+			if (text !== undefined) {
+				this.lines.replaceStep(file, text.split(/\r?\n/), 'user', current.step.id, [{ lines }]);
+			}
+		}
+		this.lines.flush();
+	}
+
+	// The writer of the changed lines after an edit in the text editor. An edit of the user in the scope of an open step
+	// of Claude gets a warning, because Claude Code writes the file on the disk
+	private trackLines(e: vscode.TextDocumentChangeEvent): void {
+		const { task, root } = this.store.snapshot;
+		const doc = e.document;
+		if (!task || !root || task.isDone || task.stage !== 'build' || doc.uri.scheme !== 'file' || e.contentChanges.length === 0 || !isInside(doc.uri.fsPath, root)) {
+			return;
+		}
+		const file = projectPath(doc.uri.fsPath, root, IS_CASE_SENSITIVE);
+		const current = this.store.current;
+		const isScope = current?.writer === 'claude' && current.state === 'open'
+			&& (current.build?.scope ?? []).some((f) => f.toLowerCase() === file.toLowerCase());
+		if (isScope && doc.isDirty && !this.warned.has(file)) {
+			this.warned.add(file);
+			void vscode.window.showWarningMessage(`Shotgun: Claude writes step ${current!.n} in ${file} now. Your edit can conflict with the changes of Claude. `
+				+ 'Undo your edit, or wait for the receipt.');
+		}
+		// a change from the disk, for example by Claude, gives the new lines no writer. The receipt gives them their writer
+		const owner = doc.isDirty ? { writer: 'user' as const, step: current?.writer === 'user' && current.state === 'open' ? current.step.id : '' } : undefined;
+		if (this.lines.sync(file, doc.getText().split(/\r?\n/), owner)) {
+			this.claudeLines.renderSoon();
+		}
+	}
+
+	// The lines of a file with lines of a writer after a change of the file, for example while the file was closed
+	private syncLines(fsPath: string, text: string | undefined): void {
+		const root = this.store.snapshot.root;
+		if (!root || text === undefined || !isInside(fsPath, root)) {
+			return;
+		}
+		if (this.lines.sync(projectPath(fsPath, root, IS_CASE_SENSITIVE), text.split(/\r?\n/))) {
+			this.claudeLines.renderSoon();
+		}
+	}
+
+	// lines.json of the active task. After a change of the active task, Shotgun reads its lines, and moves them to the text
+	// of the files now
+	private loadLines(): void {
+		const { task, root } = this.store.snapshot;
+		const id = task?.id;
+		if (id === this.linesTask) {
+			return;
+		}
+		this.linesTask = id;
+		const dir = this.store.dir;
+		this.lines.load(id && dir ? path.join(dir, id, LINES_FILE) : undefined);
+		if (this.lines.loadProblem) {
+			this.log.warn(`Shotgun did not read the lines of the writers: ${this.lines.loadProblem}`);
+		}
+		if (root) {
+			for (const file of this.lines.paths) {
+				const full = absolutePath(file, root);
+				this.syncLines(full, this.textOf(full));
+			}
+		}
+	}
+
+	// The files of the project that change while a step of Claude is open, and the files with lines of a writer that
+	// change on the disk
+	private watchProject(): vscode.Disposable {
+		const watcher = vscode.workspace.createFileSystemWatcher('**/*');
+		const record = (uri: vscode.Uri, kind: 'created' | 'changed' | 'deleted') => {
+			const { task, root } = this.store.snapshot;
+			if (!task || !root || task.stage !== 'build' || uri.scheme !== 'file' || !this.folders().some((f) => isInside(uri.fsPath, f))) {
+				return;
+			}
+			const rel = path.relative(this.folders().find((f) => isInside(uri.fsPath, f))!, uri.fsPath);
+			if (IGNORED_FOLDERS.test(rel)) {
+				return;
+			}
+			const current = this.store.current;
+			if (current?.writer === 'claude' && current.state === 'open') {
+				const old = this.stepChanges.get(uri.fsPath);
+				let next: FileChange = kind;
+				if (kind === 'deleted' && old === 'created') {
+					next = 'transient';
+				} else if (kind === 'created' && (old === 'deleted' || old === 'transient')) {
+					next = 'changed';
+				} else if (kind === 'changed' && old) {
+					next = old === 'transient' ? 'changed' : old;
+				}
+				this.stepChanges.set(uri.fsPath, next);
+			}
+			// a closed file with lines of a writer: its lines move to the text on the disk
+			if (kind !== 'deleted' && !this.documentOf(uri.fsPath)) {
+				this.syncLines(uri.fsPath, readText(uri.fsPath));
+			}
+		};
+		return vscode.Disposable.from(
+			watcher,
+			watcher.onDidCreate((uri) => record(uri, 'created')),
+			watcher.onDidChange((uri) => record(uri, 'changed')),
+			watcher.onDidDelete((uri) => record(uri, 'deleted')),
+		);
 	}
 
 	// The facts of DataFlow again where they are missing: the hooks in the stages 2 and 3, the levels in stage 4
@@ -300,6 +545,7 @@ class Shotgun implements vscode.Disposable {
 			vscode.commands.registerCommand('shotgun.checkLevels', run(() => this.checkRisk(true))),
 			vscode.commands.registerCommand('shotgun.setLevel', run(() => this.setLevel())),
 			vscode.commands.registerCommand('shotgun.showStep', run((id?: unknown) => (typeof id === 'string' ? this.views.showStep(id) : this.views.showPage()))),
+			vscode.commands.registerCommand('shotgun.markChange', run(() => this.markChange())),
 			vscode.commands.registerCommand('shotgun.passGate', run(() => this.passGate())),
 			vscode.commands.registerCommand('shotgun.connectClaude', run(() => this.connectClaude())),
 			vscode.commands.registerCommand('shotgun.disconnectClaude', run(() => this.disconnectClaude())),
@@ -439,6 +685,46 @@ class Shotgun implements vscode.Disposable {
 		}
 	}
 
+	// The mark of the user on a change of the receipt, with the keyboard. The panel has the same buttons
+	private async markChange(): Promise<void> {
+		const current = this.store.current;
+		const receipt = current?.build?.receipt;
+		if (!current || current.state !== 'receipt' || !receipt || receipt.changes.length === 0) {
+			void vscode.window.showInformationMessage('Shotgun: the current step has no receipt to walk.');
+			return;
+		}
+		const words: Record<ChangeMark, string> = { todo: 'no mark', ok: 'OK', issue: 'issue', question: 'question' };
+		const change = await vscode.window.showQuickPick(receipt.changes.map((c) => ({
+			label: `${c.id}: ${c.title}`,
+			description: `${c.file}:${c.lines[0]} · +${c.added} −${c.removed} · ${words[c.mark]}`,
+			detail: `Check: ${c.check}`,
+			id: c.id,
+		})), { title: `Shotgun: Mark a Change of Step ${current.n}`, placeHolder: 'Select the change' });
+		if (!change) {
+			return;
+		}
+		const mark = await vscode.window.showQuickPick<vscode.QuickPickItem & { mark: ChangeMark }>([
+			{ label: 'OK', detail: 'The change is correct.', mark: 'ok' },
+			{ label: 'Issue', detail: 'The change has a problem. Claude fixes it when you ask.', mark: 'issue' },
+			{ label: 'Question', detail: 'You have a question for Claude about the change.', mark: 'question' },
+			{ label: 'No mark', detail: 'You did not walk the change yet.', mark: 'todo' },
+		], { title: `Shotgun: Mark ${change.id}`, placeHolder: 'Select your mark' });
+		if (!mark) {
+			return;
+		}
+		this.store.setMark(current.step.id, change.id, mark.mark);
+		const old = receipt.changes.find((c) => c.id === change.id)?.userNote ?? '';
+		const note = await vscode.window.showInputBox({
+			title: `Shotgun: Your Note for ${change.id}`,
+			prompt: 'Optional: a note for Claude, for example what is wrong, or your question. An empty note removes the note.',
+			value: old,
+			ignoreFocusOut: true,
+		});
+		if (note !== undefined && note.trim() !== old) {
+			this.store.setChangeNote(current.step.id, change.id, note);
+		}
+	}
+
 	// Opens a file of the project at a line, for example the place of a hook from the survey page
 	private async openPlace(file: string, line: number): Promise<void> {
 		// the message comes from a webview, so Shotgun opens only files in the workspace folders
@@ -449,7 +735,7 @@ class Shotgun implements vscode.Disposable {
 		await vscode.window.showTextDocument(vscode.Uri.file(file), { preview: false, selection: new vscode.Range(position, position) });
 	}
 
-	// The gate of the current stage. This version of Shotgun has the gates of the stages 1 to 3
+	// The gate of the current stage. In stage 5, the gate of the current step, or "The task is done"
 	private async passGate(): Promise<void> {
 		const task = this.store.snapshot.task;
 		if (!task) {
@@ -467,9 +753,68 @@ class Shotgun implements vscode.Disposable {
 				return this.passOrderGate(task);
 			case 'plan':
 				return this.passPlanGate(task);
+			case 'build':
+				return this.passBuildGate(task);
 			default:
 				throw new Error(`This version of Shotgun does not have the gate of ${stageText(task.stage)} yet.`);
 		}
+	}
+
+	// The gates of stage 5: "Accept the receipt" for a step of Claude, "The step is done" for a step of the user, and "The
+	// task is done" after the last step
+	private async passBuildGate(task: NonNullable<Snapshot['task']>): Promise<void> {
+		const root = this.store.snapshot.root!;
+		const current = this.store.current;
+		if (!current) {
+			this.store.passGate('task-done');
+			this.log.info(`The task ${task.id} passed the gate "${GATE_LABEL['task-done']}".`);
+			return;
+		}
+		const step = current.build;
+		if (current.writer === 'user') {
+			if (current.state !== 'open' || !step) {
+				throw new Error(`Shotgun opens step ${current.n} first. Try again in a moment.`);
+			}
+			await this.saveFiles(step.scope.map((f) => absolutePath(f, root)));
+			try {
+				await this.recordUserLines(current, root);
+			} catch (error) {
+				this.log.warn(`Shotgun did not record the lines of step ${current.n}: ${messageOf(error)}`);
+			}
+		} else {
+			const receipt = step?.receipt;
+			if (current.state !== 'receipt' || !receipt) {
+				throw new Error(current.state === 'open' ? `Claude writes step ${current.n}. Wait for its receipt.`
+					: `Claude writes step ${current.n}. Tell Claude "Do step ${current.n}." first.`);
+			}
+			const counts = receiptCounts(receipt);
+			if (counts.issues > 0) {
+				throw new Error(`${counts.issues === 1 ? '1 change has' : `${counts.issues} changes have`} an issue. Tell Claude "Fix the issues of step ${current.n}.", `
+					+ 'or change the mark.');
+			}
+			const notWalked = counts.changes - counts.walked;
+			if (notWalked > 0 || counts.questions > 0) {
+				const parts = [
+					...(notWalked > 0 ? [`${notWalked === 1 ? '1 change has' : `${notWalked} changes have`} no mark`] : []),
+					...(counts.questions > 0 ? [`${counts.questions === 1 ? '1 question is' : `${counts.questions} questions are`} open`] : []),
+				];
+				const pick = await vscode.window.showWarningMessage(`${parts.join(', and ')}. Do you want to accept the receipt of step ${current.n}?`, {
+					modal: true, detail: 'The ledger keeps each change with no mark as not walked. Claude answers a question only when you ask.',
+				}, ACCEPT_RECEIPT);
+				if (pick !== ACCEPT_RECEIPT) {
+					return;
+				}
+			}
+		}
+		// the gate deletes the base of the step
+		const base = step?.base;
+		const api = this.baseApi();
+		if (base && api) {
+			await api.deleteMark(base).catch((error: unknown) => this.log.warn(`DataFlow did not delete the base ${base}: ${messageOf(error)}`));
+		}
+		this.store.finishStep(current.step.id, current.writer === 'user' ? 'step-done' : 'accept-receipt');
+		this.log.info(`Step ${current.n} of the task ${task.id} is done.`);
+		await this.openUserStep();
 	}
 
 	// The gate of stage 2, "Order the tasks". The order of the tasks starts from the survey of Claude
@@ -645,6 +990,13 @@ class Shotgun implements vscode.Disposable {
 				case 'checkLevels':
 					await this.checkRisk(true);
 					break;
+				case 'setMark':
+					this.store.setMark(message.step, message.change, message.mark);
+					break;
+				case 'setChangeNote':
+					this.store.setChangeNote(message.step, message.change, message.note);
+					vscode.window.setStatusBarMessage(`Shotgun: the note for ${message.change} is saved.`, 3000);
+					break;
 				default:
 					break;
 			}
@@ -661,7 +1013,11 @@ class Shotgun implements vscode.Disposable {
 		}
 		const watcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(vscode.Uri.file(root), '.shotgun/**/*.{json,md}'));
 		let timer: NodeJS.Timeout | undefined;
-		const reload = () => {
+		const reload = (uri: vscode.Uri) => {
+			// Shotgun writes lines.json after the edits of the user. The session does not need it
+			if (path.basename(uri.fsPath) === LINES_FILE) {
+				return;
+			}
 			clearTimeout(timer);
 			timer = setTimeout(() => {
 				this.store.load();
@@ -681,6 +1037,7 @@ class Shotgun implements vscode.Disposable {
 	}
 
 	private update(): void {
+		this.loadLines();
 		const snapshot = this.store.snapshot;
 		const claude: ClaudeState = this.claude.state(snapshot.root);
 		const file = this.store.briefFile();
@@ -696,6 +1053,7 @@ class Shotgun implements vscode.Disposable {
 		}));
 		this.hooks.update(snapshot);
 		this.steps.update(snapshot);
+		this.claudeLines.update(snapshot, this.lines);
 		const status = statusOf(snapshot);
 		this.status.text = `$(send) ${status.text}`;
 		this.status.tooltip = status.tooltip;
@@ -709,5 +1067,8 @@ class Shotgun implements vscode.Disposable {
 		void vscode.commands.executeCommand('setContext', 'shotgun.hasHooks',
 			!!task && !task.isDone && (task.stage === 'survey' || task.stage === 'order') && !!survey && survey.hooks.length > 0);
 		void vscode.commands.executeCommand('setContext', 'shotgun.hasPlan', !!task && !task.isDone && task.stage === 'plan' && !!snapshot.plan);
+		const current = task && !task.isDone && task.stage === 'build' ? this.store.current : undefined;
+		void vscode.commands.executeCommand('setContext', 'shotgun.hasReceipt', current?.state === 'receipt');
+		void this.openUserStep();
 	}
 }

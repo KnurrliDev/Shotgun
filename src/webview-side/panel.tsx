@@ -1,4 +1,5 @@
 import { render } from 'preact';
+import { BuildSummary } from './build';
 import { CommandButton, Decisions, NoTask, Problems, SetupList, StageBar, TaskSummary, useModel } from './common';
 import { OrderSummary } from './order';
 import { PlanSummary } from './plan';
@@ -33,7 +34,8 @@ function Panel() {
 						: task.stage === 'survey' ? <SurveySummary task={task} />
 							: task.stage === 'order' ? <OrderSummary task={task} />
 								: task.stage === 'plan' ? <PlanSummary task={task} />
-									: <TaskSummary task={task} />}
+									: task.stage === 'build' ? <BuildSummary task={task} />
+										: <TaskSummary task={task} />}
 				<div class="buttons">
 					{task && !task.isDone && (task.isPaused
 						? <CommandButton label="Continue" command="continue" isPrimary />

@@ -212,6 +212,59 @@ body.vscode-light { --sg-l1: #56606e; --sg-l2: #66707d; --sg-l3: #9a5b16; --sg-l
 .note-field input:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
 .step-row:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
 
+/* stage 5: the build. The steps in sequence, the current step with the color of its level, and the receipt of Claude
+   with a mark of the user on each change */
+:root { --sg-issue: var(--vscode-errorForeground, #f14c4c); --sg-added: var(--vscode-gitDecoration-addedResourceForeground, #81b88b);
+  --sg-removed: var(--vscode-gitDecoration-deletedResourceForeground, #c74e39); }
+.build-steps { display: flex; flex-direction: column; gap: 1px; margin: 4px 0 8px; padding: 0; list-style: none; }
+.build-step { display: flex; align-items: center; gap: 6px; padding: 1px 4px; border-radius: 3px; font-size: 12px; }
+.build-step .grow { overflow-wrap: anywhere; }
+.build-step.current { font-weight: 600; background: var(--vscode-list-inactiveSelectionBackground, transparent); }
+.build-step.st-done .grow { color: var(--vscode-descriptionForeground); }
+.build-step .step-num { color: var(--lv); background: color-mix(in srgb, var(--lv) 16%, transparent); }
+.state-glyph { flex: none; width: 1.1em; text-align: center; color: var(--vscode-descriptionForeground); }
+.state-glyph.st-done { color: var(--sg-ok); }
+.state-chip { flex: none; padding: 0 6px; border-radius: 999px; font-size: 10px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--vscode-descriptionForeground); background: color-mix(in srgb, var(--sg-border) 40%, transparent); }
+.state-chip.st-open.claude, .state-chip.st-receipt { color: var(--sg-claude); background: color-mix(in srgb, var(--sg-claude) 14%, transparent); }
+.state-chip.st-open.user { color: var(--sg-you); background: color-mix(in srgb, var(--sg-you) 14%, transparent); }
+.state-chip.st-done { color: var(--sg-ok); background: color-mix(in srgb, var(--sg-ok) 14%, transparent); }
+.current-step { margin: 8px 0 0; padding: 8px 10px; border: 1px solid var(--sg-border); border-left: 3px solid var(--lv); border-radius: 4px; }
+.current-step .row-head { flex-wrap: wrap; row-gap: 2px; margin-top: 0; }
+/* a narrow panel breaks the row between its parts, not in a part */
+.current-step .row-head > * { white-space: nowrap; }
+.receipt { margin: 10px 0 0; padding-top: 6px; border-top: 1px solid color-mix(in srgb, var(--sg-border) 60%, transparent); }
+progress.walk-track { display: block; width: 100%; height: 4px; margin: 8px 0 2px; border: 0; border-radius: 2px; appearance: none;
+  background: color-mix(in srgb, var(--sg-border) 50%, transparent); }
+progress.walk-track::-webkit-progress-bar { border-radius: 2px; background: color-mix(in srgb, var(--sg-border) 50%, transparent); }
+progress.walk-track::-webkit-progress-value { border-radius: 2px; background: var(--sg-ok); }
+.changes { margin: 6px 0; padding: 0; list-style: none; }
+.change { margin: 0 0 6px; padding: 6px 8px; border: 1px solid var(--sg-border); border-left: 3px dashed var(--sg-claude); border-radius: 4px; }
+.change.m-ok { border-left: 3px solid var(--sg-ok); }
+.change.m-issue { border-left: 3px solid var(--sg-issue); }
+.change.m-question { border-left: 3px solid var(--sg-warn); }
+.change-head { display: flex; align-items: baseline; gap: 6px; }
+.change-title { font-weight: 600; overflow-wrap: anywhere; }
+.change-place { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; margin: 2px 0 4px; }
+.change-num { flex: none; min-width: 1.6em; padding: 0 4px; border-radius: 999px; text-align: center; font-size: 11px; font-weight: 700;
+  color: var(--sg-claude); background: color-mix(in srgb, var(--sg-claude) 16%, transparent); }
+.change-num.m-ok { color: var(--sg-ok); background: color-mix(in srgb, var(--sg-ok) 16%, transparent); }
+.change-num.m-issue { color: var(--sg-issue); background: color-mix(in srgb, var(--sg-issue) 16%, transparent); }
+.change-num.m-question { color: var(--sg-warn); background: color-mix(in srgb, var(--sg-warn) 16%, transparent); }
+.plus { color: var(--sg-added); }
+.minus { color: var(--sg-removed); }
+.marks { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0 0; }
+.mark-btn { padding: 0 9px; border: 1px solid var(--sg-border); border-radius: 11px; background: none; color: inherit; font: inherit; font-size: 12px;
+  line-height: 20px; cursor: pointer; }
+.mark-btn:hover { background: var(--vscode-list-hoverBackground, transparent); }
+.mark-btn.m-ok.on { border-color: var(--sg-ok); color: var(--sg-ok); }
+.mark-btn.m-issue.on { border-color: var(--sg-issue); color: var(--sg-issue); }
+.mark-btn.m-question.on { border-color: var(--sg-warn); color: var(--sg-warn); }
+.mark-btn:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
+.diff .code { margin: 4px 0; font-size: 11px; }
+.code-line.add { background: var(--vscode-diffEditor-insertedLineBackground, rgba(155, 185, 85, 0.2)); }
+.code-line.del { background: var(--vscode-diffEditor-removedLineBackground, rgba(255, 0, 0, 0.2)); }
+
 /* lists: the setup, the decisions and the tasks */
 .list { margin: 4px 0 0; padding: 0; list-style: none; }
 .list li { display: flex; align-items: baseline; gap: 6px; padding: 3px 0; }
