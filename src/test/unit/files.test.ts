@@ -1,5 +1,6 @@
 import * as assert from 'assert';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'fs';
+import { spawn } from 'child_process';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { jsonText, parseActive, parseDecisions, parseQuestions, parseTask, TASK_ID, taskIdOf, writeTextAtomic } from '../../session/files';
@@ -89,5 +90,46 @@ suite('Stage files', () => {
 			rmSync(dir, { recursive: true, force: true });
 		}
 		assert.ok(!existsSync(dir));
+	});
+
+	test('writeTextAtomic tries the rename again while a different program has the file open', async function () {
+		if (process.platform !== 'win32') {
+			this.skip(); // the lock with no share of the delete is a part of Windows
+		}
+		const dir = mkdtempSync(path.join(os.tmpdir(), 'shotgun-files-'));
+		const file = path.join(dir, 'active.json');
+		writeTextAtomic(file, 'one');
+		// a different program opens the file for 500 ms, with no share of the write and of the delete
+		const script = `$f = [System.IO.File]::Open('${file.replace(/'/g, "''")}', 'Open', 'Read', 'Read'); [Console]::Out.WriteLine('locked'); `
+			+ '[Console]::Out.Flush(); Start-Sleep -Milliseconds 500; $f.Close()';
+		const child = spawn('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true });
+		try {
+			await new Promise<void>((resolve, reject) => {
+				child.stdout.on('data', (chunk: Buffer) => chunk.toString().includes('locked') && resolve());
+				child.on('exit', (code) => reject(new Error(`The lock did not start: ${code}`)));
+			});
+			const t0 = Date.now();
+			writeTextAtomic(file, 'two');
+			const ms = Date.now() - t0;
+			assert.strictEqual(readFileSync(file, 'utf8'), 'two');
+			assert.deepStrictEqual(readdirSync(dir), ['active.json']);
+			assert.ok(ms >= 150, `The rename did not wait for the lock: ${ms} ms`);
+		} finally {
+			child.kill();
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	test('writeTextAtomic removes the temporary file if the rename fails', () => {
+		const dir = mkdtempSync(path.join(os.tmpdir(), 'shotgun-files-'));
+		try {
+			// a folder at the place of the file stops each rename
+			const file = path.join(dir, 'active.json');
+			mkdirSync(file);
+			assert.throws(() => writeTextAtomic(file, 'one'));
+			assert.deepStrictEqual(readdirSync(dir), ['active.json']);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });

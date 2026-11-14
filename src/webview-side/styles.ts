@@ -4,7 +4,9 @@
 
 const CSS = `
 :root { --sg-you: #f2b544; --sg-claude: #f07fc9; --sg-ok: var(--vscode-testing-iconPassed, #73c991);
-  --sg-warn: var(--vscode-editorWarning-foreground, #cca700); --sg-border: var(--vscode-widget-border, rgba(128, 128, 128, 0.35)); }
+  --sg-warn: var(--vscode-editorWarning-foreground, #cca700); --sg-border: var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
+  --sg-engine: var(--vscode-charts-blue, #3794ff); --sg-cool: var(--vscode-charts-blue, #3794ff); --sg-warm: var(--vscode-charts-yellow, #cca700);
+  --sg-hot: var(--vscode-charts-orange, #d18616); }
 body.vscode-light { --sg-you: #9a6700; --sg-claude: #b0297e; }
 body.vscode-high-contrast, body.vscode-high-contrast-light { --sg-you: var(--vscode-charts-yellow); --sg-claude: var(--vscode-charts-purple);
   --sg-border: var(--vscode-contrastBorder); }
@@ -77,6 +79,43 @@ h1, h2 { margin: 0; font-weight: 600; }
 .notice { margin: 8px 0; padding: 4px 8px; border-left: 3px solid var(--sg-warn); }
 .gate { margin: 14px 0 0; padding-top: 10px; border-top: 1px solid color-mix(in srgb, var(--sg-border) 60%, transparent); }
 .gate > .btn.primary { padding: 3px 14px; }
+
+/* stage 2: the survey. The badge Model marks the words of Claude, and the badge Engine the facts of DataFlow */
+.intro { margin: 10px 0 4px; }
+.badge.engine { color: var(--sg-engine); background: color-mix(in srgb, var(--sg-engine) 16%, transparent); }
+.id { flex: none; min-width: 2.4em; font-family: var(--vscode-editor-font-family); color: var(--vscode-descriptionForeground); }
+.chips { flex: none; display: inline-flex; flex-wrap: wrap; gap: 3px; }
+.chip { padding: 0 6px; border: 1px solid var(--sg-border); border-radius: 4px; background: none; color: inherit; font: inherit; font-size: 11px;
+  line-height: 18px; cursor: pointer; }
+.chip.on { border-color: var(--vscode-focusBorder); background: var(--vscode-list-inactiveSelectionBackground, transparent); }
+.chip.tool { cursor: default; font-family: var(--vscode-editor-font-family); }
+.mono { font-family: var(--vscode-editor-font-family); }
+/* a hook: its id, its title with its kind and place below it, and its heat. A long name breaks, so no text goes over a column */
+.block { display: block; }
+.hooks .row .grow, .list .grow { overflow-wrap: anywhere; }
+.hooks .row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: baseline; width: 100%;
+  margin: 2px 0; padding: 4px 6px; box-sizing: border-box; border: 1px solid transparent; border-radius: 4px; background: none; color: inherit;
+  font: inherit; text-align: left; cursor: pointer; }
+.hooks .row:hover { background: var(--vscode-list-hoverBackground, transparent); }
+.hooks .row.on { border-color: var(--vscode-focusBorder); background: var(--vscode-list-inactiveSelectionBackground, transparent); }
+.heat { padding: 0 6px; border-radius: 999px; font-size: 11px; white-space: nowrap; }
+.heat.cool { color: var(--sg-cool); background: color-mix(in srgb, var(--sg-cool) 14%, transparent); }
+.heat.warm { color: var(--sg-warm); background: color-mix(in srgb, var(--sg-warm) 14%, transparent); }
+.heat.hot, .heat.very-hot { color: var(--sg-hot); background: color-mix(in srgb, var(--sg-hot) 16%, transparent); }
+.heat.very-hot { font-weight: 700; }
+.heat.none { color: var(--vscode-descriptionForeground); background: color-mix(in srgb, var(--sg-border) 35%, transparent); }
+.code { margin: 8px 0; padding: 6px 0; overflow-x: auto; border: 1px solid var(--sg-border); border-radius: 4px;
+  background: var(--vscode-textCodeBlock-background, transparent); font-family: var(--vscode-editor-font-family);
+  font-size: var(--vscode-editor-font-size, 12px); line-height: 1.5; }
+.code-line { display: flex; white-space: pre; }
+.code-line .ln { flex: none; width: 3.5em; padding-right: 10px; text-align: right; color: var(--vscode-editorLineNumber-foreground); user-select: none; }
+.code-line.hook { background: color-mix(in srgb, var(--vscode-focusBorder) 14%, transparent); box-shadow: inset 2px 0 var(--vscode-focusBorder); }
+.answer { margin: 10px 0 0; }
+.answer > p { margin-bottom: 4px; }
+.answer textarea { display: block; width: 100%; box-sizing: border-box; min-height: 3em; margin: 0 0 4px; padding: 4px 6px; resize: vertical;
+  border: 1px solid var(--vscode-input-border, var(--sg-border)); background: var(--vscode-input-background); color: var(--vscode-input-foreground);
+  font: inherit; }
+.answer textarea:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
 
 /* lists: the setup, the decisions and the tasks */
 .list { margin: 4px 0 0; padding: 0; list-style: none; }

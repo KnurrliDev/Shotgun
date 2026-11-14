@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs';
 import * as path from 'path';
 import { isPartId, PartId } from './brief';
 import { Gate, GateRecord, isGate, isStage, Stage } from './stages';
@@ -19,6 +19,9 @@ export const ACTIVE_FILE = 'active.json';
 export const TASK_FILE = 'task.json';
 export const QUESTIONS_FILE = 'questions.json';
 export const DECISIONS_FILE = 'decisions.jsonl';
+export const SURVEY_FILE = 'survey.json';
+export const ENGINE_FILE = 'engine.json';
+export const ANSWERS_FILE = 'answers.json';
 
 export interface ActiveFile {
 	readonly version: 1;
@@ -56,6 +59,8 @@ export interface QuestionsFile {
 // - brief: Claude gave the brief from the chat, with the number of the lines of the user
 // - questions: Claude asked questions about the brief
 // - question: the user closed a question
+// - survey: Claude gave the survey, with the number of its tasks, hooks, facts and questions
+// - answer: the user answered a question of the survey
 export type Decision =
 	| { readonly version: 1; readonly time: string; readonly kind: 'task'; readonly by: 'user' | 'claude'; readonly title: string }
 	| { readonly version: 1; readonly time: string; readonly kind: 'gate'; readonly by: 'user'; readonly gate: Gate; readonly stage: Stage }
@@ -63,7 +68,12 @@ export type Decision =
 	| { readonly version: 1; readonly time: string; readonly kind: 'deny'; readonly by: 'guard'; readonly tool: string; readonly file: string; readonly reason: string }
 	| { readonly version: 1; readonly time: string; readonly kind: 'brief'; readonly by: 'claude'; readonly lines: number }
 	| { readonly version: 1; readonly time: string; readonly kind: 'questions'; readonly by: 'claude'; readonly count: number }
-	| { readonly version: 1; readonly time: string; readonly kind: 'question'; readonly by: 'user'; readonly id: string; readonly text: string };
+	| { readonly version: 1; readonly time: string; readonly kind: 'question'; readonly by: 'user'; readonly id: string; readonly text: string }
+	| {
+		readonly version: 1; readonly time: string; readonly kind: 'survey'; readonly by: 'claude';
+		readonly tasks: number; readonly hooks: number; readonly facts: number; readonly questions: number;
+	}
+	| { readonly version: 1; readonly time: string; readonly kind: 'answer'; readonly by: 'user'; readonly id: string; readonly text: string };
 
 // A decision before Shotgun adds the version and the time
 type WithoutStamp<T> = T extends unknown ? Omit<T, 'version' | 'time'> : never;
@@ -179,6 +189,17 @@ function parseDecision(value: unknown): Decision | undefined {
 		case 'question':
 			return value.by === 'user' && isText(value.id) && typeof value.text === 'string'
 				? { version: FILE_VERSION, time, kind: 'question', by: 'user', id: value.id, text: value.text } : undefined;
+		case 'survey': {
+			const counts = [value.tasks, value.hooks, value.facts, value.questions];
+			return value.by === 'claude' && counts.every((n) => typeof n === 'number')
+				? {
+					version: FILE_VERSION, time, kind: 'survey', by: 'claude',
+					tasks: value.tasks as number, hooks: value.hooks as number, facts: value.facts as number, questions: value.questions as number,
+				} : undefined;
+		}
+		case 'answer':
+			return value.by === 'user' && isText(value.id) && typeof value.text === 'string'
+				? { version: FILE_VERSION, time, kind: 'answer', by: 'user', id: value.id, text: value.text } : undefined;
 		default:
 			return undefined;
 	}
@@ -256,10 +277,34 @@ export function readText(file: string): string | undefined {
 	}
 }
 
-// Writes a file in 1 step: a different program that reads it sees the old text or the new text, never a part
+// The errors of a rename on Windows while a different program has the file open, for example a virus scanner
+const BUSY_CODES = new Set(['EPERM', 'EACCES', 'EBUSY']);
+// The rename tries again for a maximum of 1 second
+const RENAME_TRIES = 20;
+const RENAME_PAUSE_MS = 50;
+
+// Stops the thread for a time. Only a rename that a different program stops uses it
+function pause(ms: number): void {
+	Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+// Writes a file in 1 step: a different program that reads it sees the old text or the new text, never a part. If the
+// rename fails, no temporary file stays
 export function writeTextAtomic(file: string, text: string): void {
 	mkdirSync(path.dirname(file), { recursive: true });
 	const temp = `${file}.shotgun-${process.pid}.tmp`;
 	writeFileSync(temp, text);
-	renameSync(temp, file);
+	for (let attempt = 1; ; attempt++) {
+		try {
+			renameSync(temp, file);
+			return;
+		} catch (error) {
+			const code = (error as NodeJS.ErrnoException).code;
+			if (attempt >= RENAME_TRIES || !code || !BUSY_CODES.has(code)) {
+				rmSync(temp, { force: true });
+				throw error;
+			}
+			pause(RENAME_PAUSE_MS);
+		}
+	}
 }

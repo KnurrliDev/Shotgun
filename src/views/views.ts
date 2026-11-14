@@ -31,7 +31,12 @@ export function isFromView(value: unknown): value is FromView {
 		case 'closeQuestion':
 			return typeof m.id === 'string';
 		case 'gate':
+		case 'checkHooks':
 			return true;
+		case 'openPlace':
+			return typeof m.path === 'string' && Number.isInteger(m.line) && (m.line as number) > 0;
+		case 'saveAnswer':
+			return typeof m.id === 'string' && typeof m.text === 'string' && m.text.length <= 4000;
 		default:
 			return false;
 	}

@@ -1,12 +1,16 @@
 import * as path from 'path';
 import type { ExtensionTool } from '../dataflow/dataflow-api';
 import { parseBrief, partSummary, questionLine } from '../session/brief';
+import { IS_CASE_SENSITIVE } from '../session/paths';
 import { GATE_LABEL, GATE_OF, STAGE_INFO, STAGES } from '../session/stages';
 import type { Snapshot, SessionStore } from '../session/store';
 import { submitBrief, submitQuestions } from './brief';
 import { contextOutput, contextText } from './context';
 import { decide, GuardInput, hookOutput, isInside, targetOf } from './guard';
 import type { PromptLog } from './prompts';
+import { EngineApi, submitSurvey } from './survey';
+
+export { IS_CASE_SENSITIVE };
 
 // The tools of Shotgun for the MCP server of DataFlow. DataFlow puts "shotgun_" before each name, so Claude Code sees
 // for example mcp__plugin_dataflow_dataflow__shotgun_get_session. Phase 1 has the read tool get_session and the 2 tools
@@ -19,16 +23,14 @@ export interface ToolDeps {
 	readonly prompts: PromptLog; // the last prompts of the user, from the context hook
 	readonly readText: (file: string) => string | undefined; // the text of a file, from an open text editor first
 	readonly openFile: (file: string) => void; // shows a file in the text editor
+	readonly engine: () => EngineApi | undefined; // the facts of DataFlow for the survey. undefined: no link to DataFlow
 }
-
-// File systems of Windows and macOS do not tell the case of letters apart
-export const IS_CASE_SENSITIVE = process.platform !== 'win32' && process.platform !== 'darwin';
 
 const textOf = (value: unknown): string => (typeof value === 'string' ? value : '');
 
-// The result of get_session: the active task, its stage and gates, the brief, the rule of the guard and the next work.
-// brief: the file brief.md of the active task and its text
-export function sessionData(snapshot: Snapshot, brief?: { file: string; text: string }): Record<string, unknown> {
+// The result of get_session: the active task, its stage and gates, the brief, the survey, the rule of the guard and the
+// next work. brief: the file brief.md of the active task and its text. surveyFile: the file survey.json
+export function sessionData(snapshot: Snapshot, brief?: { file: string; text: string }, surveyFile?: string): Record<string, unknown> {
 	const task = snapshot.task;
 	let guard: string;
 	let next: string;
@@ -68,6 +70,17 @@ export function sessionData(snapshot: Snapshot, brief?: { file: string; text: st
 					.map((q) => ({ id: q.id, text: q.text, line: questionLine(brief.text, parsed.parts, q) })),
 			},
 		} : {}),
+		...(snapshot.survey && surveyFile ? {
+			survey: {
+				file: surveyFile,
+				tasks: snapshot.survey.tasks.length,
+				hooks: snapshot.survey.hooks.length,
+				facts: snapshot.survey.facts.length,
+				questions: snapshot.survey.questions.map((q) => ({
+					id: q.id, text: q.text, ...(snapshot.answers[q.id] ? { answer: snapshot.answers[q.id].text } : {}),
+				})),
+			},
+		} : {}),
 		isPaused: snapshot.isPaused,
 		guard,
 		next,
@@ -84,21 +97,89 @@ export function shotgunTools(deps: ToolDeps): ExtensionTool[] {
 			name: 'get_session',
 			title: 'Shotgun session',
 			description: 'Gives the active Shotgun task: its title, its stage of 5, the gates of the user, the brief with its parts and the open '
-				+ 'questions, the rule of the guard and the next work. Call it first for each request about Shotgun.',
+				+ 'questions, the survey with the answers of the user, the rule of the guard and the next work. Call it first for each request '
+				+ 'about Shotgun.',
 			inputSchema: { type: 'object', properties: {} },
 			isReadOnly: true,
 			call: () => {
 				const file = deps.store.briefFile();
 				const text = file ? deps.readText(file) : undefined;
-				return sessionData(deps.store.snapshot, file && text !== undefined ? { file, text } : undefined);
+				const task = deps.store.snapshot.task;
+				const surveyFile = task && deps.store.dir ? path.join(deps.store.dir, task.id, 'survey.json') : undefined;
+				return sessionData(deps.store.snapshot, file && text !== undefined ? { file, text } : undefined, surveyFile);
 			},
+		},
+		{
+			name: 'submit_survey',
+			title: 'Shotgun: give the survey',
+			description: 'Gives your survey of the brief to Shotgun, in stage 2: the tasks in no sequence, the hooks (the places where new code '
+				+ 'goes into the code that is there), the facts from the read tools of DataFlow that you called, and the questions for the user. '
+				+ 'Each hook gives "code": a short text of the code in its lines, copied exactly. A new survey replaces the old survey.',
+			inputSchema: {
+				type: 'object',
+				properties: {
+					tasks: {
+						type: 'array',
+						items: {
+							type: 'object',
+							properties: {
+								id: { type: 'string', description: 'For example T1.' },
+								title: { type: 'string' },
+								text: { type: 'string' },
+								hooks: { type: 'array', items: { type: 'string' }, description: 'The ids of the hooks of the task. Empty for only new files.' },
+								needs: { type: 'array', items: { type: 'string' }, description: 'The ids of the tasks that this task needs first.' },
+							},
+							required: ['id', 'title', 'hooks'],
+						},
+					},
+					hooks: {
+						type: 'array',
+						items: {
+							type: 'object',
+							properties: {
+								id: { type: 'string', description: 'For example H1.' },
+								title: { type: 'string' },
+								kind: { type: 'string', description: 'The new code at the place, for example "new check in solve()".' },
+								file: { type: 'string', description: 'The file, relative to the first folder of the project, or absolute.' },
+								lines: { type: 'array', items: { type: 'integer' }, minItems: 2, maxItems: 2, description: '[first, last], from 1.' },
+								code: { type: 'string', description: 'A short text of the code in the lines, copied exactly.' },
+							},
+							required: ['id', 'title', 'kind', 'file', 'lines', 'code'],
+						},
+					},
+					facts: {
+						type: 'array',
+						items: {
+							type: 'object',
+							properties: {
+								text: { type: 'string' },
+								file: { type: 'string' },
+								lines: { type: 'array', items: { type: 'integer' }, minItems: 2, maxItems: 2 },
+								tool: { type: 'string', description: 'The read tool of DataFlow that you called, and that gave the fact, for example get_threads.' },
+							},
+							required: ['text', 'file', 'lines', 'tool'],
+						},
+					},
+					questions: {
+						type: 'array',
+						items: {
+							type: 'object',
+							properties: { id: { type: 'string', description: 'For example Q1.' }, text: { type: 'string' } },
+							required: ['id', 'text'],
+						},
+					},
+				},
+				required: ['tasks', 'hooks'],
+			},
+			call: (args) => submitSurvey(deps, args),
 		},
 		{
 			name: 'submit_brief',
 			title: 'Shotgun: give the brief',
-			description: 'Gives a brief that the user wrote in the chat to Shotgun, in stage 1. Copy the words of the user exactly. You can add '
-				+ 'only the headings of the 5 parts (## Goal, ## Facts, ## Specs, ## Not in scope, ## Done when) and the list mark "- ". '
-				+ 'Shotgun refuses each line that is not in the recent prompts of the user.',
+			description: 'Gives a brief that the user wrote in the chat to Shotgun. Shotgun makes a new task in stage 1 for it, or fills the '
+				+ 'empty brief of the active task in stage 1. It never changes a brief with text. Thus do not ask the user about the task '
+				+ 'before the call. Copy the words of the user exactly. You can add only the headings of the 5 parts (## Goal, ## Facts, ## Specs, ## Not in scope, '
+				+ '## Done when) and the list mark "- ". Shotgun refuses each line that is not in the recent prompts of the user.',
 			inputSchema: {
 				type: 'object',
 				properties: {

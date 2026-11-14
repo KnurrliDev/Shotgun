@@ -77,6 +77,16 @@
 				"category": "Shotgun"
 			},
 			{
+				"command": "shotgun.answerQuestion",
+				"title": "Answer Question",
+				"category": "Shotgun"
+			},
+			{
+				"command": "shotgun.checkHooks",
+				"title": "Check the Hooks Again",
+				"category": "Shotgun"
+			},
+			{
 				"command": "shotgun.passGate",
 				"title": "Pass the Gate",
 				"category": "Shotgun"
@@ -109,6 +119,14 @@
 				{
 					"command": "shotgun.closeQuestion",
 					"when": "shotgun.hasQuestions"
+				},
+				{
+					"command": "shotgun.answerQuestion",
+					"when": "shotgun.hasSurveyQuestions"
+				},
+				{
+					"command": "shotgun.checkHooks",
+					"when": "shotgun.hasHooks"
 				},
 				{
 					"command": "shotgun.passGate",

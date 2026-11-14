@@ -4,6 +4,27 @@
 
 This version has no release yet. Each phase of `implementation-plan.md` adds its items.
 
+### Phase 3: survey
+
+- The new tool `shotgun_submit_survey` gives the survey of Claude in stage 2: the tasks in no sequence, the hooks, the facts and the questions.
+- Shotgun checks all data of the survey, and gives all problems in 1 list. Each file must be in the project, and each line must be in its file. The code of each hook must be in its lines.
+- Each task must name hooks of the survey, and each hook must have a task. The needs of the tasks must not make a circle. Each fact must name a read tool of DataFlow.
+- For each hook in a C or C++ file, Shotgun gets the facts of DataFlow. `getPlace` gives the facts of the line of the code of the hook. `getHeat` gives the heat of its lines. A hook in a type gets the shared members of the type.
+- At the end of the scan of the call graph, Shotgun gets the facts again. **Shotgun: Check the Hooks Again** gets them on request.
+- The page shows the survey: the tasks with their hooks and needs, the hooks with their heat, and the facts with their tools. It also shows the code of the selected hook, and the questions with a field for each answer.
+- The badge **Model** marks the words of Claude, and the badge **Engine** marks the facts of DataFlow (decision 13 of the plan).
+- The panel shows a summary of the survey and the questions.
+- The text editor shows the hooks in the stages 2 and 3, with a hover. A hook moves with its code when the lines change.
+- The user answers a question on the page, or with **Shotgun: Answer Question**. A new survey keeps each answer with the id of its question.
+- The gate **Order the tasks**. With a question that has no answer, a modal message asks the user first.
+- `shotgun_get_session` also gives the survey with the answers of the user.
+- The plugin of Shotgun has the new skill `shotgun-survey`. Claude reads the code with the read tools of DataFlow, and gives a fact only from a tool that it called. Shotgun cannot check the tool calls of Claude: gap 43 of `dataflow-gaps-2.md`.
+- The skill `shotgun` and the tool `shotgun_submit_brief` tell Claude that Shotgun selects the task for a brief from the chat. Thus Claude does not ask the user about the task first.
+- The ledger records each survey of Claude and each answer of the user.
+- New stage files: `survey.json`, `engine.json` and `answers.json`.
+- Fix: on Windows, a different program can keep a stage file open for a short time, for example a virus scanner. Then the write of the file failed, and a temporary file stayed. Now the write tries again for a maximum of 1 second. If the write fails, no temporary file stays.
+- Tests: 69 unit tests. `scripts/test-claude.mjs` adds the survey of task 1, the answers and the gate of stage 2.
+
 ### Phase 2: brief
 
 - **Shotgun: New Task** makes `brief.md` from a template with 5 parts: Goal, Facts, Specs, Not in scope and Done when. It opens the brief in the text editor.

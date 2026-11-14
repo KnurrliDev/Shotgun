@@ -17,6 +17,7 @@ The first analysis found 29 gaps in DataFlow 0.5.0. Then DataFlow got 9 commits 
 - 12 gaps are new: the items 30 to 41.
 - Shotgun does not need the items 34 to 40 now.
 - Phase 1 of Shotgun found item 42 on 14 November 2026: a fault of the token of the MCP server at the first start.
+- Phase 3 of Shotgun found item 43 on 14 November 2026: an extension cannot see the tool calls of an MCP client.
 
 No open gap stops the start of the work on Shotgun.
 
@@ -158,7 +159,7 @@ Do the groups in this sequence. Do not do the items 34 to 40 for Shotgun.
 | --- | --- | --- |
 | 1 | 42 | A new user gets no tools of DataFlow and no guard of Shotgun in Claude Code. |
 | 2 | 30, 31, 32 | The heat can be too low. Then the model gets a wrong permission. |
-| 3 | 11, 33, 41 | Shotgun has a procedure, but it needs more code or it gives less accuracy. |
+| 3 | 11, 33, 41, 43 | Shotgun has a procedure, but it needs more code or it gives less accuracy. |
 
 ## Heat
 
@@ -242,6 +243,14 @@ The items 36 and 37 are differences between the code and `docs/api-gaps-strategy
 - **Use in Shotgun:** The tools and the hooks of Shotgun are in the MCP server of DataFlow. After the first connection, a new user can have no tools of DataFlow and no guard of Shotgun in Claude Code.
 - **Until the fix:** The test of Shotgun starts the MCP server again after a 401. A user can run "DataFlow: Stop MCP Server" and "DataFlow: Start MCP Server", or reload the window.
 - **Possible fix:** Keep the promise of the first call, for example `this.tokenPromise ??= this.readToken()`. Then all calls get the same token. Add a unit test with 2 calls at the same time.
+
+### 43. An extension cannot see the tool calls of an MCP client
+
+- **Data:** The API has no event for the call of a tool of the MCP server. An extension gets only the calls of its own tools from `registerTools`.
+- **Data:** In the test of phase 3 of Shotgun, Claude gave 7 facts, each with a read tool of DataFlow. Claude called none of these tools. It read the code with the tool Read of Claude Code.
+- **Use in Shotgun:** Decision 13 of the plan of Shotgun: a fact of Claude shows the read tool of DataFlow that gave the fact. Shotgun must refuse a fact with a tool that Claude did not call.
+- **Until the fix:** The skill `shotgun-survey` tells Claude to give a fact only from a call of a read tool. Shotgun cannot check this. The badge "Model" shows that the fact is a text of Claude. A hook of the plugin of Shotgun after each tool call can record the calls, but only in Claude Code with this plugin.
+- **Possible fix:** Add the event `onDidCallTool` to the API. The event gives the client, the tool, the arguments and the time of each call of a read tool. Or add a method that gives the tool calls since a time.
 
 ## Limits that Shotgun gets from DataFlow
 

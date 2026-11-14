@@ -1,5 +1,6 @@
 import * as path from 'path';
 import { SHOTGUN_DIR } from '../session/files';
+import { isInside } from '../session/paths';
 import { Stage, STAGE_INFO, stageText } from '../session/stages';
 
 // The guard: before each file change of Claude Code, the PreToolUse hook of the plugin of Shotgun calls the tool
@@ -29,13 +30,7 @@ export type GuardDecision =
 // A value of the input that Claude Code did not fill, for example ${tool_input.file_path} for a different tool
 const isEmpty = (value: string): boolean => !value.trim() || /^\$\{[^}]*\}$/.test(value.trim());
 
-// True if file is folder or a file in folder
-export function isInside(file: string, folder: string, isCaseSensitive: boolean): boolean {
-	const a = isCaseSensitive ? file : file.toLowerCase();
-	const b = isCaseSensitive ? folder : folder.toLowerCase();
-	const rel = path.relative(b, a);
-	return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
-}
+export { isInside };
 
 // The absolute path of the file of the input, or undefined with no file. A relative path is relative to the folder of
 // the session, else to the first folder of the project

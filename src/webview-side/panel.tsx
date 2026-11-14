@@ -1,6 +1,7 @@
 import { render } from 'preact';
 import { CommandButton, Decisions, NoTask, Problems, SetupList, StageBar, TaskSummary, useModel } from './common';
 import { applyStyles } from './styles';
+import { SurveySummary } from './survey';
 
 // The script of the panel beside the text editor: the stage bar, the active task, the buttons and the last decisions.
 // The setup comes first while a part is not ready.
@@ -25,7 +26,7 @@ function Panel() {
 				</section>
 			)}
 			<section class="section">
-				{task ? <TaskSummary task={task} /> : <NoTask hasTasks={canOpen} />}
+				{!task ? <NoTask hasTasks={canOpen} /> : task.stage === 'survey' && !task.isDone ? <SurveySummary task={task} /> : <TaskSummary task={task} />}
 				<div class="buttons">
 					{task && !task.isDone && (task.isPaused
 						? <CommandButton label="Continue" command="continue" isPrimary />

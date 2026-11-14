@@ -1,19 +1,21 @@
 // The test of Shotgun with Claude Code. It starts the test build of VS Code with DataFlow and Shotgun from their
 // repository folders. In VS Code, it makes a task with "Shotgun: New Task", and connects DataFlow and Shotgun to Claude
-// Code with their commands. Then 2 tasks go from the brief to stage 2 (the condition of phase 2), with 3 prompts of the
-// CLI of Claude Code in print mode:
+// Code with their commands. Then it runs 4 prompts of the CLI of Claude Code in print mode:
 // 1. Task 1: the test writes the brief into brief.md, as the user does. "Ask me questions about my brief." loads the
 //    skill shotgun, and Claude gives its questions with shotgun_submit_questions. The test closes the questions.
 // 2. Claude tries to change a file of the project in stage 1, and the guard denies the change (phase 1).
 // 3. The test passes the gate of task 1. Then the user gives a brief in the chat, and Claude gives it to Shotgun with
-//    shotgun_submit_brief. Shotgun makes task 2, and the test passes its gate.
+//    shotgun_submit_brief. Shotgun makes task 2, and the test passes its gate (the condition of phase 2).
+// 4. The test opens task 1 again. "Survey my brief." loads the skill shotgun-survey, and Claude gives the survey with
+//    shotgun_submit_survey. Shotgun adds the facts of DataFlow to each hook. The test answers the questions of the
+//    survey, and passes the gate "Order the tasks" (the condition of phase 3).
 // The commands write the settings of proposal P15, and the test checks these files. The CLI loads the 2 plugins with
 // --plugin-dir from the folders that the commands wrote. The CLI uses the login and thus the config folder of the user,
 // and a marketplace from settings would go into the plugin data of the user.
 // The settings of the user do not change: the test build has its own user data, MCP registry, folder for the settings
 // of Claude Code and Shotgun folder. The test records the plugin data of Claude Code of the user before the runs, and
 // checks it after them. It removes the empty folders that the CLI makes there.
-// The test uses the Claude subscription of the user for 2 short runs of Claude Code, so it runs only on request.
+// The test uses the Claude subscription of the user for 4 runs of Claude Code, so it runs only on request.
 // Usage: node scripts/test-claude.mjs <new run folder>
 // Environment: DATAFLOW_REPO (default: ../DataFlow), CLAUDE_EXE (default: the CLI of the VS Code extension of Claude Code)
 import { execFileSync, spawn } from 'node:child_process';
@@ -34,6 +36,12 @@ const TASK_1 = 'a-cycle-limit-for-the-solver';
 const GET_SESSION = 'mcp__plugin_dataflow_dataflow__shotgun_get_session';
 const SUBMIT_BRIEF = 'mcp__plugin_dataflow_dataflow__shotgun_submit_brief';
 const SUBMIT_QUESTIONS = 'mcp__plugin_dataflow_dataflow__shotgun_submit_questions';
+const SUBMIT_SURVEY = 'mcp__plugin_dataflow_dataflow__shotgun_submit_survey';
+// The read tools of DataFlow for the survey
+const READ_TOOLS = ['list_functions', 'get_outline', 'get_place', 'get_callers', 'get_calls', 'get_threads', 'get_heat', 'get_flow', 'get_logic',
+	'get_structure', 'get_member_sites', 'get_includes', 'get_call_graph', 'get_hidden'].map((t) => `mcp__plugin_dataflow_dataflow__${t}`);
+// The number of the tools of Shotgun in the MCP server of DataFlow
+const SHOTGUN_TOOLS = 6;
 // The brief of task 1, as the user writes it in brief.md
 const BRIEF_1 = [
 	`# Brief: ${TITLE}`, '',
@@ -83,12 +91,22 @@ function killTree(pid) {
 	}
 }
 
-// The processes with the run folder in their command line. The query itself is not in the list
+// The processes with the run folder in their command line. The query, this script and the processes that started this
+// script are not in the list: the command line of this script also has the run folder
 function processesOf(dir) {
-	const script = `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.Contains('${dir.replace(/'/g, "''")}') `
-		+ "-and -not $_.CommandLine.Contains('Get-CimInstance') } | ForEach-Object { \"$($_.ProcessId)`t$($_.Name)\" }";
+	const script = "Get-CimInstance Win32_Process | ForEach-Object { \"$($_.ProcessId)`t$($_.ParentProcessId)`t$($_.Name)`t$([int]($_.CommandLine -and "
+		+ `$_.CommandLine.Contains('${dir.replace(/'/g, "''")}') -and -not $_.CommandLine.Contains('Get-CimInstance')))\" }`;
 	const out = execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], { encoding: 'utf8', windowsHide: true });
-	return out.split(/\r?\n/).filter(Boolean).map((l) => ({ pid: Number(l.split('\t')[0]), name: l.split('\t')[1] }));
+	const all = out.split(/\r?\n/).filter(Boolean).map((l) => {
+		const [pid, parent, name, isOfRun] = l.split('\t');
+		return { pid: Number(pid), parent: Number(parent), name, isOfRun: isOfRun === '1' };
+	});
+	const parents = new Map(all.map((x) => [x.pid, x.parent]));
+	const own = new Set();
+	for (let pid = process.pid; pid && !own.has(pid); pid = parents.get(pid)) {
+		own.add(pid);
+	}
+	return all.filter((x) => x.isOfRun && !own.has(x.pid)).map(({ pid, name }) => ({ pid, name }));
 }
 
 const readJson = (file) => {
@@ -195,6 +213,8 @@ function setup() {
 		'workbench.startupEditor': 'none',
 		'workbench.secondarySideBar.defaultVisibility': 'visible',
 		'chat.disableAIFeatures': true,
+		// a modal message of VS Code is then a part of the page, and not a dialog of Windows
+		'window.dialogStyle': 'custom',
 		'git.openRepositoryInParentFolders': 'never',
 		'security.workspace.trust.enabled': false,
 		'window.restoreWindows': 'none',
@@ -261,16 +281,24 @@ async function workbench() {
 	return wb;
 }
 
+// True if the quick input is visible with this title, or with any title for no title. A webview can take the focus
+// after the quick input opens. Then the quick input gets the focus again
+function isQuickInputReady(wb, title) {
+	return wb.evaluate(`(() => {
+		const w = document.querySelector('.quick-input-widget');
+		if (!w || getComputedStyle(w).display === 'none') { return false; }
+		const t = w.querySelector('.quick-input-title')?.textContent ?? '';
+		if (${JSON.stringify(title ?? '')} && !t.includes(${JSON.stringify(title ?? '')})) { return false; }
+		if (!w.contains(document.activeElement)) { w.querySelector('input')?.focus(); }
+		return w.contains(document.activeElement);
+	})()`);
+}
+
 // Types a text into the visible quick input, and selects Enter. title: the title of the quick input, or no title for the
 // Command Palette
 async function quickInput(wb, text, title) {
 	for (let i = 0; i < 40; i++) {
-		const isReady = await wb.evaluate(`(() => {
-			const w = document.querySelector('.quick-input-widget');
-			if (!w || getComputedStyle(w).display === 'none' || !w.contains(document.activeElement)) { return false; }
-			const t = w.querySelector('.quick-input-title')?.textContent ?? '';
-			return ${JSON.stringify(title ?? '')} ? t.includes(${JSON.stringify(title ?? '')}) : true;
-		})()`);
+		const isReady = await isQuickInputReady(wb, title);
 		if (isReady) {
 			await wb.send('Input.insertText', { text });
 			await sleep(600);
@@ -282,8 +310,8 @@ async function quickInput(wb, text, title) {
 	throw new Error(`The quick input for "${text}" did not open.`);
 }
 
-// Selects the first item of the visible quick pick with this title
-async function quickPickFirst(wb, title) {
+// Selects an item of the visible quick pick with this title. n: the index of the item, from 0
+async function quickPickNth(wb, title, n = 0) {
 	for (let i = 0; i < 40; i++) {
 		const isReady = await wb.evaluate(`(() => {
 			const w = document.querySelector('.quick-input-widget');
@@ -291,6 +319,10 @@ async function quickPickFirst(wb, title) {
 			return (w.querySelector('.quick-input-title')?.textContent ?? '').includes(${JSON.stringify(title)}) && !!w.querySelector('.monaco-list-row');
 		})()`);
 		if (isReady) {
+			for (let k = 0; k < n; k++) {
+				await wb.key('ArrowDown', 'ArrowDown', 40);
+				await sleep(150);
+			}
 			await wb.key('Enter', 'Enter', 13);
 			return;
 		}
@@ -298,6 +330,7 @@ async function quickPickFirst(wb, title) {
 	}
 	throw new Error(`The quick pick "${title}" did not open.`);
 }
+const quickPickFirst = (wb, title) => quickPickNth(wb, title, 0);
 
 // The value of fn when it has one, or undefined after the time. fn can be async
 async function poll(fn, seconds) {
@@ -336,35 +369,62 @@ const taskFile = (id, name) => path.join(p.project, '.shotgun', id, name);
 const ledgerOf = (id) => (fs.existsSync(taskFile(id, 'decisions.jsonl'))
 	? fs.readFileSync(taskFile(id, 'decisions.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
 
-// Runs a command with the Command Palette. A click on the editor area first takes the focus from a webview, for example
-// from the panel of Shotgun after "Shotgun: New Task"
+// Runs a command with the Command Palette. A click on the text editor first takes the focus from a webview, for example
+// from the panel of Shotgun after "Shotgun: New Task". If the page of Shotgun is the active editor, a click can hit a
+// button of the page. Then the test removes the focus from the webview, and the workbench gets the keys
 async function command(wb, text) {
-	const box = await wb.evaluate(`(() => { const r = document.querySelector('.part.editor')?.getBoundingClientRect();
-		return r ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : undefined; })()`);
-	if (box) {
-		for (const type of ['mousePressed', 'mouseReleased']) {
-			await wb.send('Input.dispatchMouseEvent', { type, x: box.x, y: box.y, button: 'left', clickCount: 1 });
+	// a new webview can take the focus after the keys, so the test tries 3 times
+	for (let attempt = 0; attempt < 3; attempt++) {
+		const box = await wb.evaluate(`(() => {
+			const r = [...document.querySelectorAll('.part.editor .monaco-editor .view-lines')].map((e) => e.getBoundingClientRect()).find((x) => x.width > 0);
+			return r ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : undefined; })()`);
+		if (box) {
+			for (const type of ['mousePressed', 'mouseReleased']) {
+				await wb.send('Input.dispatchMouseEvent', { type, x: box.x, y: box.y, button: 'left', clickCount: 1 });
+			}
+		} else {
+			await wb.evaluate('document.activeElement?.blur()');
 		}
 		await sleep(300);
+		await wb.key('P', 'KeyP', 80, 10); // ctrl+shift+p
+		if (await poll(() => isQuickInputReady(wb), 4)) {
+			await quickInput(wb, text);
+			await sleep(800);
+			return;
+		}
 	}
-	await wb.key('P', 'KeyP', 80, 10); // ctrl+shift+p
-	await quickInput(wb, text);
-	await sleep(800);
+	throw new Error(`The Command Palette did not open for "${text}".`);
 }
 
-// The text of the webview of the panel of Shotgun, or undefined
-async function panelText() {
+// Runs a script in the webview of Shotgun with this root element: .panel for the panel, .page for the page. The script
+// has the document of the webview in the variable d. The result: the value of the script, or undefined
+async function inWebview(root, script) {
 	const targets = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json();
 	for (const t of targets.filter((x) => x.webSocketDebuggerUrl && x.url.includes('vscode-webview'))) {
 		const c = await connect(t.webSocketDebuggerUrl);
-		const text = await c.evaluate("(() => { const d = document.querySelector('iframe#active-frame')?.contentDocument ?? document; "
-			+ "return d.querySelector('.panel') ? d.body.innerText : undefined; })()");
+		const value = await c.evaluate(`(() => { const d = document.querySelector('iframe#active-frame')?.contentDocument ?? document; `
+			+ `if (!d.querySelector(${JSON.stringify(root)})) { return undefined; } return (${script})(); })()`);
 		c.ws.close();
-		if (text) {
-			return text;
+		if (value !== undefined) {
+			return value;
 		}
 	}
 	return undefined;
+}
+
+// The text of the webview of the panel of Shotgun, or undefined
+const panelText = () => inWebview('.panel', '() => d.body.innerText');
+// The text of the page of Shotgun, or undefined
+const pageText = () => inWebview('.page', '() => d.body.innerText');
+
+// Clicks the button of a modal message of VS Code with this text. The result: true if the message was there
+async function clickDialog(wb, label) {
+	return wb.evaluate(`(() => {
+		const box = document.querySelector('.monaco-dialog-box');
+		const button = box && [...box.querySelectorAll('.monaco-button')].find((b) => b.textContent.includes(${JSON.stringify(label)}));
+		button?.click();
+		return !!button;
+	})()`);
 }
 
 //-------------------
@@ -425,7 +485,8 @@ function checkBridge() {
 //-------------------
 // Claude Code
 
-function runClaude(name, prompt) {
+// options: tools, the tools that Claude can use with no permission prompt, maxTurns and seconds, the time limit
+function runClaude(name, prompt, { tools = [GET_SESSION, SUBMIT_BRIEF, SUBMIT_QUESTIONS, 'Skill'], maxTurns = 8, seconds = 300 } = {}) {
 	const args = [
 		'-p', prompt,
 		'--output-format', 'stream-json', '--verbose', '--include-hook-events',
@@ -433,8 +494,8 @@ function runClaude(name, prompt) {
 		// no settings of the user, and the 2 plugins from the folders that the commands wrote
 		'--setting-sources', 'project', '--plugin-dir', dataflowPlugin, '--plugin-dir', shotgunPlugin,
 		'--permission-mode', 'acceptEdits', '--permission-prompts', 'none',
-		'--allowedTools', [GET_SESSION, SUBMIT_BRIEF, SUBMIT_QUESTIONS, 'Skill'].join(','),
-		'--max-turns', '8', '--no-session-persistence',
+		'--allowedTools', tools.join(','),
+		'--max-turns', String(maxTurns), '--no-session-persistence',
 		'--debug-file', path.join(dir, `claude-${name}.debug.log`),
 	];
 	return new Promise((resolve) => {
@@ -445,7 +506,7 @@ function runClaude(name, prompt) {
 		const messages = [];
 		let rest = '';
 		let stderr = '';
-		const timer = setTimeout(() => killTree(proc.pid), 300000);
+		const timer = setTimeout(() => killTree(proc.pid), seconds * 1000);
 		proc.stdout.on('data', (chunk) => {
 			rest += chunk.toString('utf8');
 			const lines = rest.split('\n');
@@ -499,8 +560,9 @@ async function main() {
 		env: cleanEnv({ DATAFLOW_MCP_REGISTRY: p.registry, CLAUDE_CONFIG_DIR: p.claudeConfig, SHOTGUN_HOME: p.shotgunHome }),
 	});
 	proc.unref();
+	let wb;
 	try {
-		const wb = await workbench();
+		wb = await workbench();
 		await sleep(4000);
 
 		// the commands of the user in VS Code
@@ -533,9 +595,9 @@ async function main() {
 		}
 		results.bridge = bridge;
 		const windows = windowFiles().map((n) => readJson(path.join(p.registry, n)));
-		check('The bridge of DataFlow lists the 5 tools of Shotgun', bridge.shotgun?.length === 5,
-			{ ...bridge, windows, listeners: bridge.shotgun?.length === 5 ? undefined : listenersOf(MCP_PORT) });
-		if (bridge.shotgun?.length !== 5) {
+		check(`The bridge of DataFlow lists the ${SHOTGUN_TOOLS} tools of Shotgun`, bridge.shotgun?.length === SHOTGUN_TOOLS,
+			{ ...bridge, windows, listeners: bridge.shotgun?.length === SHOTGUN_TOOLS ? undefined : listenersOf(MCP_PORT) });
+		if (bridge.shotgun?.length !== SHOTGUN_TOOLS) {
 			throw new Error('The bridge does not work, so the test does not run Claude Code.');
 		}
 
@@ -638,9 +700,142 @@ async function main() {
 		await command(wb, 'Shotgun: Show Page');
 		await sleep(2000);
 		await wb.shot('page.png');
+
+		// 4: the survey of task 1 (phase 3). A click in the editor area for the Command Palette must not hit the page, so
+		// the test uses the page first, then opens a text editor, and then uses the Command Palette
+		await command(wb, 'Shotgun: Open Task');
+		await quickInput(wb, TITLE, 'Shotgun: Open Task');
+		const reopened = await poll(() => readJson(path.join(p.project, '.shotgun', 'active.json'))?.task === TASK_1, 20);
+		check('"Shotgun: Open Task" makes task 1 the active task again', !!reopened, readJson(path.join(p.project, '.shotgun', 'active.json')));
+		const surveyed = await runClaude('survey', 'Survey my brief.', { tools: [GET_SESSION, SUBMIT_SURVEY, 'Skill', ...READ_TOOLS], maxTurns: 40, seconds: 900 });
+		const surveyNames = surveyed.toolUses.map((t) => t.name);
+		check('The request loads the skill shotgun-survey', surveyed.toolUses.some((t) => t.name === 'Skill' && String(t.input?.skill).includes('shotgun-survey')),
+			surveyNames);
+		check('Claude reads the code with the read tools of DataFlow', surveyNames.some((n) => READ_TOOLS.includes(n)), surveyNames);
+		// Shotgun cannot see the tool calls of Claude, so only this test checks the tool of each fact (gap 43 of DataFlow)
+		const called = new Set(surveyNames.filter((n) => READ_TOOLS.includes(n)).map((n) => n.replace('mcp__plugin_dataflow_dataflow__', '')));
+		check('Claude gives the survey with shotgun_submit_survey', surveyNames.includes(SUBMIT_SURVEY), surveyNames);
+		const refusedSurveys = surveyed.toolResults.filter((r) => r.isError && r.text.includes('did not take the survey')).length;
+		if (refusedSurveys > 0) {
+			results.notes = [...(results.notes ?? []), `Shotgun refused ${refusedSurveys} survey of Claude before it took the survey.`];
+			console.log(`NOTE Shotgun refused ${refusedSurveys} survey of Claude before it took the survey.`);
+		}
+		const survey = readJson(taskFile(TASK_1, 'survey.json'));
+		const engine = readJson(taskFile(TASK_1, 'engine.json'));
+		check('survey.json has the tasks and the hooks of Claude', survey?.tasks?.length >= 1 && survey?.hooks?.length >= 1, survey);
+		const uncited = (survey?.facts ?? []).filter((f) => !called.has(f.tool));
+		check('Each fact names a read tool of DataFlow that Claude called', !!survey && uncited.length === 0, { called: [...called], uncited });
+		const cppHooks = (survey?.hooks ?? []).filter((h) => /\.(c|cc|cpp|cxx|h|hh|hpp|hxx)$/i.test(h.file));
+		check('Each hook in a C++ file has the facts of DataFlow', cppHooks.length > 0 && cppHooks.every((h) => engine?.hooks?.[h.id]?.hasFacts === true),
+			cppHooks.map((h) => ({ id: h.id, engine: engine?.hooks?.[h.id] })));
+		const inFunctions = cppHooks.filter((h) => engine?.hooks?.[h.id]?.function);
+		check('Each hook in a function has its heat', inFunctions.length > 0 && inFunctions.every((h) => engine.hooks[h.id].heat),
+			inFunctions.map((h) => ({ id: h.id, engine: engine?.hooks?.[h.id] })));
+		results.survey = {
+			tasks: survey?.tasks?.length, hooks: survey?.hooks?.length, facts: survey?.facts?.length, questions: survey?.questions?.length,
+			isReachComplete: engine?.isReachComplete,
+			heat: inFunctions.map((h) => {
+				const heat = engine.hooks[h.id].heat;
+				return `${h.id} ${h.file}:${h.lines[0]}-${h.lines[1]} ${heat?.function} ${heat?.score} ${heat?.band}`;
+			}),
+		};
+		console.log(`INFO The survey: ${JSON.stringify(results.survey)}`);
+		const changed = execFileSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: p.project, encoding: 'utf8', windowsHide: true })
+			.split('\n').filter((l) => l.trim() && !l.includes('.shotgun/'));
+		check('Claude changed no file of the project in stage 2', changed.length === 0, changed);
+		text = await poll(async () => (await panelText())?.includes('The survey of Claude:') && true, 20);
+		check('The panel shows the survey and its questions', !!text, await panelText());
+		await wb.shot('panel-survey.png');
+
+		// the page of the survey
+		await command(wb, 'Shotgun: Show Page');
+		const firstTask = survey?.tasks?.[0]?.title ?? '?';
+		text = await poll(async () => {
+			const t = await pageText();
+			return t?.includes(firstTask) && t.includes('Order the tasks') ? t : undefined;
+		}, 20);
+		check('The page shows the survey with the gate "Order the tasks"', !!text, await pageText());
+		await wb.shot('page-survey.png');
+		const questions = survey?.questions ?? [];
+		if (questions.length > 0) {
+			// the first answer on the page
+			await inWebview('.page', `() => {
+				const t = d.querySelector('.answer textarea');
+				if (!t) { return false; }
+				t.value = 'The test answers on the page.';
+				t.dispatchEvent(new d.defaultView.Event('input', { bubbles: true }));
+				return true;
+			}`);
+			await sleep(500);
+			await inWebview('.page', `() => {
+				const b = d.querySelector('.answer button:not([disabled])');
+				b?.click();
+				return !!b;
+			}`);
+			const first = await poll(() => readJson(taskFile(TASK_1, 'answers.json'))?.answers?.[questions[0].id], 15);
+			check('The page saves an answer of the user', first?.text === 'The test answers on the page.', readJson(taskFile(TASK_1, 'answers.json')));
+		}
+
+		// the page opens the place of a hook in the text editor, and the text editor shows the hook
+		const hook = cppHooks[0] ?? survey?.hooks?.[0];
+		if (hook) {
+			await inWebview('.page', `() => {
+				const row = [...d.querySelectorAll('.hooks .row')].find((r) => r.querySelector('.id')?.textContent === ${JSON.stringify(hook.id)});
+				row?.click();
+				return !!row;
+			}`);
+			await sleep(500);
+			await inWebview('.page', `() => {
+				const b = [...d.querySelectorAll('button')].find((x) => x.textContent.includes('Open in the text editor'));
+				b?.click();
+				return !!b;
+			}`);
+			const tab = await poll(async () => {
+				const t = await wb.evaluate("document.querySelector('.part.editor .tab.active')?.textContent ?? ''");
+				return String(t).includes(path.basename(hook.file)) ? t : undefined;
+			}, 15);
+			await sleep(1000);
+			const cursor = String(await wb.evaluate("document.getElementById('status.editor.selection')?.textContent ?? ''"));
+			check('The page opens the place of the hook in the text editor', !!tab && cursor.includes(`Ln ${hook.lines[0]},`), { tab, cursor, hook });
+			const mark = `${hook.id} · `;
+			const label = await poll(() => wb.evaluate(`(() => {
+				for (const el of document.querySelectorAll('.part.editor .view-lines span')) {
+					const after = getComputedStyle(el, '::after').content;
+					if (after && after.includes(${JSON.stringify(mark)})) { return after; }
+					if (el.children.length === 0 && el.textContent.includes(${JSON.stringify(mark)})) { return el.textContent; }
+				}
+				return undefined;
+			})()`), 10);
+			check('The text editor shows the hook with its id and its title', !!label, label);
+			await wb.shot('editor-hook.png');
+		}
+
+		// the other answers with the Command Palette, and the gate
+		for (let i = 1; i < questions.length; i++) {
+			await command(wb, 'Shotgun: Answer Question');
+			await quickPickNth(wb, 'Shotgun: Answer Question', i);
+			await quickInput(wb, `The test answers ${questions[i].id} with the Command Palette.`, `Shotgun: Answer ${questions[i].id}`);
+			await sleep(800);
+		}
+		const answers = readJson(taskFile(TASK_1, 'answers.json'))?.answers ?? {};
+		check('Each question of the survey has an answer', questions.every((q) => answers[q.id]?.text), answers);
+		check('The ledger records each answer', ledgerOf(TASK_1).filter((d) => d.kind === 'answer').length === questions.length,
+			ledgerOf(TASK_1).map((d) => d.kind));
+		await command(wb, 'Shotgun: Pass the Gate');
+		// with a question with no answer, a modal message asks first
+		if (await poll(() => clickDialog(wb, 'Pass the Gate'), 2)) {
+			results.notes = [...(results.notes ?? []), 'The gate "Order the tasks" asked about questions with no answer.'];
+		}
+		const ordered = await poll(() => (readJson(taskFile(TASK_1, 'task.json'))?.stage === 'order' ? readJson(taskFile(TASK_1, 'task.json')) : undefined), 20);
+		check('The gate "Order the tasks" takes task 1 to stage 3', ordered?.gates?.[1]?.gate === 'order-tasks', readJson(taskFile(TASK_1, 'task.json')));
+		text = await poll(async () => (await panelText())?.includes('Survey my changed tasks.') && true, 15);
+		check('The panel shows stage 3 of task 1 with its request', !!text, await panelText());
+		await wb.shot('panel-order.png');
 		wb.ws.close();
 	} catch (error) {
 		check('The test runs to its end', false, String(error?.stack ?? error));
+		// the screen at the failure
+		await wb?.shot('failure.png').catch(() => undefined);
 	} finally {
 		killTree(proc.pid);
 		await sleep(2000);
@@ -650,6 +845,14 @@ async function main() {
 		await sleep(500);
 		const left = processesOf(dir);
 		check('No process of the run is left', left.length === 0, left);
+		// a write of a stage file that failed leaves a temporary file
+		const temps = [];
+		const walk = (folder) => fs.readdirSync(folder, { withFileTypes: true }).forEach((e) => (e.isDirectory() ? walk(path.join(folder, e.name))
+			: e.name.endsWith('.tmp') && temps.push(path.join(folder, e.name))));
+		if (fs.existsSync(path.join(p.project, '.shotgun'))) {
+			walk(path.join(p.project, '.shotgun'));
+		}
+		check('No temporary file is left in .shotgun', temps.length === 0, temps);
 		// the CLI makes empty folders in the data of the user: the folder of the project of the run in projects, and the
 		// data of the 2 plugins in plugins/data. The test removes them. A different new folder stays, but the check fails
 		const isOfRun = (name) => name.includes(path.basename(dir)) || ['dataflow-inline', 'shotgun-inline'].includes(name);

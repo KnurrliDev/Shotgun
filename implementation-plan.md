@@ -50,7 +50,9 @@ These items are not in the scope of version 1:
 11. The user can give the brief in a file, or directly to Claude in the chat of Claude Code.
 12. For a brief from the chat, Claude can add only the headings of the 5 parts and list marks. The context hook gives each prompt of the user to Shotgun. Shotgun keeps the last prompts only in memory, and `submit_brief` refuses each line that is not in the words of the user.
 
-The user gave decision 10 on 13 November 2026, and the decisions 11 and 12 on 14 November 2026. Decision 10 changes the buttons of the canvas that started Claude. Section 12 lists these changes.
+13. In the survey, a fact that Claude writes gets the badge "Model", with the DataFlow tool that Claude names and the place as a link. The facts that Shotgun gets from DataFlow for each hook (the function, the threads, the locks, the frame path and the heat) get the badge "Engine".
+
+The user gave decision 10 on 13 November 2026, and the decisions 11 to 13 on 14 November 2026. Decision 10 changes the buttons of the canvas that started Claude. Section 12 lists these changes.
 
 ## 3. Proposals of this plan
 
@@ -142,7 +144,9 @@ The other stages of Claude run in the same way: the user asks, Claude reads, and
 | `task.json` | Shotgun | The id, the title and the start time of the task, its stage, and its gates with their times. |
 | `brief.md` | User | The goal, the facts, the specs, the limits and the condition of done. |
 | `questions.json` | Claude | The questions of Claude about the brief. |
-| `survey.json` | Claude | The facts, the tasks, the hooks and the questions of the survey, with the answers of the user. |
+| `survey.json` | Claude | The facts, the tasks, the hooks and the questions of the survey. |
+| `engine.json` | Shotgun | The facts of DataFlow for each hook of the survey: the function, the threads, the locks and the heat. |
+| `answers.json` | User | The answers of the user to the questions of the survey. |
 | `order.json` | User | The tasks in sequence, with the new texts, the new tasks and the tasks for later. |
 | `plan.json` | Claude and user | The steps, the levels of the rules, the levels of the user and the notes of the user. |
 | `build.json` | Shotgun | The state of each step, the holes, the receipts and the loose ends. |
@@ -165,7 +169,7 @@ The MCP name of each tool starts with `shotgun_`. In Claude Code, the full name 
 | `get_commit_message` | read | 5 | The commit message and the summary of the ledger. |
 | `submit_brief` | submit | 1 | The brief that the user wrote in the chat, and a short title of the task. Each line must be in a recent prompt of the user (decision 12). The brief goes into a new task, or into the active task in stage 1 if its brief has no text. |
 | `submit_questions` | submit | 1 | 1 to 10 questions of Claude about the brief, each with a part and a quote of the brief. A new list replaces the open questions. |
-| `submit_survey` | submit | 2 | The facts, the tasks, the hooks and the questions. |
+| `submit_survey` | submit | 2 | The facts, the tasks, the hooks and the questions. Each hook gives a short text of its code. Shotgun then gets the facts of DataFlow for each hook. A new survey replaces the old survey. |
 | `submit_task_survey` | submit | 3 | The hooks and the needs of a rewritten task or of a new task. |
 | `submit_plan` | submit | 4 | The steps of the plan. |
 | `start_step` | submit | 5 | Opens a step for an errand or for a frame. |
@@ -377,6 +381,24 @@ Differences from the plan:
 - **Skill:** `shotgun-survey`: read the brief, read the code through DataFlow, submit, and correct each problem.
 - **Gate:** **Order the tasks**.
 - **Done when:** the survey of the fixture `battery` of DataFlow shows 7 hooks with their heat.
+
+**Status, 14 November 2026:** done. `scripts/test-claude.mjs` passed all 56 checks with 4 prompts of Claude Code:
+
+- Task 1: "Survey my brief." loaded the skill `shotgun-survey`. Claude read the code with 6 read tools of DataFlow. It gave a survey with 5 tasks, 6 hooks, 5 facts and 5 questions, and Shotgun took it at the first call. Each fact names a tool that Claude called.
+- Each hook in a C++ file got the facts of DataFlow. The 4 hooks in functions got their heat: 30 or 40, warm. The 2 hooks in types got the facts of the type, with no score. The scan of the call graph was complete.
+- The test answered 1 question on the page and 4 questions with **Shotgun: Answer Question**. The page opened the place of a hook in the text editor, and the text editor showed the hook with its id and title. The gate **Order the tasks** took task 1 to stage 3.
+- Done when: Claude selects the number of the hooks. An earlier run gave 7 hooks, and the last run gave 6 hooks. In both runs, each hook in a function had its heat. A hook in a type has no heat, because a type has no score in DataFlow (gap 11).
+
+Differences from the plan:
+
+- Claude gives a short text of the code of each hook in the field `code`, and Shotgun checks it in the lines of the hook. A hook moves with its code. Section 6.7 gives a different rule for the other items: the text of the first and the last line.
+- `getPlace` gets the line of the code of the hook. A hook in a type gets the shared members of the type from the field `types` of `getHeat`. Shotgun does not use `getOutline` or `listFunctions` for the check.
+- Before the end of the scan of the call graph, the page shows the heat with "*" and a note. The plan gave the words "heat after the scan". At the end of the scan, Shotgun gets the facts again.
+- The facts of DataFlow go into `engine.json`, and the answers of the user go into `answers.json`. Section 6.3 has these files now.
+- New commands: **Shotgun: Answer Question** and **Shotgun: Check the Hooks Again**.
+- Claude gives the ids of the tasks, the hooks and the questions. Thus a new survey keeps each answer with its question.
+- In the first runs, Claude read the code only with the tool Read, and each fact named a tool that Claude did not call. Now the skill tells Claude to give a fact only from a call of a read tool of DataFlow. Shotgun cannot check the tool calls (gap 43 of `dataflow-gaps-2.md`). Only `scripts/test-claude.mjs` checks them.
+- Fix: on Windows, a different program can keep a stage file open for a short time. Then "Shotgun: Open Task" did not change the active task. Now the write of a stage file tries again for a maximum of 1 second.
 
 ### Phase 4: order
 

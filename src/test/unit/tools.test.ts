@@ -10,9 +10,10 @@ import { decide, GuardState, hookOutput } from '../../tools/guard';
 import { PromptLog } from '../../tools/prompts';
 import { shotgunTools, ToolDeps } from '../../tools/tools';
 
-// The dependencies of the tools for a test: the files on the disk, and a list of the files that a tool opens
+// The dependencies of the tools for a test: the files on the disk, a list of the files that a tool opens, and no link to
+// DataFlow
 function testDeps(store: SessionStore, root: string, prompts: PromptLog, opened: string[]): ToolDeps {
-	return { store, folders: () => [root], log: () => undefined, prompts, readText, openFile: (file) => opened.push(file) };
+	return { store, folders: () => [root], log: () => undefined, prompts, readText, openFile: (file) => opened.push(file), engine: () => undefined };
 }
 
 // The tools of Shotgun for the MCP server of DataFlow: the guard, the context and get_session

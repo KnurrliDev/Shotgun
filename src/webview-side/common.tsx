@@ -186,7 +186,7 @@ function BriefStage({ brief, request }: { brief: BriefView; request?: string }) 
 }
 
 // The gate of the stage: a decision of the user. The button records it, and it never starts Claude
-function GateBlock({ gate }: { gate: GateView }) {
+export function GateBlock({ gate }: { gate: GateView }) {
 	return (
 		<div class="gate">
 			{gate.warning && <p class="notice">{gate.warning}</p>}

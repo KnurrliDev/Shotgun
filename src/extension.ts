@@ -4,11 +4,15 @@ import { ClaudeConnection, ClaudeState } from './claude/connection';
 import { isSamePath } from './claude/settings';
 import type { DataFlowApi } from './dataflow/dataflow-api';
 import { linkDataFlow } from './dataflow/dataflow';
+import { HookDecorations } from './editor/hooks';
 import { parseBrief } from './session/brief';
 import { readText } from './session/files';
+import { absolutePath, isCppFile, isInside } from './session/paths';
 import { GATE_LABEL, stageText } from './session/stages';
-import { messageOf, SessionStore } from './session/store';
+import { messageOf, SessionStore, Snapshot } from './session/store';
+import { findHook, MAX_ANSWER, movedHook } from './session/survey';
 import { PromptLog } from './tools/prompts';
+import { EngineApi, engineFacts } from './tools/survey';
 import { shotgunTools } from './tools/tools';
 import { buildModel, DataFlowView, statusOf } from './views/model';
 import type { FromView, ViewCommand } from './views/protocol';
@@ -49,10 +53,13 @@ class Shotgun implements vscode.Disposable {
 	private readonly views: Views;
 	// the last prompts of the user, only in memory, for the check of a brief from the chat (decision 12)
 	private readonly prompts = new PromptLog();
+	// the hooks of the survey in the text editor, in the stages 2 and 3
+	private readonly hooks = new HookDecorations();
 	private readonly disposables: vscode.Disposable[] = [];
 	private dataflow: DataFlowView = { state: 'linking' };
 	private api: DataFlowApi | undefined;
 	private updateTimer: NodeJS.Timeout | undefined;
+	private isCheckingHooks = false;
 
 	constructor(private readonly context: vscode.ExtensionContext) {
 		// Shotgun keeps its files in the first workspace folder (proposal P5)
@@ -62,7 +69,7 @@ class Shotgun implements vscode.Disposable {
 		this.status.name = 'Shotgun';
 		this.status.command = `${PANEL_ID}.focus`;
 		this.disposables.push(
-			this.log, this.status, this.views,
+			this.log, this.status, this.views, this.hooks,
 			this.store.onDidChange(() => this.update()),
 			...this.commands(),
 			this.watchFiles(),
@@ -73,10 +80,10 @@ class Shotgun implements vscode.Disposable {
 					void vscode.window.showInformationMessage('Shotgun uses the first folder of the workspace. Reload the window to use the new first folder.');
 				}
 			}),
-			// the panel checks the parts of the brief while the user writes
-			vscode.workspace.onDidChangeTextDocument((e) => this.isBrief(e.document) && this.updateSoon()),
-			vscode.workspace.onDidSaveTextDocument((doc) => this.isBrief(doc) && this.update()),
-			vscode.workspace.onDidCloseTextDocument((doc) => this.isBrief(doc) && this.update()),
+			// the panel checks the parts of the brief while the user writes, and the survey page follows the code of the hooks
+			vscode.workspace.onDidChangeTextDocument((e) => this.isWatched(e.document) && this.updateSoon()),
+			vscode.workspace.onDidSaveTextDocument((doc) => this.isWatched(doc) && this.update()),
+			vscode.workspace.onDidCloseTextDocument((doc) => this.isWatched(doc) && this.update()),
 			new vscode.Disposable(() => clearTimeout(this.updateTimer)),
 		);
 		this.store.load();
@@ -109,6 +116,7 @@ class Shotgun implements vscode.Disposable {
 				prompts: this.prompts,
 				readText: (file) => this.textOf(file),
 				openFile: (file) => void vscode.window.showTextDocument(vscode.Uri.file(file), { preview: false, preserveFocus: true }),
+				engine: () => this.engineApi(),
 			});
 			this.disposables.push(api.registerTools(tools));
 			this.log.info(`DataFlow ${link.version} has the tools of Shotgun: ${tools.map((t) => `shotgun_${t.name}`).join(', ')}.`);
@@ -117,11 +125,72 @@ class Shotgun implements vscode.Disposable {
 			this.log.error(`DataFlow did not add the tools of Shotgun: ${toolsError}`);
 		}
 		this.dataflow = { state: 'ready', version: link.version, engine: api.engineState, engineError: api.engineError, toolsError };
-		this.disposables.push(api.onDidChangeEngineState((e) => {
-			this.dataflow = { ...this.dataflow, engine: e.state, engineError: e.error };
-			this.update();
-		}));
+		this.disposables.push(
+			api.onDidChangeEngineState((e) => {
+				this.dataflow = { ...this.dataflow, engine: e.state, engineError: e.error };
+				this.update();
+				if (e.state === 'ready') {
+					void this.checkHooks(false).catch((error: unknown) => this.log.warn(`Shotgun did not check the hooks: ${messageOf(error)}`));
+				}
+			}),
+			// at the end of the scan of the call graph, the heat of the hooks can change
+			api.onDidChangeCallGraph((e) => {
+				if (e.state === 'ready') {
+					void this.checkHooks(false).catch((error: unknown) => this.log.warn(`Shotgun did not check the hooks: ${messageOf(error)}`));
+				}
+			}),
+		);
 		this.update();
+	}
+
+	// The facts of DataFlow for the hooks of the survey. undefined: no link to DataFlow
+	private engineApi(): EngineApi | undefined {
+		const api = this.api;
+		if (!api) {
+			return undefined;
+		}
+		return {
+			// the read tools of DataFlow. The tools of Shotgun are in the same list, but a fact cites a tool of DataFlow
+			tools: () => api.tools.filter((t) => t.isReadOnly && !t.name.startsWith('shotgun_')).map((t) => t.name),
+			place: (file, line) => api.getPlace({ file, line }),
+			heat: (file, lines) => api.getHeat({ file, lines: [lines[0], lines[1]] }),
+		};
+	}
+
+	// Gets the facts of DataFlow for the hooks of the survey again, at their lines now. isForced false: only if facts are
+	// missing, or if the scan of the call graph was not complete at the last check
+	private async checkHooks(isForced: boolean): Promise<void> {
+		const { task, survey, engine, root } = this.store.snapshot;
+		if (!task || !survey || !root || task.isDone || (task.stage !== 'survey' && task.stage !== 'order')) {
+			if (isForced) {
+				throw new Error('The active task has no survey in stage 2 or 3, so it has no hooks to check.');
+			}
+			return;
+		}
+		const isMissing = !engine || !engine.isReachComplete
+			|| survey.hooks.some((h) => !engine.hooks[h.id] || (!engine.hooks[h.id].hasFacts && isCppFile(h.file)));
+		if ((!isForced && !isMissing) || this.isCheckingHooks) {
+			return;
+		}
+		this.isCheckingHooks = true;
+		try {
+			const hooks = survey.hooks.map((h) => {
+				const text = this.textOf(absolutePath(h.file, root))?.split(/\r?\n/);
+				const lines = text ? findHook(text, h) : undefined;
+				return lines ? movedHook(h, lines) : h;
+			});
+			const facts = await engineFacts(this.engineApi(), root, hooks);
+			// the user can open a different task, or Claude can give a new survey, while DataFlow works
+			const now = this.store.snapshot;
+			if (now.task?.id !== task.id || now.survey?.time !== survey.time) {
+				return;
+			}
+			this.store.writeEngine(facts);
+			this.log.info(`Shotgun checked ${hooks.length === 1 ? '1 hook' : `${hooks.length} hooks`} with DataFlow. `
+				+ (facts.isReachComplete ? 'The heat is complete.' : 'The scan of the call graph is not complete, so the heat can change.'));
+		} finally {
+			this.isCheckingHooks = false;
+		}
 	}
 
 	dispose(): void {
@@ -148,6 +217,15 @@ class Shotgun implements vscode.Disposable {
 		return !!file && doc.uri.scheme === 'file' && isSamePath(doc.uri.fsPath, file);
 	}
 
+	// The brief of the active task, or a file with a hook of its survey: a change of the text changes the views
+	private isWatched(doc: vscode.TextDocument): boolean {
+		if (this.isBrief(doc)) {
+			return true;
+		}
+		const { survey, root } = this.store.snapshot;
+		return !!survey && !!root && doc.uri.scheme === 'file' && survey.hooks.some((h) => isSamePath(absolutePath(h.file, root), doc.uri.fsPath));
+	}
+
 	private commands(): vscode.Disposable[] {
 		// a command shows its error to the user
 		const run = (fn: () => unknown) => async () => {
@@ -165,6 +243,8 @@ class Shotgun implements vscode.Disposable {
 			vscode.commands.registerCommand('shotgun.showPage', run(() => this.views.showPage())),
 			vscode.commands.registerCommand('shotgun.openBrief', run(() => this.openBrief())),
 			vscode.commands.registerCommand('shotgun.closeQuestion', run(() => this.closeQuestion())),
+			vscode.commands.registerCommand('shotgun.answerQuestion', run(() => this.answerQuestion())),
+			vscode.commands.registerCommand('shotgun.checkHooks', run(() => this.checkHooks(true))),
 			vscode.commands.registerCommand('shotgun.passGate', run(() => this.passGate())),
 			vscode.commands.registerCommand('shotgun.connectClaude', run(() => this.connectClaude())),
 			vscode.commands.registerCommand('shotgun.disconnectClaude', run(() => this.disconnectClaude())),
@@ -249,7 +329,45 @@ class Shotgun implements vscode.Disposable {
 		}
 	}
 
-	// The gate of the current stage. This version of Shotgun has only the gate of stage 1, "The brief is ready"
+	// The answer of the user to a question of the survey. The page has a text field for each question too
+	private async answerQuestion(): Promise<void> {
+		const { task, survey, answers } = this.store.snapshot;
+		if (!task || task.isDone || task.stage !== 'survey' || !survey || survey.questions.length === 0) {
+			void vscode.window.showInformationMessage('Shotgun: the survey of the active task has no question to answer.');
+			return;
+		}
+		const pick = await vscode.window.showQuickPick(survey.questions.map((q) => ({
+			label: q.text,
+			description: q.id,
+			detail: answers[q.id] ? `Your answer: ${answers[q.id].text}` : 'No answer',
+			id: q.id,
+		})), { title: 'Shotgun: Answer Question', placeHolder: 'Select the question of the survey', matchOnDescription: true });
+		if (!pick) {
+			return;
+		}
+		const text = await vscode.window.showInputBox({
+			title: `Shotgun: Answer ${pick.id}`,
+			prompt: `${pick.label} An empty answer removes the answer.`,
+			value: answers[pick.id]?.text ?? '',
+			ignoreFocusOut: true,
+			validateInput: (value) => (value.trim().length > MAX_ANSWER ? `Give an answer of ${MAX_ANSWER} characters or less.` : undefined),
+		});
+		if (text !== undefined) {
+			this.store.setAnswer(pick.id, text);
+		}
+	}
+
+	// Opens a file of the project at a line, for example the place of a hook from the survey page
+	private async openPlace(file: string, line: number): Promise<void> {
+		// the message comes from a webview, so Shotgun opens only files in the workspace folders
+		if (!path.isAbsolute(file) || !this.folders().some((f) => isInside(file, f))) {
+			throw new Error(`Shotgun opens only files in the workspace folders: ${file}`);
+		}
+		const position = new vscode.Position(Math.max(0, line - 1), 0);
+		await vscode.window.showTextDocument(vscode.Uri.file(file), { preview: false, selection: new vscode.Range(position, position) });
+	}
+
+	// The gate of the current stage. This version of Shotgun has the gates of the stages 1 and 2
 	private async passGate(): Promise<void> {
 		const task = this.store.snapshot.task;
 		if (!task) {
@@ -258,9 +376,37 @@ class Shotgun implements vscode.Disposable {
 		if (task.isDone) {
 			throw new Error('The task is done. It has no more gates.');
 		}
-		if (task.stage !== 'brief') {
-			throw new Error(`This version of Shotgun does not have the gate of ${stageText(task.stage)} yet.`);
+		switch (task.stage) {
+			case 'brief':
+				return this.passBriefGate(task);
+			case 'survey':
+				return this.passSurveyGate(task);
+			default:
+				throw new Error(`This version of Shotgun does not have the gate of ${stageText(task.stage)} yet.`);
 		}
+	}
+
+	// The gate of stage 2, "Order the tasks". The order of the tasks starts from the survey of Claude
+	private async passSurveyGate(task: NonNullable<Snapshot['task']>): Promise<void> {
+		const { survey, answers } = this.store.snapshot;
+		if (!survey) {
+			throw new Error('The active task has no survey. Ask Claude for the survey first, for example with "Survey my brief."');
+		}
+		const open = survey.questions.filter((q) => !answers[q.id]).length;
+		if (open > 0) {
+			const pick = await vscode.window.showWarningMessage(
+				`${open === 1 ? '1 question' : `${open} questions`} of the survey ${open === 1 ? 'has' : 'have'} no answer. Do you want to pass the gate "${GATE_LABEL['order-tasks']}"?`,
+				{ modal: true, detail: 'The questions with no answer stay in the survey. You put the tasks in sequence with the survey as it is.' }, PASS_GATE);
+			if (pick !== PASS_GATE) {
+				return;
+			}
+		}
+		this.store.passGate('order-tasks');
+		this.log.info(`The task ${task.id} passed the gate "${GATE_LABEL['order-tasks']}".`);
+	}
+
+	// The gate of stage 1, "The brief is ready"
+	private async passBriefGate(task: NonNullable<Snapshot['task']>): Promise<void> {
 		const file = this.store.briefFile(task.id)!;
 		// the gate uses the text on the disk, so the text editor saves it first
 		const doc = this.documentOf(file);
@@ -351,6 +497,16 @@ class Shotgun implements vscode.Disposable {
 				case 'gate':
 					await this.passGate();
 					break;
+				case 'openPlace':
+					await this.openPlace(message.path, message.line);
+					break;
+				case 'saveAnswer':
+					this.store.setAnswer(message.id, message.text);
+					vscode.window.setStatusBarMessage(`Shotgun: the answer to ${message.id} is saved.`, 3000);
+					break;
+				case 'checkHooks':
+					await this.checkHooks(true);
+					break;
 				default:
 					break;
 			}
@@ -398,13 +554,20 @@ class Shotgun implements vscode.Disposable {
 			dataflow: this.dataflow,
 			claude,
 			...(file && text !== undefined ? { brief: { file, text, isDirty: !!doc?.isDirty } } : {}),
+			readLines: (f) => this.textOf(f)?.split(/\r?\n/),
 		}));
+		this.hooks.update(snapshot);
 		const status = statusOf(snapshot);
 		this.status.text = `$(send) ${status.text}`;
 		this.status.tooltip = status.tooltip;
 		this.status.show();
-		void vscode.commands.executeCommand('setContext', 'shotgun.hasTask', !!snapshot.task);
+		const { task, survey } = snapshot;
+		const isSurvey = !!task && !task.isDone && task.stage === 'survey' && !!survey;
+		void vscode.commands.executeCommand('setContext', 'shotgun.hasTask', !!task);
 		void vscode.commands.executeCommand('setContext', 'shotgun.isPaused', snapshot.isPaused);
 		void vscode.commands.executeCommand('setContext', 'shotgun.hasQuestions', snapshot.questions.some((q) => q.state === 'open'));
+		void vscode.commands.executeCommand('setContext', 'shotgun.hasSurveyQuestions', isSurvey && survey.questions.length > 0);
+		void vscode.commands.executeCommand('setContext', 'shotgun.hasHooks',
+			!!task && !task.isDone && (task.stage === 'survey' || task.stage === 'order') && !!survey && survey.hooks.length > 0);
 	}
 }

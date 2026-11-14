@@ -42,6 +42,12 @@ When the user gives a brief in the chat:
 5. Call `shotgun_submit_brief` with a short title and the text.
 6. If the user wants a new task for the brief, give `"isNewTask": true`.
 
+Shotgun selects the task, so do not ask the user about the task before the call:
+
+- Shotgun makes a new task if no task is active, if the active task is after stage 1, or if you give `"isNewTask": true`.
+- Shotgun puts the brief into the active task in stage 1 only if its brief has no text.
+- Shotgun never changes a brief with text. In that case, it refuses the brief, and you ask the user.
+
 Shotgun checks each line against the recent prompts of the user. If Shotgun refuses a line, use the exact words of the user, or ask the user.
 
 ### Questions about the brief
@@ -59,3 +65,7 @@ The user answers in the brief, and closes each question in the panel.
 ### The gate
 
 When each part of the brief has text, the user selects "The brief is ready" in the panel of Shotgun. Then the task goes to stage 2. The next request of the user is "Survey my brief.".
+
+## Stage 2: the survey
+
+When the user asks for the survey, for example "Survey my brief", use the skill `shotgun-survey`. It gives the rules for the tasks, the hooks, the facts and the questions.

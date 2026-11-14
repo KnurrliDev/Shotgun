@@ -3,9 +3,11 @@ import type { ClaudeState } from '../claude/connection';
 import { MIN_DATAFLOW } from '../dataflow/version';
 import { parseBrief, partName, partSummary, questionLine } from '../session/brief';
 import type { Decision, TaskFile } from '../session/files';
+import { absolutePath } from '../session/paths';
 import { GATE_LABEL, STAGE_INFO, STAGES, stageText } from '../session/stages';
 import type { Snapshot } from '../session/store';
-import type { BriefView, DecisionView, GateView, SetupRow, StageView, TaskView, ViewModel } from './protocol';
+import { excerptOf, findHook, Lines } from '../session/survey';
+import type { BriefView, DecisionView, GateView, HookView, SetupRow, StageView, SurveyView, TaskView, ViewModel } from './protocol';
 
 // The view model of the page and of the panel, from the session, the state of DataFlow and the connection to Claude
 // Code. These functions use no VS Code API, so the unit tests can call them directly.
@@ -27,7 +29,12 @@ export interface ModelInput {
 	readonly claude: ClaudeState;
 	// the brief of the active task: the text of the open text editor, else of the file
 	readonly brief?: { readonly file: string; readonly text: string; readonly isDirty: boolean };
+	// the lines of a file of the project now, for the hooks of the survey. undefined: no file
+	readonly readLines?: (file: string) => readonly string[] | undefined;
 }
+
+const count = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`;
+const placeText = (file: string, lines: Lines): string => (lines[0] === lines[1] ? `${file}:${lines[0]}` : `${file}:${lines[0]}-${lines[1]}`);
 
 // The maximum number of decisions in the views
 const MAX_DECISIONS = 30;
@@ -50,7 +57,57 @@ export function decisionText(decision: Decision): string {
 			return `Claude asked ${decision.count === 1 ? '1 question' : `${decision.count} questions`} about the brief.`;
 		case 'question':
 			return `You closed the question "${decision.text}".`;
+		case 'survey':
+			return `Claude gave the survey: ${count(decision.tasks, 'task')}, ${count(decision.hooks, 'hook')}, ${count(decision.facts, 'fact')} `
+				+ `and ${count(decision.questions, 'question')}.`;
+		case 'answer':
+			return decision.text ? `You answered the question ${decision.id}: "${decision.text}".` : `You removed the answer to the question ${decision.id}.`;
 	}
+}
+
+// Stage 2 and later: the survey of Claude with the facts of DataFlow. The hooks are in the text as it is now
+function surveyView(snapshot: Snapshot, readLines: ModelInput['readLines']): SurveyView | undefined {
+	const { survey, root, task } = snapshot;
+	if (!survey || !root || !task) {
+		return undefined;
+	}
+	const files = new Map<string, readonly string[] | undefined>();
+	const linesOf = (file: string) => {
+		if (!files.has(file)) {
+			files.set(file, readLines?.(file));
+		}
+		return files.get(file);
+	};
+	const hooks: HookView[] = survey.hooks.map((h) => {
+		const file = absolutePath(h.file, root);
+		const text = linesOf(file);
+		const found = text ? findHook(text, h) : undefined;
+		const lines = found ?? h.lines;
+		const engine = snapshot.engine?.hooks[h.id];
+		return {
+			id: h.id,
+			title: h.title,
+			kind: h.kind,
+			place: placeText(h.file, h.lines),
+			path: file,
+			lines: [lines[0], lines[1]],
+			isMoved: !!found && found[0] !== h.lines[0],
+			isLost: !!text && !found,
+			tasks: survey.tasks.filter((t) => t.hooks.includes(h.id)).map((t) => t.id),
+			...(engine ? { engine: { ...engine } } : {}),
+			...(text ? { excerpt: excerptOf(text, lines) } : {}),
+		};
+	});
+	return {
+		time: survey.time,
+		tasks: survey.tasks.map((t) => ({ id: t.id, title: t.title, ...(t.text ? { text: t.text } : {}), hooks: [...t.hooks], needs: [...t.needs] })),
+		hooks,
+		facts: survey.facts.map((f) => ({ text: f.text, place: placeText(f.file, f.lines), path: absolutePath(f.file, root), line: f.lines[0], tool: f.tool })),
+		questions: survey.questions.map((q) => ({ id: q.id, text: q.text, ...(snapshot.answers[q.id] ? { answer: snapshot.answers[q.id].text } : {}) })),
+		isReachComplete: snapshot.engine?.isReachComplete ?? false,
+		...(snapshot.engine ? { engineTime: snapshot.engine.time } : {}),
+		isEditable: task.stage === 'survey' && !task.isDone,
+	};
 }
 
 // Stage 1: the parts of the brief and the open questions of Claude
@@ -71,9 +128,22 @@ function briefView(snapshot: Snapshot, brief: NonNullable<ModelInput['brief']>):
 	};
 }
 
-// The gate of the stage. This version of Shotgun has only the gate of stage 1
-function gateView(task: TaskFile, brief: BriefView | undefined): GateView | undefined {
-	if (task.isDone || task.stage !== 'brief' || !brief) {
+// The gate of the stage. This version of Shotgun has the gates of the stages 1 and 2
+function gateView(task: TaskFile, brief: BriefView | undefined, survey: SurveyView | undefined): GateView | undefined {
+	if (task.isDone) {
+		return undefined;
+	}
+	if (task.stage === 'survey') {
+		const open = survey ? survey.questions.filter((q) => !q.answer).length : 0;
+		return {
+			label: GATE_LABEL['order-tasks'],
+			note: 'Your gate. After it, you put the tasks in sequence. You can rewrite a task, and you can add a task.',
+			isEnabled: !!survey,
+			...(survey ? {} : { reason: 'Ask Claude for the survey first.' }),
+			...(open > 0 ? { warning: `${open === 1 ? '1 question' : `${open} questions`} of the survey ${open === 1 ? 'has' : 'have'} no answer.` } : {}),
+		};
+	}
+	if (task.stage !== 'brief' || !brief) {
 		return undefined;
 	}
 	const missing = brief.parts.filter((p) => !p.hasText).map((p) => p.name);
@@ -174,13 +244,14 @@ function stageViews(snapshot: Snapshot): StageView[] {
 	});
 }
 
-function taskView(snapshot: Snapshot, briefInput: ModelInput['brief']): TaskView | null {
+function taskView(snapshot: Snapshot, briefInput: ModelInput['brief'], readLines: ModelInput['readLines']): TaskView | null {
 	const task = snapshot.task;
 	if (!task) {
 		return null;
 	}
 	const brief = task.stage === 'brief' && !task.isDone && briefInput ? briefView(snapshot, briefInput) : undefined;
-	const gate = gateView(task, brief);
+	const survey = task.stage !== 'brief' ? surveyView(snapshot, readLines) : undefined;
+	const gate = gateView(task, brief, survey);
 	const info = STAGE_INFO[task.stage];
 	const isActive = !task.isDone && !snapshot.isPaused;
 	let next = info.next;
@@ -205,6 +276,7 @@ function taskView(snapshot: Snapshot, briefInput: ModelInput['brief']): TaskView
 		guard,
 		...(isActive && info.request ? { request: info.request } : {}),
 		...(brief ? { brief } : {}),
+		...(survey ? { survey } : {}),
 		...(gate ? { gate } : {}),
 		isDone: task.isDone,
 		isPaused: snapshot.isPaused,
@@ -219,7 +291,7 @@ export function buildModel(input: ModelInput): ViewModel {
 	return {
 		version: input.version,
 		stages: stageViews(snapshot),
-		task: taskView(snapshot, input.brief),
+		task: taskView(snapshot, input.brief, input.readLines),
 		tasks: snapshot.tasks.map((t) => ({
 			id: t.id, title: t.title, stageNumber: STAGE_INFO[t.stage].number, stageName: STAGE_INFO[t.stage].name, isDone: t.isDone,
 			isActive: t.id === snapshot.task?.id,

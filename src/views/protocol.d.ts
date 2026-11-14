@@ -26,6 +26,7 @@ export interface TaskView {
 	guard: string; // the rule of the guard
 	request?: string; // a request in words for Claude Code
 	brief?: BriefView; // stage 1: the brief and the questions
+	survey?: SurveyView; // stage 2 and later: the survey of Claude
 	gate?: GateView; // the gate of the stage, if this version of Shotgun has it
 	isDone: boolean;
 	isPaused: boolean;
@@ -54,6 +55,68 @@ export interface BriefView {
 	isDirty: boolean; // the text editor has changes that are not saved
 	questions: QuestionView[]; // the open questions of Claude
 	closed: number; // the number of the closed questions
+}
+
+// The facts of DataFlow for a hook (decision 13: the badge Engine)
+export interface HookEngineView {
+	text: string;
+	hasFacts: boolean;
+	function?: string;
+	type?: string;
+	heat?: { function: string; score: number; band: 'cool' | 'warm' | 'hot' | 'very hot'; isReachComplete: boolean; reachUnknown?: string };
+}
+
+export interface ExcerptView {
+	lines: { line: number; text: string; isHook: boolean }[];
+	isCut: boolean; // the hook has more lines than the excerpt
+}
+
+export interface HookView {
+	id: string;
+	title: string;
+	kind: string; // the words of Claude
+	place: string; // for example "src/battery.cpp:92-107"
+	path: string; // the absolute path of the file
+	lines: [number, number]; // the lines now: the code of the hook can move after the survey
+	isMoved: boolean; // the code of the hook is at different lines now
+	isLost: boolean; // the code of the hook is not in the file now
+	tasks: string[]; // the ids of the tasks with the hook
+	engine?: HookEngineView;
+	excerpt?: ExcerptView;
+}
+
+export interface SurveyTaskView {
+	id: string;
+	title: string;
+	text?: string;
+	hooks: string[];
+	needs: string[];
+}
+
+// A fact of Claude, with the read tool of DataFlow that shows it (decision 13: the badge Model)
+export interface FactView {
+	text: string;
+	place: string;
+	path: string;
+	line: number;
+	tool: string;
+}
+
+export interface SurveyQuestionView {
+	id: string;
+	text: string;
+	answer?: string;
+}
+
+export interface SurveyView {
+	time: string;
+	tasks: SurveyTaskView[];
+	hooks: HookView[];
+	facts: FactView[];
+	questions: SurveyQuestionView[];
+	isReachComplete: boolean; // false: the scan of the call graph is not complete, so the heat can change
+	engineTime?: string; // the time of the last check of the hooks with DataFlow
+	isEditable: boolean; // the user can answer the questions: stage 2
 }
 
 export interface GateView {
@@ -110,4 +173,7 @@ export type FromView =
 	| { type: 'copy'; text: string }
 	| { type: 'openBrief'; line?: number }
 	| { type: 'closeQuestion'; id: string }
-	| { type: 'gate' };
+	| { type: 'gate' }
+	| { type: 'openPlace'; path: string; line: number }
+	| { type: 'saveAnswer'; id: string; text: string }
+	| { type: 'checkHooks' };

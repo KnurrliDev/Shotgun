@@ -1,6 +1,7 @@
 import { render } from 'preact';
 import { CommandButton, Decisions, NoTask, Problems, SetupList, StageBar, TaskList, TaskSummary, useModel } from './common';
 import { applyStyles } from './styles';
+import { SurveyPage } from './survey';
 
 // The script of the page in the editor area. Phase 1 shows the active task, its decisions, the tasks of the folder and
 // the setup. The later phases add the full pages of the survey, the order, the plan and the ledger.
@@ -14,6 +15,10 @@ function Page() {
 		return <div class="page"><p class="muted">Shotgun starts.</p></div>;
 	}
 	const { task } = model;
+	// stage 2 and later: the survey of Claude on the full page
+	if (task?.survey) {
+		return <SurveyPage task={task} model={model} />;
+	}
 	return (
 		<div class="page">
 			<header>

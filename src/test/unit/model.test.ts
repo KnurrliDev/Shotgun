@@ -16,7 +16,7 @@ suite('View model', () => {
 		version: 1, id: 'fix', title: 'Fix', created: '2026-11-14T10:00:00.000Z', stage: 'survey', isDone: false, gates: [], ...over,
 	});
 	const snapshot = (over: Partial<Snapshot> = {}): Snapshot => ({
-		root, task: undefined, isPaused: false, tasks: [], decisions: [], questions: [], problems: [], ...over,
+		root, task: undefined, isPaused: false, tasks: [], decisions: [], questions: [], survey: undefined, engine: undefined, answers: {}, problems: [], ...over,
 	});
 	const model = (s: Snapshot, claude = connected, dataflow = ready) => buildModel({ version: '0.1.0', snapshot: s, dataflow, claude });
 
@@ -42,8 +42,14 @@ suite('View model', () => {
 		assert.deepStrictEqual(m.stages.map((s) => s.writer), ['user', 'claude', 'user', 'claude', 'both']);
 		assert.strictEqual(m.task?.stageName, 'Survey');
 		assert.strictEqual(m.task?.request, 'Survey my brief.');
-		// this version of Shotgun has only the gate of stage 1
-		assert.strictEqual(m.task?.gate, undefined);
+		// the gate of stage 2 waits for the survey of Claude
+		assert.deepStrictEqual(m.task?.gate, {
+			label: 'Order the tasks',
+			note: 'Your gate. After it, you put the tasks in sequence. You can rewrite a task, and you can add a task.',
+			isEnabled: false,
+			reason: 'Ask Claude for the survey first.',
+		});
+		assert.strictEqual(m.task?.survey, undefined);
 		assert.strictEqual(m.tasks[0].isActive, true);
 		// with a task, the plugin must be on in the folder
 		const off = model(snapshot({ task: task(), tasks: [{ id: 'fix', title: 'Fix', stage: 'survey', isDone: false, created: '' }] }),
@@ -106,10 +112,13 @@ suite('View model', () => {
 			brief: { ...brief, text: `${brief.text}## Specs\nS.\n## Not in scope\nN.\n## Done when\nD.\n` },
 		});
 		assert.deepStrictEqual([done.task!.gate!.isEnabled, done.task!.gate!.reason, done.task!.gate!.warning], [true, undefined, undefined]);
-		// this version has no view and no gate for the stages 2 to 5
+		// after stage 1, the task has no view of the brief, and the gate is the gate of the new stage
 		const survey = buildModel({ version: '0.1.0', snapshot: snapshot({ task: task({ stage: 'survey' }) }), dataflow: ready, claude: connected, brief });
 		assert.strictEqual(survey.task!.brief, undefined);
-		assert.strictEqual(survey.task!.gate, undefined);
+		assert.strictEqual(survey.task!.gate?.label, 'Order the tasks');
+		// this version has no gate for the stages 3 to 5
+		const order = buildModel({ version: '0.1.0', snapshot: snapshot({ task: task({ stage: 'order' }) }), dataflow: ready, claude: connected });
+		assert.strictEqual(order.task!.gate, undefined);
 	});
 
 	test('The status bar', () => {
@@ -132,8 +141,14 @@ suite('View model', () => {
 		assert.ok(isFromView({ type: 'command', command: 'pause' }));
 		assert.ok(isFromView({ type: 'selectTask', id: 'fix' }));
 		assert.ok(isFromView({ type: 'copy', text: 'Survey my brief.' }));
+		assert.ok(isFromView({ type: 'openPlace', path: path.join(root, 'a.cpp'), line: 3 }));
+		assert.ok(isFromView({ type: 'saveAnswer', id: 'Q1', text: '' }));
+		assert.ok(isFromView({ type: 'checkHooks' }));
 		assert.ok(!isFromView({ type: 'command', command: 'deleteAll' }));
 		assert.ok(!isFromView({ type: 'copy', text: 'x'.repeat(2001) }));
+		assert.ok(!isFromView({ type: 'openPlace', path: 'a.cpp', line: 0 }));
+		assert.ok(!isFromView({ type: 'openPlace', path: 3, line: 1 }));
+		assert.ok(!isFromView({ type: 'saveAnswer', id: 'Q1', text: 'x'.repeat(4001) }));
 		assert.ok(!isFromView({ type: 'other' }));
 		assert.ok(!isFromView(null));
 	});

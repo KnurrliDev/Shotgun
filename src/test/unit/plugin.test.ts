@@ -73,15 +73,19 @@ suite('Plugin of Shotgun', () => {
 		assert.deepStrictEqual(readSkills(dir), { shotgun: 'text' });
 	});
 
-	test('The extension has the skill shotgun', () => {
+	test('The extension has the skills shotgun and shotgun-survey', () => {
 		const skills = readSkills(repo);
-		assert.deepStrictEqual(Object.keys(skills), ['shotgun']);
+		assert.deepStrictEqual(Object.keys(skills).sort(), ['shotgun', 'shotgun-survey']);
 		assert.match(skills.shotgun, /^---\r?\nname: shotgun\r?\ndescription: '.*Ask me questions about my brief.*'\r?\n---/);
-		// the skill gives the full names of the tools, because MCP tools are deferred tools in Claude Code
+		assert.match(skills['shotgun-survey'], /^---\r?\nname: shotgun-survey\r?\ndescription: '[^']*Survey my brief[^']*'\r?\n---/);
+		// a skill gives the full names of its tools, because MCP tools are deferred tools in Claude Code
 		for (const tool of ['get_session', 'submit_brief', 'submit_questions']) {
 			assert.ok(skills.shotgun.includes(`shotgun_${tool}`), tool);
 		}
-		assert.ok(skills.shotgun.includes('mcp__plugin_dataflow_dataflow__shotgun_'));
+		for (const tool of ['shotgun_get_session', 'shotgun_submit_survey', 'get_place']) {
+			assert.ok(skills['shotgun-survey'].includes(`mcp__plugin_dataflow_dataflow__${tool}`), tool);
+		}
+		assert.ok(skills.shotgun.includes('shotgun-survey'));
 	});
 
 	test('Claude Code accepts the plugin with its skills, and the marketplace', function () {
