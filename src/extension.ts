@@ -9,14 +9,16 @@ import { HoleDecorations } from './editor/holes';
 import { HookDecorations } from './editor/hooks';
 import { ClaudeLines } from './editor/lines';
 import { StepDecorations } from './editor/steps';
+import { commitMessage } from './git/message';
 import { parseBrief } from './session/brief';
-import { addedLines, ChangeMark, CurrentStep, markName, receiptCounts, scopeOf, stateOf } from './session/build';
+import { addedLines, buildNext, ChangeMark, CurrentStep, markName, receiptCounts, scopeOf, stateOf } from './session/build';
 import {
 	CALLOUTS_FILE, DEFAULT_PAUSE_SECONDS, DEFAULT_VOICE, factKeys, isVoice, keepUserState, LENS_OF, revealCallouts, updateCallouts, Voice, VOICE_TEXT, VOICES,
 } from './session/callouts';
 import { readText } from './session/files';
 import { answerText, findMarkers, holeNow, isHoleDone } from './session/frame';
 import { LINES_FILE, LineStore } from './session/lines';
+import { claudeEnds, LooseFind } from './session/loose';
 import { orderWarnings } from './session/order';
 import { absolutePath, IS_CASE_SENSITIVE, isCppFile, isInside, projectPath } from './session/paths';
 import { levelOf, PlanPlace } from './session/plan';
@@ -27,12 +29,13 @@ import { findHook, MAX_ANSWER, movedHook } from './session/survey';
 import { BaseApi, markScope } from './tools/build';
 import { ToolCallLog } from './tools/calls';
 import { fileFacts } from './tools/callouts';
+import { findLooseEnds, LooseApi } from './tools/loose';
 import { PromptLog } from './tools/prompts';
 import { planRisk } from './tools/plan';
 import { EngineApi, engineFacts } from './tools/survey';
 import { shotgunTools } from './tools/tools';
 import { buildModel, DataFlowView, statusOf } from './views/model';
-import type { FromView, ViewCommand } from './views/protocol';
+import type { FromView, ViewCommand, ViewModel } from './views/protocol';
 import { PANEL_ID, Views } from './views/views';
 
 // The start of Shotgun. activate returns at once, because VS Code shows a view of an extension only after activate
@@ -61,6 +64,12 @@ const VIEW_COMMANDS: Readonly<Record<ViewCommand, string>> = {
 
 // The button of a modal message that passes a gate with open questions
 const PASS_GATE = 'Pass the Gate';
+// The time between 2 reads of the commit message in Source Control
+const COMMIT_POLL_MS = 2000;
+// At the gate of a step, the maximum wait for the end of the scan of the call graph, and the time between 2 reads of
+// its state
+const SCAN_WAIT_MS = 30000;
+const SCAN_POLL_MS = 250;
 const ACCEPT_RECEIPT = 'Accept the Receipt';
 const FILL_HOLE = 'Fill the Hole';
 
@@ -100,6 +109,7 @@ class Shotgun implements vscode.Disposable {
 	private readonly warned = new Set<string>();
 	private isOpeningStep = false;
 	private readonly toolCalls = new ToolCallLog();
+	private lastModel: ViewModel | undefined;
 	private readonly disposables: vscode.Disposable[] = [];
 	private dataflow: DataFlowView = { state: 'linking' };
 	private api: DataFlowApi | undefined;
@@ -129,6 +139,7 @@ class Shotgun implements vscode.Disposable {
 			...this.commands(),
 			this.watchFiles(),
 			this.watchProject(),
+			this.watchCommitMessage(),
 			// a different program can change the settings of Claude Code, for example the command of DataFlow
 			vscode.window.onDidChangeWindowState((state) => state.focused && this.update()),
 			vscode.workspace.onDidChangeWorkspaceFolders(() => {
@@ -173,11 +184,8 @@ class Shotgun implements vscode.Disposable {
 		}
 		const { api } = link;
 		this.api = api;
-		// decision 13: the calls of the tools of DataFlow by Claude (item 43 of dataflow-gaps-2.md). DataFlow 0.6.0 has no event
-		if (typeof api.onDidCallTool === 'function') {
-			this.toolCalls.start();
-			this.disposables.push(api.onDidCallTool((e) => this.toolCalls.record(e)));
-		}
+		// decision 13: the calls of the tools of DataFlow by Claude
+		this.disposables.push(api.onDidCallTool((e) => this.toolCalls.record(e)));
 		let toolsError: string | undefined;
 		try {
 			const tools = shotgunTools({
@@ -193,6 +201,10 @@ class Shotgun implements vscode.Disposable {
 				lines: this.lines,
 				voice: () => this.voice(),
 				calls: (since) => this.toolCalls.since(since),
+				message: () => {
+					const root = this.store.snapshot.root;
+					return root ? commitMessage(root) : undefined;
+				},
 				changes: {
 					start: () => {
 						this.stepChanges.clear();
@@ -481,19 +493,17 @@ class Shotgun implements vscode.Disposable {
 			const scope = scopeOf(current.step);
 			const absolute = scope.map((f) => absolutePath(f, root));
 			await this.saveFiles(absolute);
-			const isThere = (file: string) => this.textOf(file) !== undefined;
-			let newFiles = scope.filter((_f, i) => !isThere(absolute[i]));
 			let base: string | undefined;
 			let baseError: string | undefined;
 			const api = this.baseApi();
-			if (api) {
+			if (!api) {
+				baseError = 'Shotgun has no link to DataFlow.';
+			} else {
 				try {
-					({ base, newFiles } = await markScope(api, markName(task.id, current.step.id), scope, absolute, isThere));
+					base = await markScope(api, markName(task.id, current.step.id), absolute);
 				} catch (error) {
 					baseError = `DataFlow did not make the base: ${messageOf(error)}`;
 				}
-			} else if (newFiles.length < scope.length) {
-				baseError = 'Shotgun has no link to DataFlow.';
 			}
 			// the user can open a different task while DataFlow works, or select "I want a frame", or change the level
 			const now = this.store.current;
@@ -505,7 +515,7 @@ class Shotgun implements vscode.Disposable {
 				return;
 			}
 			this.store.startStep(current.step.id, {
-				writer: 'user', level: current.level, scope, ...(newFiles.length > 0 ? { newFiles } : {}), ...(base ? { base } : {}), ...(baseError ? { baseError } : {}),
+				writer: 'user', level: current.level, scope, ...(base ? { base } : {}), ...(baseError ? { baseError } : {}),
 			});
 			this.log.info(`Step ${current.n} of the task ${task.id} is open for the user.${baseError ? ` It has no base: ${baseError}` : ''}`);
 		} catch (error) {
@@ -811,6 +821,10 @@ class Shotgun implements vscode.Disposable {
 			vscode.commands.registerCommand('shotgun.showInDataFlow', run((file?: unknown, line?: unknown, source?: unknown) => this.showInDataFlow(file, line, source))),
 			vscode.commands.registerCommand('shotgun.setVoice', run((voice?: unknown) => this.setVoice(voice))),
 			vscode.commands.registerCommand('shotgun.resolveAnswer', run((id?: unknown) => this.resolveAnswer(id))),
+			vscode.commands.registerCommand('shotgun.handLooseEnd', run((id?: unknown) => this.handLooseEnd(id))),
+			vscode.commands.registerCommand('shotgun.closeLooseEnd', run((id?: unknown) => this.closeLooseEnd(id))),
+			vscode.commands.registerCommand('shotgun.showLedger', run(() => this.views.showLedger())),
+			vscode.commands.registerCommand('shotgun.copyLedger', run(() => this.copyLedger())),
 			vscode.commands.registerCommand('shotgun.passGate', run(() => this.passGate())),
 			vscode.commands.registerCommand('shotgun.connectClaude', run(() => this.connectClaude())),
 			vscode.commands.registerCommand('shotgun.disconnectClaude', run(() => this.disconnectClaude())),
@@ -1198,7 +1212,7 @@ class Shotgun implements vscode.Disposable {
 			const receipt = step?.receipt;
 			if (current.state !== 'receipt' || !receipt) {
 				throw new Error(current.state === 'open' ? `Claude writes step ${current.n}. Wait for its receipt.`
-					: `Claude writes step ${current.n}. Tell Claude "Do step ${current.n}." first.`);
+					: `Claude writes step ${current.n}. Tell Claude "${buildNext(current).request ?? `Do step ${current.n}.`}" first.`);
 			}
 			const counts = receiptCounts(receipt);
 			if (counts.issues > 0) {
@@ -1219,7 +1233,8 @@ class Shotgun implements vscode.Disposable {
 				}
 			}
 		}
-		// the gate deletes the base of the step
+		// the loose ends of the step need its base, so they come before the gate deletes the base
+		await this.findLooseEnds(current, root);
 		const base = step?.base;
 		const api = this.baseApi();
 		if (base && api) {
@@ -1228,6 +1243,131 @@ class Shotgun implements vscode.Disposable {
 		this.store.finishStep(current.step.id, current.writer === 'claude' ? 'accept-receipt' : 'step-done');
 		this.log.info(`Step ${current.n} of the task ${task.id} is done.`);
 		await this.openUserStep();
+	}
+
+	// "Hand to Claude": a mechanical loose end becomes the next step of the plan for Claude (decision 21). With no id, the
+	// user selects a loose end that Claude can do
+	private async handLooseEnd(idArg?: unknown): Promise<void> {
+		let id = typeof idArg === 'string' ? idArg : undefined;
+		if (id === undefined) {
+			const open = (this.store.snapshot.loose?.ends ?? []).filter((e) => e.state === 'open' && e.kind === 'mechanical' && e.file && e.lines);
+			if (open.length === 0) {
+				void vscode.window.showInformationMessage('Shotgun: the task has no open mechanical loose end with a place.');
+				return;
+			}
+			const pick = await vscode.window.showQuickPick(open.map((e) => ({ label: e.title, description: `${e.id} · ${e.kind}`, id: e.id })), {
+				title: 'Shotgun: Hand a Loose End to Claude', placeHolder: 'Select the loose end',
+			});
+			id = pick?.id;
+		}
+		if (!id) {
+			return;
+		}
+		const step = this.store.handLooseEnd(id);
+		const n = (this.store.snapshot.plan?.steps ?? []).findIndex((s) => s.id === step.id) + 1;
+		vscode.window.setStatusBarMessage(`Shotgun: the loose end is step ${n} for Claude. Tell Claude "Do the loose ends."`, 8000);
+	}
+
+	// "Close": the reason of the user goes into the ledger
+	private async closeLooseEnd(idArg?: unknown): Promise<void> {
+		const ends = (this.store.snapshot.loose?.ends ?? []).filter((e) => e.state === 'open');
+		let id = typeof idArg === 'string' ? idArg : undefined;
+		if (id === undefined) {
+			if (ends.length === 0) {
+				void vscode.window.showInformationMessage('Shotgun: the task has no open loose end.');
+				return;
+			}
+			const pick = await vscode.window.showQuickPick(ends.map((e) => ({ label: e.title, description: `${e.id} · ${e.kind}`, id: e.id })), {
+				title: 'Shotgun: Close a Loose End', placeHolder: 'Select the loose end',
+			});
+			id = pick?.id;
+		}
+		const end = this.store.snapshot.loose?.ends.find((e) => e.id === id);
+		if (!id || !end) {
+			return;
+		}
+		const reason = await vscode.window.showInputBox({
+			title: `Shotgun: Close the Loose End: ${end.title}`,
+			prompt: 'Why does the loose end need no step? The ledger keeps your reason.',
+			ignoreFocusOut: true,
+			validateInput: (value) => (value.trim() ? undefined : 'Give your reason.'),
+		});
+		if (reason !== undefined) {
+			this.store.closeLooseEnd(id, reason);
+		}
+	}
+
+	// The decisions and the lines of each writer as Markdown for a pull request, in the clipboard
+	private async copyLedger(): Promise<void> {
+		const markdown = this.lastModel?.task?.ledger?.markdown;
+		if (!markdown) {
+			throw new Error('The ledger is only for a task in stage 5, the build.');
+		}
+		await vscode.env.clipboard.writeText(markdown);
+		vscode.window.setStatusBarMessage('Shotgun: the ledger is in the clipboard as Markdown. Paste it into the pull request.', 6000);
+	}
+
+	// The commit message in the input box of Source Control. The Git extension has no event for a change of the text, so
+	// Shotgun reads it again each COMMIT_POLL_MS while a task is in stage 5
+	private commitText(): { readonly text: string } | undefined {
+		const root = this.store.snapshot.root;
+		const message = root ? commitMessage(root) : undefined;
+		return message ? { text: message.message } : undefined;
+	}
+
+	private watchCommitMessage(): vscode.Disposable {
+		let last: string | undefined;
+		const timer = setInterval(() => {
+			if (this.store.snapshot.task?.stage !== 'build') {
+				return;
+			}
+			const text = this.commitText()?.text;
+			if (text !== last) {
+				last = text;
+				this.update();
+			}
+		}, COMMIT_POLL_MS);
+		return new vscode.Disposable(() => clearInterval(timer));
+	}
+
+	// The loose ends of a step at its gate (phase 9): the loose ends of Claude in the receipt, and the loose ends of the
+	// facts of DataFlow since the base of the step. A failure of DataFlow does not stop the gate
+	private async findLooseEnds(current: CurrentStep, root: string): Promise<void> {
+		const step = current.build;
+		if (!step || this.store.snapshot.loose?.checked.includes(current.step.id)) {
+			return;
+		}
+		const finds: LooseFind[] = claudeEnds(step.receipt?.looseEnds ?? []);
+		const api = this.api;
+		const baseApi = this.baseApi();
+		if (api && baseApi && step.base) {
+			const base = step.base;
+			await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: `Shotgun: the loose ends of step ${current.n}` }, async () => {
+				try {
+					const diff = await baseApi.diff(`mark:${base}`, step.scope.map((f) => absolutePath(f, root)));
+					const looseApi: LooseApi = {
+						// the engine parses only the changed files, so the scan is short
+						scan: async () => {
+							let graph = await api.scanCallGraph();
+							for (const end = Date.now() + SCAN_WAIT_MS; graph.state === 'scanning' && Date.now() < end;) {
+								await new Promise((resolve) => setTimeout(resolve, SCAN_POLL_MS));
+								graph = await api.getCallGraph();
+							}
+							return graph.state === 'ready';
+						},
+						outline: (file, line) => api.getOutline({ file, line }),
+						memberSites: (file, line) => api.getMemberSites({ file, line }),
+						ripple: (b, paths) => api.getRipple({ base: b, paths: [...paths] }),
+					};
+					finds.push(...await findLooseEnds(looseApi, root, base, step.scope, diff, (f) => this.textOf(f)?.split(/\r?\n/), (m) => this.log.info(m)));
+				} catch (error) {
+					this.log.warn(`Shotgun did not find the loose ends of step ${current.n}: ${messageOf(error)}`);
+				}
+			});
+		}
+		this.store.addLooseEnds(current.step.id, finds);
+		const count = finds.length;
+		this.log.info(`Step ${current.n} has ${count} new ${count === 1 ? 'loose end' : 'loose ends'}.`);
 	}
 
 	// The gate of stage 2, "Order the tasks". The order of the tasks starts from the survey of Claude
@@ -1431,6 +1571,21 @@ class Shotgun implements vscode.Disposable {
 					this.store.setChangeNote(message.step, message.change, message.note);
 					vscode.window.setStatusBarMessage(`Shotgun: the note for ${message.change} is saved.`, 3000);
 					break;
+				case 'handLooseEnd':
+					await this.handLooseEnd(message.id);
+					break;
+				case 'closeLooseEnd':
+					await this.closeLooseEnd(message.id);
+					break;
+				case 'reopenLooseEnd':
+					this.store.closeLooseEnd(message.id, undefined);
+					break;
+				case 'showLedger':
+					this.views.showLedger();
+					break;
+				case 'copyLedger':
+					await this.copyLedger();
+					break;
 				default:
 					break;
 			}
@@ -1478,7 +1633,8 @@ class Shotgun implements vscode.Disposable {
 		const file = this.store.briefFile();
 		const doc = file ? this.documentOf(file) : undefined;
 		const text = doc?.getText() ?? (file ? readText(file) : undefined);
-		this.views.update(buildModel({
+		const commit = snapshot.task?.stage === 'build' ? this.commitText() : undefined;
+		this.lastModel = buildModel({
 			version: String(this.context.extension.packageJSON.version),
 			snapshot,
 			dataflow: this.dataflow,
@@ -1487,7 +1643,10 @@ class Shotgun implements vscode.Disposable {
 			readLines: (f) => this.textOf(f)?.split(/\r?\n/),
 			voice: this.voice(),
 			pauseSeconds: this.pauseSeconds(),
-		}));
+			ledgerLines: this.lines.paths.map((f) => ({ file: f, runs: this.lines.runs(f) })),
+			...(commit ? { commit } : {}),
+		});
+		this.views.update(this.lastModel);
 		this.hooks.update(snapshot);
 		this.steps.update(snapshot);
 		this.claudeLines.update(snapshot, this.lines);
@@ -1512,6 +1671,9 @@ class Shotgun implements vscode.Disposable {
 		const stepCallouts = current ? snapshot.callouts?.steps[current.step.id]?.callouts ?? [] : [];
 		void vscode.commands.executeCommand('setContext', 'shotgun.hasCallouts', stepCallouts.some((c) => c.shown && !c.closed && !c.isGone));
 		void vscode.commands.executeCommand('setContext', 'shotgun.hasAnswers', (snapshot.callouts?.answers ?? []).some((a) => !a.resolved));
+		void vscode.commands.executeCommand('setContext', 'shotgun.hasLooseEnds', !!task && !task.isDone && task.stage === 'build'
+			&& (snapshot.loose?.ends ?? []).some((e) => e.state === 'open'));
+		void vscode.commands.executeCommand('setContext', 'shotgun.hasLedger', !!task && task.stage === 'build');
 		void this.ensureCalloutStart();
 		// decision 17: in stage 5, the user changes the level of a step that Claude did not start
 		void vscode.commands.executeCommand('setContext', 'shotgun.canSetLevel', !!task && !task.isDone && !!snapshot.plan

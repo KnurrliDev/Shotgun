@@ -146,7 +146,11 @@ export type Decision =
 		readonly version: 1; readonly time: string; readonly kind: 'line-answer'; readonly by: 'claude'; readonly answer: string; readonly file: string;
 		readonly line: number; readonly question: string;
 	}
-	| { readonly version: 1; readonly time: string; readonly kind: 'line-resolve'; readonly by: 'user'; readonly answer: string };
+	| { readonly version: 1; readonly time: string; readonly kind: 'line-resolve'; readonly by: 'user'; readonly answer: string }
+	| { readonly version: 1; readonly time: string; readonly kind: 'loose-hand'; readonly by: 'user'; readonly end: string; readonly step: string; readonly title: string }
+	| { readonly version: 1; readonly time: string; readonly kind: 'loose-close'; readonly by: 'user'; readonly end: string; readonly title: string; readonly reason: string }
+	| { readonly version: 1; readonly time: string; readonly kind: 'loose-open'; readonly by: 'user'; readonly end: string }
+	| { readonly version: 1; readonly time: string; readonly kind: 'message-check'; readonly by: 'claude'; readonly agrees: boolean; readonly points: number };
 
 // The gates of a step: the gate of an errand, and the gate of a step of the user
 export const STEP_GATES = ['accept-receipt', 'step-done'] as const;
@@ -344,6 +348,17 @@ function parseDecision(value: unknown): Decision | undefined {
 				} : undefined;
 		case 'line-resolve':
 			return value.by === 'user' && isText(value.answer) ? { version: FILE_VERSION, time, kind: 'line-resolve', by: 'user', answer: value.answer } : undefined;
+		case 'loose-hand':
+			return value.by === 'user' && isText(value.end) && isText(value.step) && typeof value.title === 'string'
+				? { version: FILE_VERSION, time, kind: 'loose-hand', by: 'user', end: value.end, step: value.step, title: value.title } : undefined;
+		case 'loose-close':
+			return value.by === 'user' && isText(value.end) && typeof value.title === 'string' && typeof value.reason === 'string'
+				? { version: FILE_VERSION, time, kind: 'loose-close', by: 'user', end: value.end, title: value.title, reason: value.reason } : undefined;
+		case 'loose-open':
+			return value.by === 'user' && isText(value.end) ? { version: FILE_VERSION, time, kind: 'loose-open', by: 'user', end: value.end } : undefined;
+		case 'message-check':
+			return value.by === 'claude' && typeof value.agrees === 'boolean' && typeof value.points === 'number'
+				? { version: FILE_VERSION, time, kind: 'message-check', by: 'claude', agrees: value.agrees, points: value.points } : undefined;
 		case 'step-gate':
 			return value.by === 'user' && isText(value.step) && (STEP_GATES as readonly unknown[]).includes(value.gate) && typeof value.notWalked === 'number'
 				? {

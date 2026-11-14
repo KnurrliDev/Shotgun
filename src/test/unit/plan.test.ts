@@ -155,7 +155,7 @@ suite('Plan', () => {
 			return { ...h, functions: [{ ...h.functions[1], score: 80, band: 'very hot' }] };
 		};
 		const type = await placeRisk(fakeEngine([], { heat: typeHeat, functionHeat: veryHot }), root,
-			{ file: 'src/solver.cpp', lines: [1, 1], code: '#include', codeLine: 1 }, []);
+			{ file: 'src/solver.cpp', lines: [1, 1], code: '#include', codeLine: 1 });
 		assert.deepStrictEqual(type, {
 			kind: 'type', type: { name: 'Plan', isHot: false, changed: ['steps'], hottestUser: { function: 'solve', score: 80, band: 'very hot' } },
 		});
@@ -166,8 +166,8 @@ suite('Plan', () => {
 		};
 		const inLoop = await placeRisk(fakeEngine([], {
 			heat: coolHeat,
-			place: async (file, line) => ({ ...placeFacts(file, line), function: { name: 'main', lines: [1, 9] }, around: [{ kind: 'while', lines: [2, 8], isOpenLoop: true }] }),
-		}), root, { file: 'src/solver.cpp', lines: [5, 7], code: 'for', codeLine: 5 }, ['main']);
+			place: async (file, line) => ({ ...placeFacts(file, line), function: { name: 'main', lines: [1, 9] }, around: [{ kind: 'while', lines: [2, 8], isOpenLoop: true, isMainLoop: true }] }),
+		}), root, { file: 'src/solver.cpp', lines: [5, 7], code: 'for', codeLine: 5 });
 		assert.deepStrictEqual([inLoop.kind, inLoop.mainLoop, placeLevel(inLoop, 'ready').level], ['function', 'main', 4]);
 		const failed = await placeRisk(fakeEngine([], {
 			place: async () => {
@@ -176,9 +176,9 @@ suite('Plan', () => {
 			heat: async () => {
 				throw new Error('The engine is not ready.');
 			},
-		}), root, { file: 'src/solver.cpp', lines: [5, 7] }, []);
+		}), root, { file: 'src/solver.cpp', lines: [5, 7] });
 		assert.deepStrictEqual([failed.kind, placeLevel(failed, 'ready').level], ['unknown', null]);
-		assert.deepStrictEqual(await placeRisk(undefined, root, { file: 'src/solver.cpp', lines: [5, 7] }, []), {
+		assert.deepStrictEqual(await placeRisk(undefined, root, { file: 'src/solver.cpp', lines: [5, 7] }), {
 			kind: 'unknown', reason: 'Shotgun has no link to DataFlow, so the place has no facts. The level comes with the link.',
 		});
 	});

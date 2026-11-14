@@ -64,6 +64,16 @@ function ChatIcon() {
 }
 
 // A request that the user types in Claude Code. A click puts the words into the clipboard. It does not start Claude
+// A place in the project as a link: a click opens the file at the line in the text editor
+export function PlaceLink({ place }: { place: { name: string; path: string; line: number } }) {
+	return (
+		<button type="button" class="link mono small" title="Open in the text editor" onClick={() => post({ type: 'openPlace', path: place.path, line: place.line })}>
+			{/* a long path can break after each slash */}
+			{place.name.split('/').map((part, i, parts) => (i < parts.length - 1 ? <>{part}/<wbr /></> : part))}
+		</button>
+	);
+}
+
 export function TellClaude({ text }: { text: string }) {
 	return (
 		<button type="button" class="tell" title="Copy the request. Then paste it in Claude Code." onClick={() => post({ type: 'copy', text })}>

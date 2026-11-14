@@ -149,6 +149,7 @@ h1, h2 { margin: 0; font-weight: 600; }
   cursor: pointer; white-space: nowrap; }
 .pill.on { border-color: var(--vscode-focusBorder); background: var(--vscode-list-inactiveSelectionBackground, transparent); }
 .order-note, .order-warn { display: flex; align-items: baseline; gap: 6px; margin: 5px 0 0; padding: 3px 6px; border-radius: 4px; }
+.order-note > :not(.badge), .order-warn > :not(.badge) { min-width: 0; overflow-wrap: anywhere; }
 .order-note.user { background: color-mix(in srgb, var(--sg-you) 8%, transparent); }
 .order-note.claude { background: color-mix(in srgb, var(--sg-claude) 8%, transparent); }
 .order-warn { background: color-mix(in srgb, var(--sg-warn) 12%, transparent); }
@@ -308,6 +309,37 @@ progress.walk-track::-webkit-progress-value { border-radius: 2px; background: va
 .answer-row + .answer-row { border-top: 1px solid color-mix(in srgb, var(--sg-border) 50%, transparent); }
 .answer-row.resolved { opacity: 0.65; }
 .mark-btn.voice.on { border-color: var(--vscode-focusBorder); background: var(--vscode-list-inactiveSelectionBackground, transparent); }
+
+/* phase 9: the tabs of stage 5, the loose ends, and the ledger */
+.tabs { display: flex; flex-wrap: wrap; gap: 2px; margin: 10px 0 4px; border-bottom: 1px solid var(--sg-border); }
+.tab { padding: 3px 10px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--vscode-descriptionForeground); font: inherit;
+  cursor: pointer; }
+.tab:hover { color: var(--vscode-foreground); }
+.tab.on { color: var(--vscode-foreground); border-bottom-color: var(--vscode-focusBorder); }
+.tab:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+.page-tabs { max-width: 1100px; margin: 12px auto 0; padding: 0 28px; box-sizing: border-box; }
+.loose-ends { margin: 4px 0 0; padding: 0; list-style: none; }
+.loose-end { padding: 6px 0; }
+.loose-end + .loose-end { border-top: 1px solid color-mix(in srgb, var(--sg-border) 50%, transparent); }
+.loose-end.s-closed, .loose-end.s-handed { opacity: 0.75; }
+.loose-end .row-head { margin-top: 0; }
+.message-text { margin: 4px 0; padding: 6px 8px; border: 1px solid var(--sg-border); border-radius: 4px; white-space: pre-wrap; overflow-wrap: anywhere;
+  font-family: var(--vscode-editor-font-family); font-size: 12px; }
+.points { margin: 4px 0 0; padding: 0; list-style: none; }
+.point { display: flex; align-items: baseline; gap: 6px; padding: 2px 0; }
+.point-glyph { flex: none; width: 1.2em; text-align: center; font-weight: 700; }
+.point > :not(.point-glyph) { min-width: 0; overflow-wrap: anywhere; }
+.point.p-ok .point-glyph { color: var(--sg-ok); }
+.point.p-missing .point-glyph, .point.p-wrong .point-glyph { color: var(--sg-issue); }
+.point.p-question .point-glyph { color: var(--sg-warn); }
+.ledger-table { width: 100%; margin: 6px 0; border-collapse: collapse; font-size: 12px; }
+.table-wrap { max-width: 100%; overflow-x: auto; }
+.ledger-table th, .ledger-table td { padding: 3px 6px; border-bottom: 1px solid color-mix(in srgb, var(--sg-border) 50%, transparent); text-align: left;
+  font-variant-numeric: tabular-nums; }
+.ledger-table td:first-child { overflow-wrap: anywhere; }
+.ledger-table th { font-weight: 600; color: var(--vscode-descriptionForeground); }
+.ledger-table td.warn { color: var(--sg-warn); font-weight: 600; }
+.hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 /* lists: the setup, the decisions and the tasks */
 .list { margin: 4px 0 0; padding: 0; list-style: none; }

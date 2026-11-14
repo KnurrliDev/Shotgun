@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import type { DataFlowApi, DataFlowExports } from './dataflow-api';
 import { CLIENT, compareVersions, DATAFLOW_ID, MIN_DATAFLOW } from './version';
 
-// The link to DataFlow. Shotgun needs the API of DataFlow 0.6.0 or a later version. extensionDependencies in
+// The link to DataFlow. Shotgun needs the API of DataFlow 0.6.1 or a later version. extensionDependencies in
 // package.json makes VS Code activate DataFlow before Shotgun.
 
 export type DataFlowLink =

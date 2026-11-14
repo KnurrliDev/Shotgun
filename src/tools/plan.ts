@@ -1,7 +1,7 @@
 import type { HeatFacts } from '../dataflow/dataflow-api';
 import { absolutePath, IS_CASE_SENSITIVE, isCppFile } from '../session/paths';
 import { checkPlan, levelOf, Plan, PlanPlace, placeName, RiskFile, StepRisk } from '../session/plan';
-import { LEVEL_INFO, mainLoopAt, mainLoopsOf, PlaceHeat, placeLevel, PlaceRisk, ScanState, stepLevel } from '../session/risk';
+import { LEVEL_INFO, mainLoopAt, PlaceHeat, placeLevel, PlaceRisk, ScanState, stepLevel } from '../session/risk';
 import { STAGE_INFO, stageText } from '../session/stages';
 import type { Snapshot } from '../session/store';
 import { findHook } from '../session/survey';
@@ -29,8 +29,8 @@ export function placeHeatOf(heat: HeatFacts): PlaceHeat | undefined {
 	};
 }
 
-// The facts of DataFlow for 1 place of a step. mainLoops: the functions with a main loop, from the call graph
-export async function placeRisk(engine: EngineApi | undefined, root: string, place: PlanPlace, mainLoops: readonly string[]): Promise<PlaceRisk> {
+// The facts of DataFlow for 1 place of a step
+export async function placeRisk(engine: EngineApi | undefined, root: string, place: PlanPlace): Promise<PlaceRisk> {
 	const range = place.lines;
 	if (!range) {
 		return { kind: 'new' };
@@ -53,7 +53,7 @@ export async function placeRisk(engine: EngineApi | undefined, root: string, pla
 	}
 	const hot = heat ? placeHeatOf(heat) : undefined;
 	if (hot) {
-		const mainLoop = mainLoopAt(facts?.function?.name, facts?.around ?? [], mainLoops);
+		const mainLoop = mainLoopAt(facts?.function?.name, facts?.around ?? []);
 		return {
 			kind: 'function',
 			heat: hot,
@@ -107,11 +107,9 @@ export function placeNow(place: PlanPlace, root: string, readLines: (file: strin
 export async function planRisk(engine: EngineApi | undefined, root: string, plan: Plan, readLines: (file: string) => readonly string[] | undefined)
 	: Promise<Omit<RiskFile, 'version' | 'time'>> {
 	let scan: ScanState = engine ? 'ready' : 'none';
-	let mainLoops: string[] = [];
 	if (engine?.callGraph) {
 		const graph = await engine.callGraph().catch(() => undefined);
 		scan = graph?.state ?? 'none';
-		mainLoops = mainLoopsOf(graph?.lastScan);
 		if (scan === 'none') {
 			engine.scan?.();
 		}
@@ -120,7 +118,7 @@ export async function planRisk(engine: EngineApi | undefined, root: string, plan
 	for (const step of plan.steps) {
 		const places = await Promise.all(step.places.map(async (p) => {
 			const now = placeNow(p, root, readLines);
-			const facts = await placeRisk(engine, root, now, mainLoops);
+			const facts = await placeRisk(engine, root, now);
 			const rule = placeLevel(facts, scan);
 			// with 2 or more places, each reason names its place
 			const reasons = step.places.length > 1 ? rule.reasons.map((r) => `${placeName(now)}: ${r}`) : [...rule.reasons];

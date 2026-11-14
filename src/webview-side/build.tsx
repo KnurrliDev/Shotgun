@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import type {
 	BuildStepView, CalloutView, CurrentStepView, HintPlaceView, HoleView, LineAnswerView, NavigatorView, ReceiptChangeView, ReceiptView, TaskView,
 } from '../views/protocol';
-import { GateBlock, TellClaude, WriterBadges } from './common';
+import { GateBlock, PlaceLink, TellClaude, WriterBadges } from './common';
+import { LedgerPanel, LooseEnds } from './ledger';
 import { post } from './vscode';
 
 // Stage 5: the build in the panel beside the text editor. The steps go in sequence. The current step shows its writer:
@@ -186,14 +187,6 @@ function Receipt({ step, receipt, maxNote }: { step: CurrentStepView; receipt: R
 			)}
 			{receipt.notice && <p class="muted small">DataFlow: {receipt.notice}</p>}
 		</div>
-	);
-}
-
-function PlaceLink({ place }: { place: HintPlaceView }) {
-	return (
-		<button type="button" class="link mono small" title="Open in the text editor" onClick={() => post({ type: 'openPlace', path: place.path, line: place.line })}>
-			{place.name}
-		</button>
 	);
 }
 
@@ -461,8 +454,20 @@ function Navigator({ nav }: { nav: NavigatorView }) {
 }
 
 // The panel in stage 5: the steps, the current step with its receipt, the navigator, and the gate
+type PanelTab = 'steps' | 'loose' | 'ledger';
+
+// The panel in stage 5: the tabs of the steps, of the loose ends and of the ledger (phase 9), and the gate. After the last
+// step, the ledger comes first, because the commit message comes next
 export function BuildSummary({ task }: { task: TaskView }) {
 	const build = task.build;
+	const isEnd = task.isDone || (!!build && !build.current);
+	const [tab, setTab] = useState<PanelTab | undefined>(undefined);
+	const shown: PanelTab = tab ?? (isEnd && task.ledger ? 'ledger' : 'steps');
+	const tabs: [PanelTab, string][] = [
+		['steps', 'Steps'],
+		['loose', build && build.loose.open > 0 ? `Loose ends (${build.loose.open})` : 'Loose ends'],
+		['ledger', 'Ledger'],
+	];
 	return (
 		<div>
 			<div class="head">
@@ -473,11 +478,24 @@ export function BuildSummary({ task }: { task: TaskView }) {
 			{task.isPaused && <p class="banner">The guard is off for work outside of the task. Claude Code applies only its own permissions.</p>}
 			{!build ? <p>{task.text}</p> : (
 				<>
-					<div class="row-head"><span class="name">Steps</span><span class="muted">{build.done} of {build.total} done</span></div>
-					<StepList steps={build.steps} />
-					{build.current ? <CurrentStep step={build.current} request={task.request} maxNote={build.maxNote} />
-						: <p>Each step of the plan is done.</p>}
-					<Navigator nav={build.navigator} />
+					<div class="tabs" role="tablist" aria-label="The parts of the build">
+						{tabs.map(([id, label]) => (
+							<button type="button" role="tab" class={`tab${shown === id ? ' on' : ''}`} aria-selected={shown === id} onClick={() => setTab(id)}>
+								{label}
+							</button>
+						))}
+					</div>
+					{shown === 'steps' && (
+						<>
+							<div class="row-head"><span class="name">Steps</span><span class="muted">{build.done} of {build.total} done</span></div>
+							<StepList steps={build.steps} />
+							{build.current ? <CurrentStep step={build.current} request={task.request} maxNote={build.maxNote} />
+								: <p>Each step of the plan is done.</p>}
+							<Navigator nav={build.navigator} />
+						</>
+					)}
+					{shown === 'loose' && <LooseEnds loose={build.loose} />}
+					{shown === 'ledger' && task.ledger && <LedgerPanel ledger={task.ledger} />}
 				</>
 			)}
 			{task.gate && <GateBlock gate={task.gate} />}

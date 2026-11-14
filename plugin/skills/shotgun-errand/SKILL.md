@@ -1,6 +1,6 @@
 ---
 name: shotgun-errand
-description: 'Do a step of the build of the active Shotgun task in stage 5. Open the step, change only the files of its scope, and give the receipt with a note for each change. Use this skill when the user asks for a step, for example "Do step 5". Also use it when the user asks for a fix after the receipt, for example "Fix the issues of step 5".'
+description: 'Do a step of the build of the active Shotgun task in stage 5. Open the step, change only the files of its scope, and give the receipt with a note for each change. Use this skill when the user asks for a step, for example "Do step 5". Also use it when the user asks for a fix after the receipt, for example "Fix the issues of step 5", and for the loose ends that the user handed to you, for example "Do the loose ends".'
 ---
 
 # An errand of Shotgun
@@ -51,6 +51,16 @@ Give the places outside of the scope that the step can also need in `looseEnds`.
 ## The guard
 
 The guard of Shotgun lets you change only the files of the scope of the open step. If the guard stops a change, do not try a different way, for example a shell command. Give that place as a loose end, and tell the user.
+
+## The loose ends
+
+At the gate of each step, Shotgun gets the loose ends of the step from DataFlow, for example a function that does not use a new data member. The user can hand a loose end to you. Then it is the next step of the plan, with an id such as `L1`, risk level 2, and its place.
+
+When the user asks for the loose ends, for example "Do the loose ends":
+
+1. Call `shotgun_get_session`. The current step must be a step of a loose end: `looseEnd` in `shotgun_get_step` names the loose end.
+2. Do the step as an errand, with the procedure above. Change only the place of the loose end.
+3. After the receipt, tell the user. The user accepts the receipt, and then the next loose end is the current step. Do not start the next step before the gate of the user.
 
 ## The issues of the user
 

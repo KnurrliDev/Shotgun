@@ -427,6 +427,14 @@ export function buildNext(current: CurrentStep | undefined): { next: string; req
 	}
 	switch (current.state) {
 		case 'todo':
+			// a loose end that the user handed to Claude (decision 21)
+			if (current.step.looseEnd) {
+				return {
+					next: `Claude does ${name}: a loose end that the user handed to Claude. The user asks Claude for it. Claude opens the step with `
+						+ 'shotgun_start_step first, as an errand.',
+					request: 'Do the loose ends.',
+				};
+			}
 			return {
 				next: `Claude writes ${name}, at risk level ${current.level ?? '?'}. The user asks Claude for it. Claude opens the step with shotgun_start_step first.`,
 				request: `Do step ${current.n}.`,

@@ -64,7 +64,13 @@ export function isFromView(value: unknown): value is FromView {
 			return typeof m.path === 'string' && Number.isInteger(m.line) && (m.line as number) > 0 && (m.source === 'threads' || m.source === 'logic'
 				|| m.source === 'hidden');
 		case 'resolveAnswer':
+		case 'handLooseEnd':
+		case 'closeLooseEnd':
+		case 'reopenLooseEnd':
 			return typeof m.id === 'string' && m.id.length <= 16;
+		case 'showLedger':
+		case 'copyLedger':
+			return true;
 		case 'showHint':
 			return typeof m.step === 'string' && m.step.length <= 64 && Number.isInteger(m.hole) && (m.hole as number) >= 1 && Number.isInteger(m.level)
 				&& (m.level as number) >= 1 && (m.level as number) <= 4;
@@ -121,6 +127,7 @@ export class Views implements vscode.Disposable {
 	private panel: vscode.WebviewView | undefined;
 	private page: vscode.WebviewPanel | undefined;
 	private step: string | undefined; // the step of the last click on a CodeLens line
+	private isLedgerDue = false; // a new page shows the ledger
 	private readonly disposables: vscode.Disposable[] = [];
 
 	constructor(private readonly extensionUri: vscode.Uri, private readonly onMessage: (message: FromView) => void) {
@@ -139,8 +146,17 @@ export class Views implements vscode.Disposable {
 	// Opens the page at a step of the plan, for example after a click on a CodeLens line in the text editor
 	showStep(id: string): void {
 		this.step = id;
+		this.isLedgerDue = false;
 		this.showPage();
 		this.postStep();
+	}
+
+	// Opens the page at the ledger of the task (phase 9)
+	showLedger(): void {
+		this.step = undefined;
+		this.isLedgerDue = true;
+		this.showPage();
+		this.postLedger();
 	}
 
 	// Opens the page in the editor area, or shows it
@@ -195,9 +211,10 @@ export class Views implements vscode.Disposable {
 			}
 			if (message.type === 'ready') {
 				this.post(webview);
-				// a new page gets the step of the last click on a CodeLens line after its model
+				// a new page gets the step of the last click on a CodeLens line, or the ledger, after its model
 				if (webview === this.page?.webview) {
 					this.postStep();
+					this.postLedger();
 				}
 			} else {
 				this.onMessage(message);
@@ -214,6 +231,12 @@ export class Views implements vscode.Disposable {
 	private postStep(): void {
 		if (this.page && this.step) {
 			void this.page.webview.postMessage({ type: 'selectStep', id: this.step } satisfies ToView);
+		}
+	}
+
+	private postLedger(): void {
+		if (this.page && this.isLedgerDue) {
+			void this.page.webview.postMessage({ type: 'showLedger' } satisfies ToView);
 		}
 	}
 }

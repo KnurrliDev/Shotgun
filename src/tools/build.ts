@@ -196,21 +196,19 @@ export async function startStep(deps: BuildDeps, args: Record<string, unknown>):
 	const absolute = scope.map((f) => absolutePath(f, root));
 	await deps.saveFiles(absolute);
 	let base: string | undefined;
-	let newFiles: string[] | undefined;
 	if (current.state === 'todo') {
-		const isThere = (file: string) => deps.readText(file) !== undefined;
 		const api = deps.base();
-		if (!api && absolute.some(isThere)) {
+		if (!api) {
 			throw new Error('Shotgun has no link to DataFlow, so it cannot make the base of the step. Tell the user: Shotgun needs DataFlow for the receipt.');
 		}
 		try {
-			({ base, newFiles } = api ? await markScope(api, markName(task!.id, found.step.id), scope, absolute, isThere) : { newFiles: [...scope] });
+			base = await markScope(api, markName(task!.id, found.step.id), absolute);
 		} catch (error) {
 			throw new Error(`DataFlow did not make the base of the step: ${messageOf(error)} Tell the user.`);
 		}
 	}
 	deps.changes.start();
-	store.startStep(found.step.id, { writer: current.writer, level: current.level, scope, ...(newFiles ? { newFiles } : {}), ...(base ? { base } : {}) });
+	store.startStep(found.step.id, { writer: current.writer, level: current.level, scope, ...(base ? { base } : {}) });
 	// the lines of the writers in the scope move to the text now, before Claude changes it
 	scope.forEach((f, i) => {
 		const text = deps.readText(absolute[i]);
@@ -239,29 +237,15 @@ export async function startStep(deps: BuildDeps, args: Record<string, unknown>):
 }
 
 // The base of a step: a mark of DataFlow with the files of its scope. DataFlow keeps a file that is not there as a file
-// with no text, so the diff since the base gives a new file of the step with its functions and its heat (item 44 of
-// dataflow-gaps-2.md). DataFlow 0.6.0 refuses such a file. Then the mark has only the files that are there, and Shotgun
-// reads each new file itself. The result: the base, or no base if no file is there, and the new files for Shotgun
-export async function markScope(api: BaseApi, name: string, scope: readonly string[], absolute: readonly string[], isThere: (file: string) => boolean)
-	: Promise<{ base?: string; newFiles: string[] }> {
-	const newFiles = scope.filter((_f, i) => !isThere(absolute[i]));
-	if (newFiles.length > 0) {
-		try {
-			await api.mark(name, absolute);
-			return { base: name, newFiles: [] };
-		} catch (error) {
-			// the text of DataFlow 0.6.0 for a path that is not there
-			if (!/paths are not there/.test(messageOf(error))) {
-				throw error;
-			}
-		}
+// with no text, so the diff since the base gives a new file of the step with its functions and its heat. A step with no
+// file in its scope has no base. The files of the new steps are in the mark, so no new step has newFiles. A step from an
+// older version of Shotgun can have newFiles, and Shotgun reads these files itself
+export async function markScope(api: BaseApi, name: string, absolute: readonly string[]): Promise<string | undefined> {
+	if (absolute.length === 0) {
+		return undefined;
 	}
-	const existing = absolute.filter((f) => isThere(f));
-	if (existing.length === 0) {
-		return { newFiles };
-	}
-	await api.mark(name, existing);
-	return { base: name, newFiles };
+	await api.mark(name, absolute);
+	return name;
 }
 
 // The hunks since the base of the step: the diff of DataFlow for the files of the base, and each new file of the scope

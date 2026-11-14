@@ -70,7 +70,7 @@ suite('Callouts', () => {
 		};
 		assert.deepStrictEqual(threadFacts(withAccesses).map((f) => [f.title, f.lines]),
 			[['plan.steps: race', [5, 6]], ['plan.total: a reference after the end of its function', [8]]]);
-		// DataFlow 0.6.0 gives the lines only in the texts
+		// an item with no accesses, for example of the kind capture, gives the lines of its texts
 		assert.deepStrictEqual(itemLines(item), [5, 7, 6]);
 	});
 

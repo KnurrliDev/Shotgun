@@ -1,6 +1,6 @@
 // The test of Shotgun with Claude Code. It starts the test build of VS Code with DataFlow and Shotgun from their
 // repository folders. In VS Code, it makes a task with "Shotgun: New Task", and connects DataFlow and Shotgun to Claude
-// Code with their commands. Then it runs 10 prompts of the CLI of Claude Code in print mode:
+// Code with their commands. Then it runs 12 prompts of the CLI of Claude Code in print mode:
 // 1. Task 1: the test writes the brief into brief.md, as the user does. "Ask me questions about my brief." loads the
 //    skill shotgun, and Claude gives its questions with shotgun_submit_questions. The test closes the questions.
 // 2. Claude tries to change a file of the project in stage 1, and the guard denies the change (phase 1).
@@ -14,10 +14,11 @@
 //    passes the gate "Accept the order" on the page (the condition of phase 4).
 // 6. "Make the plan." loads the skill shotgun-plan, and Claude gives the steps with shotgun_submit_plan. The rules give
 //    each step a level from the facts of DataFlow. The test changes a level and writes a note on the page, and passes
-//    the gate "Accept the plan" (the condition of phase 5). It sets step 1 to level 4 and step 2 to level 2 first.
-// 7. In stage 5, Shotgun opens step 1 for the user. The test writes a line, and passes "The step is done". Then "Do step
-//    2." loads the skill shotgun-errand: Claude opens the step, changes its scope, and gives the receipt. The test puts
-//    the marks and an issue with a note on the receipt in the panel.
+//    the gate "Accept the plan" (the condition of phase 5). It sets step 1 to level 4, and steps 2 and 5 to level 2 first.
+// 7. In stage 5, Shotgun opens step 1 for the user. A run of Claude Code with no plugins stands in for the user and
+//    does the step, because step 2 can need its work. The test passes "The step is done". Then "Do step 2." loads the
+//    skill shotgun-errand: Claude opens the step, changes its scope, and gives the receipt. The test puts the marks and
+//    an issue with a note on the receipt in the panel.
 // 8. "Fix the issues of step 2." opens the step again, and Claude gives a new receipt. The test marks each change OK,
 //    and passes "Accept the receipt" (the condition of phase 6).
 // 9. In stage 5, the test sets step 3 to level 4, and selects "I want a frame". "Give me a frame for step 3." loads the
@@ -27,13 +28,17 @@
 // 10. The test sets step 4 to level 4, and writes a line in process() that makes a race with the worker thread. At the
 //    pause, the race shows as a problem callout (the condition of phase 8). "Explain the callout ..." and a question
 //    about a line load the skill shotgun-explain. The test closes the callout with "Not a problem" and a reason.
+// 11. The test ends step 4. The gate of each step got the loose ends of the step from DataFlow. The test hands a
+//    mechanical loose end to Claude, if the steps have one, and writes a commit message in Source Control. "Check my
+//    commit message." loads the skill shotgun-commit, and the ledger page shows the decisions, the lines of each writer
+//    and the check of the message (the condition of phase 9).
 // The commands write the settings of proposal P15, and the test checks these files. The CLI loads the 2 plugins with
 // --plugin-dir from the folders that the commands wrote. The CLI uses the login and thus the config folder of the user,
 // and a marketplace from settings would go into the plugin data of the user.
 // The settings of the user do not change: the test build has its own user data, MCP registry, folder for the settings
 // of Claude Code and Shotgun folder. The test records the plugin data of Claude Code of the user before the runs, and
 // checks it after them. It removes the empty folders that the CLI makes there.
-// The test uses the Claude subscription of the user for 10 runs of Claude Code, so it runs only on request.
+// The test uses the Claude subscription of the user for 12 runs of Claude Code, so it runs only on request.
 // Usage: node scripts/test-claude.mjs <new run folder>
 // Environment: DATAFLOW_REPO (default: ../DataFlow), CLAUDE_EXE (default: the CLI of the VS Code extension of Claude Code)
 import { execFileSync, spawn } from 'node:child_process';
@@ -66,11 +71,13 @@ const SUBMIT_FRAME = 'mcp__plugin_dataflow_dataflow__shotgun_submit_frame';
 const GET_CALLOUTS = 'mcp__plugin_dataflow_dataflow__shotgun_get_callouts';
 const SUBMIT_EXPLANATION = 'mcp__plugin_dataflow_dataflow__shotgun_submit_explanation';
 const SUBMIT_LINE_ANSWER = 'mcp__plugin_dataflow_dataflow__shotgun_submit_line_answer';
+const GET_COMMIT_MESSAGE = 'mcp__plugin_dataflow_dataflow__shotgun_get_commit_message';
+const SUBMIT_MESSAGE_CHECK = 'mcp__plugin_dataflow_dataflow__shotgun_submit_message_check';
 // The read tools of DataFlow for the survey
 const READ_TOOLS = ['list_functions', 'get_outline', 'get_place', 'get_callers', 'get_calls', 'get_threads', 'get_heat', 'get_flow', 'get_logic',
 	'get_structure', 'get_member_sites', 'get_includes', 'get_call_graph', 'get_hidden'].map((t) => `mcp__plugin_dataflow_dataflow__${t}`);
 // The number of the tools of Shotgun in the MCP server of DataFlow
-const SHOTGUN_TOOLS = 17;
+const SHOTGUN_TOOLS = 19;
 // The brief of task 1, as the user writes it in brief.md
 const BRIEF_1 = [
 	`# Brief: ${TITLE}`, '',
@@ -245,6 +252,9 @@ function setup() {
 		// a modal message of VS Code is then a part of the page, and not a dialog of Windows
 		'window.dialogStyle': 'custom',
 		'git.openRepositoryInParentFolders': 'never',
+		// the Source Control view keeps the input box of the commit message in view. With autoReveal, the view scrolls to
+		// the file of the active editor
+		'scm.autoReveal': false,
 		'security.workspace.trust.enabled': false,
 		'window.restoreWindows': 'none',
 		'update.mode': 'none',
@@ -551,14 +561,15 @@ function checkBridge() {
 //-------------------
 // Claude Code
 
-// options: tools, the tools that Claude can use with no permission prompt, maxTurns and seconds, the time limit
-function runClaude(name, prompt, { tools = [GET_SESSION, SUBMIT_BRIEF, SUBMIT_QUESTIONS, 'Skill'], maxTurns = 8, seconds = 300 } = {}) {
+// options: tools, the tools that Claude can use with no permission prompt, maxTurns and seconds, the time limit, and
+// plugins. With plugins false, the run has no plugins, thus no tools of Shotgun and no guard
+function runClaude(name, prompt, { tools = [GET_SESSION, SUBMIT_BRIEF, SUBMIT_QUESTIONS, 'Skill'], maxTurns = 8, seconds = 300, plugins = true } = {}) {
 	const args = [
 		'-p', prompt,
 		'--output-format', 'stream-json', '--verbose', '--include-hook-events',
 		'--model', 'sonnet',
 		// no settings of the user, and the 2 plugins from the folders that the commands wrote
-		'--setting-sources', 'project', '--plugin-dir', dataflowPlugin, '--plugin-dir', shotgunPlugin,
+		'--setting-sources', 'project', ...(plugins ? ['--plugin-dir', dataflowPlugin, '--plugin-dir', shotgunPlugin] : []),
 		'--permission-mode', 'acceptEdits', '--permission-prompts', 'none',
 		'--allowedTools', tools.join(','),
 		'--max-turns', String(maxTurns), '--no-session-persistence',
@@ -1100,8 +1111,11 @@ async function main() {
 			ledgerOf(TASK_1).filter((d) => d.kind === 'level' || d.kind === 'level-note'));
 		await wb.shot('page-plan-level.png');
 
-		// for the build: the user writes step 1 (level 4), and Claude writes step 2 (level 2). "Shotgun: Set Risk Level" sets them
-		for (const [n, level] of [[0, 4], [1, 2]]) {
+		// for the build: the user writes step 1 (level 4), and Claude writes step 2 (level 2). "Shotgun: Set Risk Level" sets them.
+		// Step 5 also gets level 2: then no step of the user is open after step 4, and a loose end that the user hands to
+		// Claude is the next step after step 4 (decision 21)
+		const levelSets = [[0, 4], [1, 2], ...(steps.length > 4 ? [[4, 2]] : [])];
+		for (const [n, level] of levelSets) {
 			await command(wb, 'Shotgun: Set Risk Level');
 			await quickPickNth(wb, 'Shotgun: Set Risk Level', n);
 			await quickPickNth(wb, 'Shotgun: Set Risk Level of', level - 1);
@@ -1109,9 +1123,9 @@ async function main() {
 		}
 		const setLevels = await poll(() => {
 			const l = readJson(taskFile(TASK_1, 'levels.json'))?.levels ?? {};
-			return l[steps[0]?.id]?.level === 4 && l[steps[1]?.id]?.level === 2 ? l : undefined;
+			return levelSets.every(([n, level]) => l[steps[n]?.id]?.level === level) ? l : undefined;
 		}, 15);
-		check('"Shotgun: Set Risk Level" sets step 1 to level 4 and step 2 to level 2', !!setLevels, readJson(taskFile(TASK_1, 'levels.json')));
+		check('"Shotgun: Set Risk Level" sets step 1 to level 4, and steps 2 and 5 to level 2', !!setLevels, readJson(taskFile(TASK_1, 'levels.json')));
 		await command(wb, 'Shotgun: Show Page');
 		await poll(async () => (await pageText())?.includes('Accept the plan') && true, 15);
 
@@ -1137,18 +1151,34 @@ async function main() {
 		text = await poll(async () => (await panelText())?.includes('The step is done') && true, 15);
 		check('The panel shows step 1 of the user with the gate "The step is done"', !!text, await panelText());
 		await wb.shot('panel-user-step.png');
-		// the user writes step 1: a comment line above the first place of the step, or a new file
-		const place1 = s1.places.find((pl) => pl.lines) ?? s1.places[0];
-		const file1 = path.join(p.project, place1.file);
-		const mark1 = /\.(c|cc|cpp|cxx|h|hh|hpp|hxx|inl)$/i.test(place1.file) ? '//' : /\.(md|markdown)$/i.test(place1.file) ? '' : '#';
-		const userLine = `${mark1 ? `${mark1} ` : ''}The user wrote this line in step 1.`;
-		if (place1.lines && fs.existsSync(file1)) {
-			const t = fs.readFileSync(file1, 'utf8').split('\n');
-			t.splice(place1.lines[0] - 1, 0, userLine);
-			fs.writeFileSync(file1, t.join('\n'));
-		} else {
-			fs.mkdirSync(path.dirname(file1), { recursive: true });
-			fs.writeFileSync(file1, `${userLine}\n`);
+		// the user writes step 1. The next steps of Claude can need the work of step 1, for example new data members. Thus a
+		// run of Claude Code with no plugins stands in for the user and does the step. If the run changes no file, the test
+		// writes a comment line above the first place of the step, or a new file
+		const scope1 = opened1?.scope ?? [...new Set(s1.places.map((pl) => pl.file))];
+		const before1 = fileHashes();
+		const userRun = await runClaude('user-step-1', [
+			`You stand in for the user of this project. Make this change: ${s1.title}. ${s1.text ?? ''}`,
+			`Change only these files: ${scope1.join(', ')}. Make only this change, and no change of a different step.`,
+			'Do not build or run the code.',
+		].join(' '), { tools: ['Read', 'Edit', 'Write', 'Grep', 'Glob'], maxTurns: 20, seconds: 300, plugins: false });
+		const changed1 = [...fileHashes()].filter(([f, h]) => before1.get(f) !== h).map(([f]) => f);
+		const inScope1 = new Set(scope1.map((f) => f.toLowerCase()));
+		check('A run of Claude Code with no plugins stands in for the user, and changes only the files of step 1', changed1.length > 0
+			&& changed1.every((f) => inScope1.has(f.toLowerCase())) && !userRun.plugins.some((x) => /shotgun|dataflow/i.test(x.name)),
+			{ changed1, scope1, plugins: userRun.plugins, result: userRun.result.slice(0, 300) });
+		if (changed1.length === 0) {
+			const place1 = s1.places.find((pl) => pl.lines) ?? s1.places[0];
+			const file1 = path.join(p.project, place1.file);
+			const mark1 = /\.(c|cc|cpp|cxx|h|hh|hpp|hxx|inl)$/i.test(place1.file) ? '//' : /\.(md|markdown)$/i.test(place1.file) ? '' : '#';
+			const userLine = `${mark1 ? `${mark1} ` : ''}The user wrote this line in step 1.`;
+			if (place1.lines && fs.existsSync(file1)) {
+				const t = fs.readFileSync(file1, 'utf8').split('\n');
+				t.splice(place1.lines[0] - 1, 0, userLine);
+				fs.writeFileSync(file1, t.join('\n'));
+			} else {
+				fs.mkdirSync(path.dirname(file1), { recursive: true });
+				fs.writeFileSync(file1, `${userLine}\n`);
+			}
 		}
 		await sleep(1500);
 		await inWebview('.panel', `() => {
@@ -1159,10 +1189,10 @@ async function main() {
 		const done1 = await poll(() => (buildOf()?.steps?.[s1.id]?.state === 'done' ? buildOf() : undefined), 20);
 		check('The gate "The step is done" ends step 1', !!done1, buildOf());
 		const userRuns = await poll(() => {
-			const runs = readJson(taskFile(TASK_1, 'lines.json'))?.files?.[place1.file]?.runs ?? [];
+			const runs = Object.values(readJson(taskFile(TASK_1, 'lines.json'))?.files ?? {}).flatMap((x) => x.runs ?? []);
 			return runs.some((r) => r.writer === 'user' && r.step === s1.id) ? runs : undefined;
 		}, 10);
-		check('lines.json records the line of the user in step 1', !!userRuns, readJson(taskFile(TASK_1, 'lines.json')));
+		check('lines.json records the lines of the user in step 1', !!userRuns, readJson(taskFile(TASK_1, 'lines.json')));
 
 		// "Do step 2.": Claude opens the step, changes the files of its scope, and gives the receipt
 		text = await poll(async () => (await panelText())?.includes('Do step 2.') && true, 15);
@@ -1542,6 +1572,122 @@ async function main() {
 		text = await poll(async () => (await panelText())?.includes('Quiet: problems only') && true, 15);
 		check('The panel sets the voice of the callouts', !!text, await panelText());
 		await wb.shot('panel-callout-closed.png');
+
+		// 11: the loose ends, the ledger and the check of the commit message (phase 9). The gate of each step gets the loose
+		// ends of the step from DataFlow. The test ends step 4, hands a mechanical loose end to Claude if the steps have one,
+		// writes a commit message in Source Control, and asks Claude for a check of the message
+		const looseOf = () => readJson(taskFile(TASK_1, 'loose.json'));
+		const planOf = () => readJson(taskFile(TASK_1, 'plan.json'));
+		await inWebview('.panel', `() => {
+			const b = [...d.querySelectorAll('.gate button')].find((x) => x.textContent.includes('The step is done'));
+			b?.click();
+			return !!b;
+		}`);
+		const done4 = await poll(() => (buildOf()?.steps?.[s4.id]?.state === 'done' ? buildOf() : undefined), 60);
+		const checkedSteps = await poll(() => {
+			const l = looseOf();
+			return l && [steps[0], steps[1], steps[2], s4].every((s) => l.checked.includes(s.id)) ? l : undefined;
+		}, 30);
+		check('The gate of each step gets the loose ends of the step from DataFlow', !!done4 && !!checkedSteps,
+			{ checked: looseOf()?.checked, state4: buildOf()?.steps?.[s4.id]?.state });
+		results.looseEnds = (looseOf()?.ends ?? []).map((e) => ({ id: e.id, step: e.step, kind: e.kind, source: e.source, title: e.title, file: e.file, lines: e.lines }));
+		console.log(`INFO The loose ends: ${JSON.stringify(results.looseEnds.map((e) => `${e.id} ${e.step} ${e.kind} ${e.source}: ${e.title}`))}`);
+		await inWebview('.panel', `() => {
+			const b = [...d.querySelectorAll('.tabs .tab')].find((x) => x.textContent.includes('Loose ends'));
+			b?.click();
+			return !!b;
+		}`);
+		text = await poll(async () => {
+			const t = await panelText();
+			return t && /after steps 1 to 4/i.test(t) ? t : undefined;
+		}, 15);
+		check('The tab "Loose ends" of the panel shows the loose ends after steps 1 to 4', !!text, await panelText());
+		await wb.shot('panel-loose-ends.png');
+		const mechanical = (looseOf()?.ends ?? []).find((e) => e.state === 'open' && e.kind === 'mechanical' && e.file && e.lines);
+		if (mechanical) {
+			await inWebview('.panel', `() => {
+				const card = [...d.querySelectorAll('.loose-end')].find((x) => x.textContent.includes(${JSON.stringify(mechanical.title)}));
+				const b = card && [...card.querySelectorAll('button')].find((x) => x.textContent.includes('Hand to Claude'));
+				b?.click();
+				return !!b;
+			}`);
+			const handed = await poll(() => {
+				const step = planOf()?.steps?.find((s) => s.looseEnd === mechanical.id);
+				return step && readJson(taskFile(TASK_1, 'levels.json'))?.levels?.[step.id]?.level === 2 ? step : undefined;
+			}, 15);
+			const order = planOf()?.steps?.map((s) => s.id) ?? [];
+			check('"Hand to Claude" makes the loose end the next step of the plan with level 2, and the ledger records it', !!handed
+				&& order.indexOf(handed.id) === order.indexOf(s4.id) + 1 && ledgerOf(TASK_1).some((d) => d.kind === 'loose-hand' && d.end === mechanical.id),
+				{ handed, order });
+			text = await poll(async () => (await panelText())?.includes('Do the loose ends.') && true, 15);
+			check('The panel shows the request "Do the loose ends."', !!text, await panelText());
+			await wb.shot('panel-loose-handed.png');
+		} else {
+			results.notes = [...(results.notes ?? []), 'The steps had no mechanical loose end, so the test did not hand a loose end to Claude.'];
+			console.log('NOTE The steps had no mechanical loose end, so the test did not hand a loose end to Claude.');
+		}
+
+		// the commit message in the input box of Source Control
+		const commitText = 'Add a cycle limit for the solver\n\nAfter a limit of planning cycles, the controller takes the next price slot.';
+		await command(wb, 'View: Show Source Control');
+		await sleep(1500);
+		const scmBox = await poll(() => wb.evaluate(`(() => {
+			const e = document.querySelector('.scm-editor .monaco-editor .view-lines') ?? document.querySelector('.scm-input .monaco-editor .view-lines');
+			const r = e?.getBoundingClientRect();
+			return r && r.width > 0 ? { x: r.left + 10, y: r.top + r.height / 2 } : undefined; })()`), 15);
+		if (scmBox) {
+			for (const type of ['mousePressed', 'mouseReleased']) {
+				await wb.send('Input.dispatchMouseEvent', { type, x: scmBox.x, y: scmBox.y, button: 'left', clickCount: 1 });
+			}
+			await sleep(400);
+			await wb.send('Input.insertText', { text: commitText });
+		}
+		await inWebview('.panel', `() => {
+			const b = [...d.querySelectorAll('.tabs .tab')].find((x) => x.textContent.includes('Ledger'));
+			b?.click();
+			return !!b;
+		}`);
+		text = await poll(async () => (await panelText())?.includes('Add a cycle limit for the solver') && true, 20);
+		check('The tab "Ledger" of the panel shows the commit message of Source Control', !!scmBox && !!text, { scmBox, panel: await panelText() });
+
+		// "Check my commit message." loads the skill shotgun-commit. Claude reads the diff and gives its points
+		const checkRun = await runClaude('commit', 'Check my commit message.', {
+			tools: [GET_SESSION, GET_COMMIT_MESSAGE, SUBMIT_MESSAGE_CHECK, 'Skill', 'Read', 'Bash(git diff:*)', 'Bash(git status:*)', ...READ_TOOLS,
+				'mcp__plugin_dataflow_dataflow__get_diff'],
+			maxTurns: 30, seconds: 600,
+		});
+		const checkNames = checkRun.toolUses.map((t) => t.name);
+		check('The request loads the skill shotgun-commit', checkRun.toolUses.some((t) => t.name === 'Skill' && String(t.input?.skill).includes('shotgun-commit')), checkNames);
+		const messageCheck = readJson(taskFile(TASK_1, 'message.json'));
+		check('Claude checks the message with shotgun_submit_message_check, and changes no file', checkNames.includes(SUBMIT_MESSAGE_CHECK) && !!messageCheck
+			&& messageCheck.points.length > 0 && messageCheck.message.replace(/\r\n/g, '\n').trim() === commitText
+			&& !checkNames.some((n) => ['Edit', 'Write', 'MultiEdit'].includes(n)), { checkNames, messageCheck });
+		results.message = messageCheck;
+		console.log(`INFO The check of the message: ${messageCheck?.agrees ? 'agrees' : 'does not agree'}: ${JSON.stringify(messageCheck?.points?.map((p) => `${p.kind}: ${p.text}`))}`);
+		const firstPoint = messageCheck?.points?.[0]?.text?.slice(0, 30) ?? '?';
+		text = await poll(async () => (await panelText())?.includes(firstPoint) && true, 15);
+		check('The panel shows the points of the check of Claude', !!text, await panelText());
+		await wb.shot('panel-ledger.png');
+
+		// the ledger page: the decisions, the lines of each writer, and the check of the message
+		await inWebview('.panel', `() => {
+			const b = [...d.querySelectorAll('.ledger button')].find((x) => x.textContent.includes('Show the ledger'));
+			b?.click();
+			return !!b;
+		}`);
+		text = await poll(async () => {
+			const t = await pageText();
+			return t && /your decisions in this task/i.test(t) && t.includes('src/battery.cpp') && t.includes(firstPoint) ? t : undefined;
+		}, 20);
+		check('The ledger page shows the decisions of the user, the lines of each writer, and the check of the message', !!text, await pageText());
+		await wb.shot('page-ledger.png');
+		await inWebview('.page', `() => {
+			const b = [...d.querySelectorAll('button')].find((x) => x.textContent.includes('Copy for the pull request'));
+			b?.click();
+			return !!b;
+		}`);
+		const copied = await poll(() => wb.evaluate(`[...document.querySelectorAll('.statusbar-item')].map((e) => e.textContent).find((x) => /ledger is in the clipboard/.test(x))`), 10);
+		check('"Copy for the pull request" puts the ledger into the clipboard as Markdown', !!copied);
 
 		wb.ws.close();
 	} catch (error) {

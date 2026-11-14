@@ -30,7 +30,7 @@ function Panel() {
 			)}
 			<section class="section">
 				{!task ? <NoTask hasTasks={canOpen} />
-					: task.isDone ? <TaskSummary task={task} />
+					: task.isDone ? (task.build ? <BuildSummary task={task} /> : <TaskSummary task={task} />)
 						: task.stage === 'survey' ? <SurveySummary task={task} />
 							: task.stage === 'order' ? <OrderSummary task={task} />
 								: task.stage === 'plan' ? <PlanSummary task={task} />

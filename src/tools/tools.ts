@@ -1,5 +1,6 @@
 import * as path from 'path';
 import type { ExtensionTool } from '../dataflow/dataflow-api';
+import type { CommitMessage } from '../git/message';
 import { parseBrief, partSummary, questionLine } from '../session/brief';
 import { buildGuard, buildNext, CurrentStep, receiptCounts, stateOf } from '../session/build';
 import type { Voice } from '../session/callouts';
@@ -15,6 +16,7 @@ import { BaseApi, getStep, START_STEP_TOOL, startStep, StepChanges, submitErrand
 import { calloutsData, submitExplanation, submitLineAnswer, voiceOf } from './callouts';
 import { contextOutput, contextText } from './context';
 import { decide, GuardInput, hookOutput, isInside, targetOf } from './guard';
+import { commitMessageData, submitMessageCheck } from './ledger';
 import { orderData, submitTaskSurvey } from './order';
 import { planData, submitPlan } from './plan';
 import type { PromptLog } from './prompts';
@@ -59,6 +61,8 @@ export interface ToolDeps {
 	readonly voice?: () => Voice; // the voice of the callouts, from the settings of the user
 	// the tools of DataFlow that the MCP clients called since a time (decision 13). undefined: DataFlow does not tell them
 	readonly calls?: (since: number) => ReadonlySet<string> | undefined;
+	// the commit message of the user from Source Control. undefined: no repository of git
+	readonly message?: () => CommitMessage | undefined;
 }
 
 const textOf = (value: unknown): string => (typeof value === 'string' ? value : '');
@@ -433,6 +437,48 @@ export function shotgunTools(deps: ToolDeps): ExtensionTool[] {
 				required: ['file', 'line', 'question', 'answer'],
 			},
 			call: (args) => submitLineAnswer(deps, args),
+		},
+		{
+			name: 'get_commit_message',
+			title: 'Shotgun commit message',
+			description: 'Gives the commit message that the user wrote in the input box of Source Control, in stage 5 or after the end of the '
+				+ 'task, when the user asks, for example "Check my commit message.". It also gives the changed files, the steps of the plan, the '
+				+ 'decisions of the user, the lines of each writer and the loose ends. Then read the diff, and give your check.',
+			inputSchema: { type: 'object', properties: {} },
+			isReadOnly: true,
+			call: () => commitMessageData(deps),
+		},
+		{
+			name: 'submit_message_check',
+			title: 'Shotgun: check the commit message',
+			description: 'Gives your check of the commit message of the user to Shotgun. Compare the message with the diff. Give the message as '
+				+ 'you read it with get_commit_message, "agrees", and 1 to 12 points. A point has the kind ok, missing (the diff has a change '
+				+ 'that the message does not tell), wrong (the message tells a change that the diff does not have) or question. Change no '
+				+ 'message, and make no commit.',
+			inputSchema: {
+				type: 'object',
+				properties: {
+					message: { type: 'string', description: 'The commit message, exactly as get_commit_message gave it.' },
+					agrees: { type: 'boolean', description: 'True if the message agrees with the diff: no point is missing or wrong.' },
+					points: {
+						type: 'array',
+						description: 'The points of the check, 1 to 12.',
+						items: {
+							type: 'object',
+							properties: {
+								kind: { type: 'string', enum: ['ok', 'missing', 'wrong', 'question'] },
+								text: { type: 'string', description: 'The point in 1 or 2 sentences, at most 300 characters.' },
+								file: { type: 'string', description: 'The file of the point, relative to the first folder of the project. Optional.' },
+								line: { type: 'integer', description: 'The line of the point in the file, from 1. Optional.' },
+							},
+							required: ['kind', 'text'],
+						},
+					},
+					note: { type: 'string', description: 'A note for the user, at most 600 characters. Optional.' },
+				},
+				required: ['message', 'agrees', 'points'],
+			},
+			call: (args) => submitMessageCheck(deps, args),
 		},
 		{
 			name: 'submit_survey',

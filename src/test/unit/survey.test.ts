@@ -60,12 +60,11 @@ suite('Survey', () => {
 			['Fact 1: you did not call get_callers in this stage. Call it, and give only a fact that it shows.']);
 		// the log: a failed call does not count, and only the calls since the start of the stage count
 		const log = new ToolCallLog();
-		assert.strictEqual(log.since(0), undefined);
-		log.start();
+		assert.deepStrictEqual([...log.since(0)], []);
 		log.record({ tool: 'get_callers', time: '2026-11-14T10:00:00.000Z', isError: false });
 		log.record({ tool: 'get_place', time: '2026-11-14T12:00:00.000Z', isError: true });
 		log.record({ tool: 'get_threads', time: '2026-11-14T12:00:00.000Z', isError: false });
-		assert.deepStrictEqual([...log.since(Date.parse('2026-11-14T11:00:00.000Z'))!], ['get_threads']);
+		assert.deepStrictEqual([...log.since(Date.parse('2026-11-14T11:00:00.000Z'))], ['get_threads']);
 		assert.strictEqual(stageStart({ created: '2026-11-14T09:00:00.000Z', gates: [] }), Date.parse('2026-11-14T09:00:00.000Z'));
 		assert.strictEqual(stageStart({ created: '2026-11-14T09:00:00.000Z', gates: [{ gate: 'brief-ready', stage: 'survey', time: '2026-11-14T11:00:00.000Z' }] }),
 			Date.parse('2026-11-14T11:00:00.000Z'));

@@ -147,6 +147,26 @@
 				"category": "Shotgun"
 			},
 			{
+				"command": "shotgun.handLooseEnd",
+				"title": "Hand a Loose End to Claude",
+				"category": "Shotgun"
+			},
+			{
+				"command": "shotgun.closeLooseEnd",
+				"title": "Close a Loose End",
+				"category": "Shotgun"
+			},
+			{
+				"command": "shotgun.showLedger",
+				"title": "Show the Ledger",
+				"category": "Shotgun"
+			},
+			{
+				"command": "shotgun.copyLedger",
+				"title": "Copy the Ledger for a Pull Request",
+				"category": "Shotgun"
+			},
+			{
 				"command": "shotgun.passGate",
 				"title": "Pass the Gate",
 				"category": "Shotgun"
@@ -262,6 +282,22 @@
 				{
 					"command": "shotgun.resolveAnswer",
 					"when": "shotgun.hasAnswers"
+				},
+				{
+					"command": "shotgun.handLooseEnd",
+					"when": "shotgun.hasLooseEnds"
+				},
+				{
+					"command": "shotgun.closeLooseEnd",
+					"when": "shotgun.hasLooseEnds"
+				},
+				{
+					"command": "shotgun.showLedger",
+					"when": "shotgun.hasLedger"
+				},
+				{
+					"command": "shotgun.copyLedger",
+					"when": "shotgun.hasLedger"
 				},
 				{
 					"command": "shotgun.passGate",

@@ -97,16 +97,16 @@ const isObject = (value: unknown): value is Record<string, unknown> => typeof va
 //-------------------
 // The facts of DataFlow
 
-// The lines of the accesses in a text of a race item, for example "reads 94, 101 · writes 129". A line of a different
-// file has its file name, for example "worker.cpp:12", and is not a line of this file. DataFlow 0.6.0 gives the lines
-// only in this text (item 46 of dataflow-gaps-2.md)
+// The lines of the accesses in a text of an item, for example "reads 94, 101 · writes 129". A line of a different file
+// has its file name, for example "worker.cpp:12", and is not a line of this file. Only an item of the kind capture
+// gives its lines only in this text
 export function accessLines(text: string): number[] {
 	return [...text.matchAll(/(^|[\s,])(\d+)(?=$|[\s,·])/g)].map((m) => Number(m[2]));
 }
 
-// The lines of the accesses of an item in the file of the facts. With the field accesses, only an access that can run at
-// the same time as an access of a different thread counts. An item with no such access, for example a reference after
-// the end of its function, gives all its accesses
+// The lines of the accesses of an item in the file of the facts. Only an access that can run at the same time as an
+// access of a different thread counts. An item with no such access, for example a reference after the end of its
+// function, gives all its accesses. An item of the kind capture has no accesses: its lines come from its texts
 export function itemLines(item: ThreadFacts['items'][number]): number[] {
 	if (!item.accesses) {
 		return [...new Set([...accessLines(item.caller), ...accessLines(item.worker)])];

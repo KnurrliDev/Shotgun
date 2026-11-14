@@ -12,8 +12,12 @@ import {
 	ORDER_FILE, parseActive, parseDecisions, parseQuestions, parseTask, PLAN_FILE, Question, QUESTIONS_FILE, readText, RISK_FILE, SHOTGUN_DIR,
 	StepGate, SURVEY_FILE, TASK_FILE, TASK_ID, TaskFile, taskIdOf, writeTextAtomic,
 } from './files';
+import { MESSAGE_FILE, MessageCheck, parseMessageCheck } from './ledger';
+import {
+	addLooseEnds, EMPTY_LOOSE, LOOSE_FILE, LooseEndItem, LooseFile, LooseFind, looseIndex, looseStep, MAX_LOOSE_REASON, nextLooseStepId, parseLoose,
+} from './loose';
 import { applyEdit, Order, OrderEdit, OrderFile, orderOf, OrderTask, parseOrder, surveyIds, TaskSurvey } from './order';
-import { LevelsFile, MAX_LEVEL_NOTE, parseLevels, parsePlan, parseRisk, Plan, PlanFile, RiskFile, UserLevel } from './plan';
+import { LevelsFile, MAX_LEVEL_NOTE, parseLevels, parsePlan, parseRisk, Plan, PlanFile, PlanStep, RiskFile, UserLevel } from './plan';
 import type { Level } from './risk';
 import { Gate, passGate, Stage, START } from './stages';
 import { Answer, AnswersFile, checkAnswer, EngineFile, parseAnswers, parseEngine, parseSurvey, Survey, SurveyFile, SurveyHook } from './survey';
@@ -46,6 +50,8 @@ export interface Snapshot {
 	readonly levels: LevelsFile | undefined; // the levels and the notes of the user for the steps
 	readonly build: BuildFile | undefined; // the state of the steps of the build in stage 5, and their receipts
 	readonly callouts: CalloutsFile | undefined; // the callouts of the steps, and the answers of Claude about lines
+	readonly loose: LooseFile | undefined; // the loose ends of the steps
+	readonly message: MessageCheck | undefined; // the check of Claude of the commit message
 	readonly problems: readonly string[]; // the stage files that Shotgun cannot read
 }
 
@@ -77,7 +83,8 @@ export class SessionStore {
 	constructor(private readonly root: string | undefined, private readonly now: () => Date = () => new Date()) {
 		this.state = {
 			root, task: undefined, isPaused: false, tasks: [], decisions: [], questions: [], survey: undefined, engine: undefined, answers: {},
-			order: undefined, plan: undefined, risk: undefined, levels: undefined, build: undefined, callouts: undefined, problems: [],
+			order: undefined, plan: undefined, risk: undefined, levels: undefined, build: undefined, callouts: undefined, loose: undefined, message: undefined,
+			problems: [],
 		};
 	}
 
@@ -147,6 +154,8 @@ export class SessionStore {
 		let levels: LevelsFile | undefined;
 		let build: BuildFile | undefined;
 		let callouts: CalloutsFile | undefined;
+		let loose: LooseFile | undefined;
+		let message: MessageCheck | undefined;
 		// a stage file that is there, but that Shotgun cannot read, is a problem
 		const readFile = <T>(name: string, parse: (text: string, id: string) => T): T | undefined => {
 			const text = task && dir ? readText(path.join(dir, task.id, name)) : undefined;
@@ -170,6 +179,8 @@ export class SessionStore {
 			levels = readFile(LEVELS_FILE, parseLevels);
 			build = readFile(BUILD_FILE, parseBuild);
 			callouts = readFile(CALLOUTS_FILE, parseCallouts);
+			loose = readFile(LOOSE_FILE, parseLoose);
+			message = readFile(MESSAGE_FILE, parseMessageCheck);
 			const parsed = parseDecisions(readText(path.join(dir, task.id, DECISIONS_FILE)) ?? '');
 			decisions = parsed.decisions.slice(-MAX_DECISIONS);
 			if (parsed.invalid > 0) {
@@ -200,6 +211,8 @@ export class SessionStore {
 			levels,
 			build,
 			callouts,
+			loose,
+			message,
 			problems,
 		});
 	}
@@ -617,6 +630,81 @@ export class SessionStore {
 		this.load();
 	}
 
+	// The loose ends of a step at its gate (phase 9). The engine finds them, so the ledger records no decision
+	addLooseEnds(step: string, finds: readonly LooseFind[]): void {
+		const task = this.requireStage('build', 'The loose ends are only for stage 5, the build.');
+		this.writeLooseFile(task.id, addLooseEnds(this.state.loose ?? EMPTY_LOOSE, step, finds, this.time()));
+		this.load();
+	}
+
+	// The user hands a loose end to Claude (decision 21): it becomes the next step of the plan, with risk level 2. The
+	// result: the new step
+	handLooseEnd(id: string): PlanStep {
+		const task = this.requireStage('build', 'The loose ends are only for stage 5, the build.');
+		const plan = this.state.plan;
+		if (!plan) {
+			throw new Error('The active task has no plan.');
+		}
+		const end = this.requireLooseEnd(id);
+		if (end.state !== 'open') {
+			throw new Error(end.state === 'handed' ? `The loose end ${id} is step ${end.handed} of Claude already.` : `The loose end ${id} is closed. Open it again first.`);
+		}
+		if (end.kind !== 'mechanical') {
+			throw new Error(`The loose end ${id} is a decision for you, not a step for Claude. Close it with your reason.`);
+		}
+		const source = plan.steps.find((s) => s.id === end.step);
+		const step = looseStep(end, nextLooseStepId(plan.steps), source?.task ?? plan.steps[0]?.task ?? '');
+		const steps = [...plan.steps];
+		steps.splice(looseIndex(steps, (s) => stateOf(this.state.build, s)), 0, step);
+		writeTextAtomic(path.join(this.requireDir(), task.id, PLAN_FILE), jsonText({ version: FILE_VERSION, time: this.time(), steps } satisfies PlanFile));
+		this.writeLevel(task.id, step.id, 2, `A loose end of step ${end.step}.`);
+		const file = this.state.loose ?? EMPTY_LOOSE;
+		this.writeLooseFile(task.id, { ...file, ends: file.ends.map((e) => (e.id === id ? { ...e, state: 'handed' as const, handed: step.id } : e)) });
+		this.append(task.id, { kind: 'loose-hand', by: 'user', end: id, step: step.id, title: end.title });
+		this.load();
+		return step;
+	}
+
+	// The user closes a loose end with a reason, or opens it again with no reason
+	closeLooseEnd(id: string, reason: string | undefined): void {
+		const task = this.requireStage('build', 'The loose ends are only for stage 5, the build.');
+		const end = this.requireLooseEnd(id);
+		const file = this.state.loose ?? EMPTY_LOOSE;
+		if (reason === undefined) {
+			if (end.state !== 'closed') {
+				return;
+			}
+			const { reason: _reason, ...open } = end;
+			this.writeLooseFile(task.id, { ...file, ends: file.ends.map((e) => (e.id === id ? { ...open, state: 'open' as const } : e)) });
+			this.append(task.id, { kind: 'loose-open', by: 'user', end: id });
+		} else {
+			const text = reason.trim().replace(/\s+/g, ' ');
+			if (!text || text.length > MAX_LOOSE_REASON) {
+				throw new Error(`Give a reason of 1 to ${MAX_LOOSE_REASON} characters.`);
+			}
+			if (end.state === 'handed') {
+				throw new Error(`The loose end ${id} is step ${end.handed} of Claude.`);
+			}
+			this.writeLooseFile(task.id, { ...file, ends: file.ends.map((e) => (e.id === id ? { ...e, state: 'closed' as const, reason: text } : e)) });
+			this.append(task.id, { kind: 'loose-close', by: 'user', end: id, title: end.title, reason: text });
+		}
+		this.load();
+	}
+
+	// The check of Claude of the commit message, in stage 5 or after the gate "The task is done". A new check replaces the
+	// old check
+	writeMessageCheck(check: Omit<MessageCheck, 'version' | 'time'>): MessageCheck {
+		const task = this.requireTask();
+		if (task.stage !== 'build') {
+			throw new Error('Claude checks the commit message only in stage 5, the build, or after the end of the task.');
+		}
+		const value: MessageCheck = { version: FILE_VERSION, ...check, time: this.time() };
+		writeTextAtomic(path.join(this.requireDir(), task.id, MESSAGE_FILE), jsonText(value));
+		this.append(task.id, { kind: 'message-check', by: 'claude', agrees: value.agrees, points: value.points.length });
+		this.load();
+		return value;
+	}
+
 	// The mark of the user on a change of the receipt of the current step
 	setMark(id: string, change: string, mark: ChangeMark): void {
 		const { task, step, receipt, found } = this.requireChange(id, change);
@@ -808,6 +896,18 @@ export class SessionStore {
 			throw new Error(`Step ${step} has no callout ${id}.`);
 		}
 		return { file, value, callout };
+	}
+
+	private requireLooseEnd(id: string): LooseEndItem {
+		const end = this.state.loose?.ends.find((e) => e.id === id);
+		if (!end) {
+			throw new Error(`The task has no loose end ${id}.`);
+		}
+		return end;
+	}
+
+	private writeLooseFile(id: string, value: LooseFile): void {
+		writeTextAtomic(path.join(this.requireDir(), id, LOOSE_FILE), jsonText(value));
 	}
 
 	private writeCalloutsFile(id: string, value: CalloutsFile): void {

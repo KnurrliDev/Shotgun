@@ -1,7 +1,7 @@
 # Shotgun: implementation plan
 
 - Date: 13 November 2026, changed on 14 November 2026
-- Status: the phases 0 to 7 are done. Section 8 gives the status of each phase.
+- Status: the phases 0 to 9 are done. Section 8 gives the status of each phase.
 - Sources:
   - the design canvas: https://claude.ai/artifact/Sxm9DJ8WPE6LAFqW8PVD6z
   - `dataflow-gaps.md` and `dataflow-gaps-2.md` in this folder
@@ -57,8 +57,10 @@ These items are not in the scope of version 1:
 17. In stage 5, the user can change the level of each step that Claude did not start, also the current step of the user. The ledger records each change, and a new writer applies at once.
 18. The frame lines of Claude get no receipt. They get the tag "Claude · frame" in the text editor, and the user reads them while the user fills the holes. The gate "The step is done" needs each hole filled.
 19. D2: the default voice of the callouts is normal: problems and warnings. A pause is 2 seconds with no edit in the files of the step.
+20. Shotgun needs DataFlow 0.6.1 or a later version. DataFlow 0.6.1 has the fixes of the second gap list, also `getRipple` with a base. Shotgun has no procedures for older versions.
+21. A loose end that the user hands to Claude becomes the next step of the plan, with risk level 2: after the step that is open, or before the next step that nobody started.
 
-The user gave decision 10 on 13 November 2026, and the decisions 11 to 19 on 14 November 2026. Decision 10 changes the buttons of the canvas that started Claude. Section 12 lists these changes.
+The user gave decision 10 on 13 November 2026, and the decisions 11 to 21 on 14 November 2026. Decision 10 changes the buttons of the canvas that started Claude. Section 12 lists these changes.
 
 ## 3. Proposals of this plan
 
@@ -160,6 +162,8 @@ The other stages of Claude run in the same way: the user asks, Claude reads, and
 | `build.json` | Shotgun | The state of each step, its scope and its base. The receipt of an errand, with the notes and the loose ends of Claude and the marks and the notes of the user. The holes of a frame with their hints, and the hints that the user opened. |
 | `lines.json` | Shotgun | The writer of each changed line, with a hash of each line of the file. |
 | `callouts.json` | Shotgun | The keys of the facts of DataFlow at the start of each step of the user. The callouts with the reasons of the user and the words of Claude. The answers of Claude on lines. |
+| `loose.json` | Shotgun | The loose ends of the steps, the steps that Shotgun checked, the reasons of the user, and the steps of Claude for the loose ends. |
+| `message.json` | Claude | The last check of Claude of the commit message: the message, its points and a note. |
 | `decisions.jsonl` | Shotgun | The ledger: 1 line for each decision of the user and for each deny of the guard. |
 
 Each JSON file has a `version` field. Shotgun writes each file in 1 step, as `writeTextAtomic` of DataFlow does.
@@ -277,12 +281,12 @@ The guard helps the user, but it is not a security boundary:
 | The risk level | `getHeat` with `signals`, `isReachComplete` and `reachUnknown`, `getPlace` for the threads and the locks, and `types` of `getHeat` for a data member |
 | The frame functions | `scanCallGraph`, `getCallGraph`, `onDidChangeCallGraph` |
 | The receipt | `markBase`, `getDiff` with the base `mark:<name>` and `allFiles`, `deleteMark` |
-| The loose ends | `getMemberSites`, `getCallers` |
+| The loose ends | `getOutline` for the new members, `getMemberSites`, and `getRipple` with the base of the step |
 | The callouts | `getThreads`, `getLogic`, `getHidden` and `getPlace` after `onDidParse` |
 | The state of the engine | `engineState`, `engineError`, `onDidChangeEngineState` |
 | The proof of a callout, after a click of the user | `showLine`, `setLens` |
 
-Shotgun needs the release of DataFlow with the fixes of the 2 gap lists, for example 0.6.0. At the start, Shotgun reads `packageJSON.version` of DataFlow. With an older version, Shotgun shows the reason and stops.
+Shotgun needs DataFlow 0.6.1, the release with the fixes of the 2 gap lists (decision 20). At the start, Shotgun reads `packageJSON.version` of DataFlow. With an older version, Shotgun shows the reason and stops.
 
 ### 6.9 The writer of each line
 
@@ -584,6 +588,38 @@ Differences from the plan:
 - **Copy:** the ledger page copies the decisions as Markdown for a pull request.
 - **Done when:** the ledger of the fixture task shows the decisions, the writers of the lines, and the check of a message.
 
+**Status, 14 November 2026:** done. `scripts/test-claude.mjs` passed all 146 checks with 12 prompts of Claude Code. The run used DataFlow 0.6.1:
+
+- At the gate of each step, Shotgun started a scan of the call graph, and then got the loose ends of the step from DataFlow. Each scan parsed only the 1 or 2 changed files, in about 0.7 seconds. `loose.json` had the steps 1 to 4 as checked.
+- Step 1 of the user added the setting `cycle_limit`, and step 2 of Claude added the counter `waiting_cycles`. DataFlow gave a loose end for each new member: "process does not use cycle_limit" and "process does not use waiting_cycles". `process()` uses 3 of 4 data members of `OperationalSettings` and 10 of 11 data members of `HomeBatteryCtrl`, but not the new members at the 2 gates. The receipt of step 2 gave a loose end of Claude too.
+- "Hand to Claude" made the first loose end the step L1 after step 4, with level 2. The panel showed the request "Do the loose ends.".
+- The test wrote a commit message in the input box of Source Control. The tab **Ledger** of the panel showed the same text.
+- "Check my commit message." loaded the skill `shotgun-commit`. Claude read the diff, gave its points with `shotgun_submit_message_check`, and changed no file. The check did not agree with the message, because the diff has no check of the limit yet: the later steps were not done.
+- The ledger page showed the 39 decisions of the user, the lines of each writer, and the points of the check. "Copy for the pull request" put the ledger into the clipboard as Markdown.
+
+Earlier runs, probes of DataFlow and the screenshots found 9 faults, and this phase fixed them:
+
+- The test script: the stand-in of the user wrote only a comment line in step 1. In 1 run, the plan put the 2 new data members into step 1, so Claude could not do step 2. Now a run of Claude Code with no plugins stands in for the user and does the step.
+- Shotgun asked DataFlow with the line of a new member. But `getOutline` and `getMemberSites` find a type only by a line with its name. Thus no gate got a loose end of DataFlow, and the log of Shotgun had no failure. Now a scan of the text finds the head of the type, and each failure of DataFlow goes to the log. A probe with the real DataFlow showed the fault. Item 48 of `dataflow-gaps-2.md` gives the internal error of `getMemberSites` for such a line.
+- Shotgun skipped each hunk with a function, so a new data member next to a new inline function gave no loose end. Now the outline of the type gives the line of each member.
+- After "Hand to Claude", the gate told the user to say "Do step 5." in place of "Do the loose ends.".
+- The command **Shotgun: Hand a Loose End to Claude** took a loose end that is a decision of the user. Now the store and the command refuse it, as the panel does.
+- The test script: the Source Control view scrolled to the file of the active editor, so the test found no input box. The test build has `scm.autoReveal` off now.
+- The test script: the step of the user after step 4 was open, so the loose end went after it (decision 21). The test sets step 5 to level 2 now.
+- The screenshots showed long names that did not break. A title ran under its chip, and the table of the ledger page cut off a column. Now the titles have the short names of the functions, long names break, and the table scrolls in a narrow card. A harness of the webviews with the stage files of a run, and the screenshots of the last 2 runs, showed the fix.
+- A gate gave the false loose end "process does not use planning_cycles", though Claude added `planning_cycles = 0` to `process()` in the same step. The call graph of DataFlow does not see the changes that Claude Code writes on the disk, so the gate got an old index (item 49 of `dataflow-gaps-2.md`). Now each gate starts a scan of the call graph and waits for its end. A probe with the real DataFlow showed the fault and the fix.
+
+Differences from the plan:
+
+- The loose ends of a changed function come from `getRipple` with the base of the step, not from `getCallers`. A caller in the changed lines of the step is not a loose end. A step gets a maximum of 5 of these loose ends.
+- A loose end of a data member is a function that uses half or more of the data members of the type, but not the new member. A static data member does not count, and a new type has no loose ends. Each new member gets a maximum of 8.
+- Shotgun finds the head of a type with a scan of the text, because DataFlow finds a type only by a line with its name (item 48).
+- At each gate, Shotgun waits for a scan of the call graph, for a maximum of 30 seconds (item 49). If the scan does not end in time, the gate gives no loose ends of the new members.
+- "Hand to Claude" gives level 2 (decision 21), not a choice of level 1 or 2. Only a mechanical loose end with a place can go to Claude. The user closes a decision with a reason.
+- Shotgun shows no tag in the text editor for a loose end. The panel and the page link to its place.
+- Shotgun reads the commit message with the API of the Git extension of VS Code, every 2 seconds in stage 5. A check of Claude is old when the message changes.
+- Shotgun needs DataFlow 0.6.1 (decision 20). The procedures for DataFlow 0.6.0 are removed.
+
 ### Phase 10: release
 
 - **Documents:** `README.md`, `docs/usage.md`, `docs/tools.md` with the tools and the skills, and `CHANGELOG.md`.
@@ -659,7 +695,7 @@ The gates stay buttons, because they record decisions of the user. A click on th
 ## 13. Effect on the gap list of DataFlow
 
 - Item 40, prompts of an extension: not necessary. The skills of the plugin of Shotgun do this work.
-- Item 41, a ripple of a base with no change of the side view: still useful for the loose ends of phase 9. Until the fix, the loose ends come from `getMemberSites` and `getCallers`.
+- Item 41, a ripple of a base with no change of the side view: DataFlow 0.6.1 has it. The loose ends of phase 9 use it with the base of each step.
 - The items 11 and 30 to 33 of the heat stay important for the risk levels of phase 5.
 - Phase 1 found item 42: the MCP server and the token file can have different tokens at the first start of DataFlow. The order of the work puts it first.
 - This plan and the spikes of phase 0 find no other new gap.

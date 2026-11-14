@@ -36,6 +36,7 @@ export interface PlanStep {
 	readonly text: string;
 	readonly checks: readonly string[];
 	readonly note?: string; // a note of Claude for the user
+	readonly looseEnd?: string; // a step of a loose end that the user handed to Claude, for example E3 (decision 21)
 }
 
 export interface Plan {

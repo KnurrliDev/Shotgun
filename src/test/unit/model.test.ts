@@ -17,7 +17,8 @@ suite('View model', () => {
 	});
 	const snapshot = (over: Partial<Snapshot> = {}): Snapshot => ({
 		root, task: undefined, isPaused: false, tasks: [], decisions: [], questions: [], survey: undefined, engine: undefined, answers: {},
-		order: undefined, plan: undefined, risk: undefined, levels: undefined, build: undefined, callouts: undefined, problems: [], ...over,
+		order: undefined, plan: undefined, risk: undefined, levels: undefined, build: undefined, callouts: undefined, loose: undefined, message: undefined,
+		problems: [], ...over,
 	});
 	const model = (s: Snapshot, claude = connected, dataflow = ready) => buildModel({ version: '0.1.0', snapshot: s, dataflow, claude });
 
@@ -31,7 +32,7 @@ suite('View model', () => {
 			['claude-dataflow', false, 'connectDataFlow'],
 			['claude-shotgun', false, 'connectClaude'],
 		]);
-		assert.match(m.setup[1].text, /DataFlow 0\.5\.0 is too old\. Install DataFlow 0\.6\.0/);
+		assert.match(m.setup[1].text, /DataFlow 0\.5\.0 is too old\. Install DataFlow 0\.6\.1/);
 		assert.strictEqual(m.isReady, false);
 		assert.strictEqual(model(snapshot()).isReady, true);
 		assert.strictEqual(model(snapshot({ root: undefined })).setup[0].isOk, false);

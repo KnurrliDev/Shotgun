@@ -30,6 +30,7 @@ export interface TaskView {
 	order?: OrderView; // stage 3 and later: the order of the user
 	plan?: PlanView; // stage 4 and later: the plan of Claude with the risk levels
 	build?: BuildView; // stage 5: the steps of the build and the current step
+	ledger?: LedgerView; // stage 5 and after the end of the task: the ledger and the commit message
 	gate?: GateView; // the gate of the stage, if this version of Shotgun has it
 	isDone: boolean;
 	isPaused: boolean;
@@ -358,8 +359,72 @@ export interface NavigatorView {
 	pauseSeconds: number;
 }
 
+// A loose end of the build (phase 9): a place that a change of a step can also need. mechanical: Claude can do it, and a
+// click of the user hands it over. decision: the user decides it. The facts of the engine have the badge Engine, and a
+// loose end of Claude has the badge Model
+export interface LooseEndView {
+	id: string;
+	kind: 'mechanical' | 'decision';
+	source: 'members' | 'switch' | 'ripple' | 'claude';
+	title: string;
+	proof: string[];
+	place?: string; // for example "src/settings_io.cpp:38-45"
+	path?: string;
+	line?: number;
+	state: 'open' | 'handed' | 'closed';
+	stepN: number; // the number of the step that made the loose end
+	handed?: { id: string; n: number; state: 'todo' | 'open' | 'receipt' | 'holes' | 'done' }; // the step of Claude for the loose end
+	reason?: string; // the reason of the user for a closed loose end
+}
+
+export interface LooseView {
+	ends: LooseEndView[];
+	checked: string; // for example "after steps 1 to 4"
+	open: number;
+	request?: string; // the request for Claude Code when the current step is a loose end for Claude
+}
+
+// The commit message in Source Control, and the check of Claude (phase 9)
+export interface MessagePointView {
+	kind: 'ok' | 'missing' | 'wrong' | 'question';
+	text: string;
+	place?: string;
+	path?: string;
+	line?: number;
+}
+
+export interface MessageView {
+	hasRepository: boolean;
+	text: string; // the message in the input box of Source Control now
+	check?: { agrees: boolean; points: MessagePointView[]; note?: string; time: string; isOld: boolean }; // isOld: the message changed after the check
+	request: string; // "Check my commit message."
+}
+
+// The lines of each writer in a file of the ledger
+export interface LedgerRowView {
+	file: string;
+	path: string;
+	user: number;
+	walked: number;
+	notWalked: number;
+	firstNotWalked?: number;
+}
+
+// The ledger of the task (phase 9): the decisions, the lines of each writer, and the commit message
+export interface LedgerView {
+	rows: LedgerRowView[];
+	user: number; // the lines of the user
+	walked: number; // the lines of Claude that the user walked
+	notWalked: number;
+	decisions: { user: number; claude: number };
+	userDecisions: { n: number; text: string; time: string }[];
+	markdown: string; // the text for a pull request
+	message: MessageView;
+}
+
 export interface BuildView {
 	navigator: NavigatorView;
+	loose: LooseView;
 	steps: BuildStepView[];
 	current: CurrentStepView | null; // null: each step is done
 	done: number;
@@ -413,7 +478,7 @@ export interface ViewModel {
 }
 
 // selectStep: the page shows this step, for example after a click on a CodeLens line in the text editor
-export type ToView = { type: 'model'; model: ViewModel } | { type: 'selectStep'; id: string };
+export type ToView = { type: 'model'; model: ViewModel } | { type: 'selectStep'; id: string } | { type: 'showLedger' };
 
 // An edit of the user on the order page. later: true keeps the task for later, and false puts it back into the plan
 export type OrderEditView =
@@ -446,4 +511,9 @@ export type FromView =
 	| { type: 'closeCallout'; step: string; id: string } // "Not a problem": the extension asks for the reason
 	| { type: 'reopenCallout'; step: string; id: string }
 	| { type: 'showInDataFlow'; path: string; line: number; source: 'threads' | 'logic' | 'hidden' } // after a click of the user
-	| { type: 'resolveAnswer'; id: string };
+	| { type: 'resolveAnswer'; id: string }
+	| { type: 'handLooseEnd'; id: string } // the button "Hand to Claude" (decision 21)
+	| { type: 'closeLooseEnd'; id: string } // the extension asks for the reason
+	| { type: 'reopenLooseEnd'; id: string }
+	| { type: 'showLedger' } // the page shows the ledger
+	| { type: 'copyLedger' }; // the extension copies the ledger as Markdown for a pull request

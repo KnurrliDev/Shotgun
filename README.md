@@ -16,7 +16,7 @@ A button of Shotgun records a decision of the user. It never starts Claude: you 
 
 ## Status
 
-Shotgun is in development. The phases 1 to 8 of 10 are complete:
+Shotgun is in development. The phases 1 to 9 of 10 are complete:
 
 - Phase 1: the tasks, the stages, the panel, the page, the guard and the connection to Claude Code.
 - Phase 2: the brief, the questions of Claude about the brief, and the gate of stage 1.
@@ -26,13 +26,14 @@ Shotgun is in development. The phases 1 to 8 of 10 are complete:
 - Phase 6: the build: the steps in sequence, the errands of Claude with receipts, the steps of the user, and the writer of each line.
 - Phase 7: the frames of Claude with a hole for each decision of the user, the hints of each hole, and Tab between the holes.
 - Phase 8: the callouts with the new facts of DataFlow on your lines, and the answers of Claude to your questions about a line.
+- Phase 9: the loose ends of the steps, the ledger of the task, and the check of your commit message by Claude.
 
 `implementation-plan.md` gives the phases, and `CHANGELOG.md` gives the content of each phase.
 
 ## Prerequisites
 
 - VS Code 1.143 or a later version.
-- DataFlow 0.6.0 or a later version. The tools of Shotgun are in the MCP server of DataFlow.
+- DataFlow 0.6.1 or a later version. The tools of Shotgun are in the MCP server of DataFlow.
 - The connection of DataFlow to Claude Code, from the command **DataFlow: Connect to Claude Code**.
 - Claude Code 2.1.323 or a later version.
 - A C or C++ project with a compile database, as DataFlow needs.
@@ -62,8 +63,10 @@ Shotgun is in development. The phases 1 to 8 of 10 are complete:
 21. For a step of level 3, tell Claude "Give me a frame for step N." Fill each hole of the frame. Then select **The step is done**.
 22. For a step of yours, write its code. Then select **The step is done**. At level 4, you can select **I want a frame** first.
 23. While you write a step, read the callouts of DataFlow on your lines. Tell Claude "Explain the callout on line N." for the words of Claude. Ask Claude about a line, for example "Does the lambda on line 95 copy charge?".
-24. After the last step, select **The task is done**.
-25. Follow the panel of Shotgun in the secondary side bar. It shows the next work and the requests for Claude Code.
+24. At the gate of each step, Shotgun gets the loose ends of the step from DataFlow. Hand a mechanical loose end to Claude, and tell Claude "Do the loose ends.".
+25. After the last step, select **The task is done**.
+26. Write the commit message in Source Control. Tell Claude "Check my commit message.". Then commit in Source Control.
+27. Follow the panel of Shotgun in the secondary side bar. It shows the next work and the requests for Claude Code.
 
 | Command | Function |
 | --- | --- |
@@ -83,6 +86,10 @@ Shotgun is in development. The phases 1 to 8 of 10 are complete:
 | Shotgun: Set the Voice of the Callouts | Sets the voice: quiet, normal or talkative. |
 | Shotgun: Not a Problem | Closes a callout with your reason. The ledger keeps the reason. |
 | Shotgun: Resolve a Question on a Line | Resolves a question that Claude answered at a line. |
+| Shotgun: Hand a Loose End to Claude | Makes a loose end the next step of the plan for Claude, with risk level 2. |
+| Shotgun: Close a Loose End | Closes a loose end with your reason. The ledger keeps the reason. |
+| Shotgun: Show the Ledger | Shows the ledger page of the task. |
+| Shotgun: Copy the Ledger for a Pull Request | Puts your decisions and the lines of each writer into the clipboard as Markdown. |
 | Shotgun: Pass the Gate | Records the gate of the stage, for example "The brief is ready". |
 | Shotgun: Pause | Stops the guard for work outside of the task. The ledger records the pause. |
 | Shotgun: Continue | Starts the guard again. |
@@ -112,7 +119,7 @@ In stage 2, Claude reads your brief and the code. Claude gives the survey to Sho
 - The facts that the brief does not give. Each fact names the read tool of DataFlow that shows it.
 - The questions for you.
 
-Shotgun checks each part of the survey, and gives all problems back to Claude in 1 list. Claude then corrects the survey. Claude changes no file in this stage. When DataFlow tells the calls of its tools, Shotgun also refuses a fact with a tool that Claude did not call in this stage. DataFlow 0.6.0 does not tell them.
+Shotgun checks each part of the survey, and gives all problems back to Claude in 1 list. Claude then corrects the survey. Claude changes no file in this stage. Shotgun also refuses a fact with a tool that Claude did not call in this stage.
 
 The page of Shotgun shows the words of Claude with the badge **Model**. It shows the facts of DataFlow with the badge **Engine**. For each hook in a C or C++ file, Shotgun gets these facts from DataFlow: the function, the threads, the locks and the heat. The heat is a score from 0 to 100 for the risk of a change.
 
@@ -227,6 +234,25 @@ You can ask Claude about a line, for example "Does the lambda on line 95 copy ch
 
 `lines.json` keeps the writer of each changed line. The text editor shows a mark in the gutter for each line of Claude. The mark is dashed until you walk its change, and then it has the color of your mark. A line of Claude that you change becomes your line. If you change a file of the scope while Claude writes the step, Shotgun shows a warning.
 
+## Loose ends
+
+A loose end is a place that the changes of a step can also need. At the gate of each step, Shotgun gets the loose ends from DataFlow, while the base of the step is still there:
+
+- a function that uses most data members of a type, but not a new member of the step, for example a function that loads the settings: **mechanical**
+- a switch statement that does not handle a new enumerator: **mechanical**
+- a caller that gets the result of a changed function: **your decision**
+- a loose end that Claude gave with its receipt: **mechanical**, with the badge **Model**
+
+The tab **Loose ends** of the panel shows them. **Hand to Claude** makes a mechanical loose end the next step of the plan, with risk level 2 (decision 21). Then tell Claude "Do the loose ends.". **Close** keeps your reason in the ledger, for example for a caller that needs no change.
+
+## The ledger and the commit message
+
+The ledger page shows your decisions, and the lines of each file: your lines, the lines of Claude that you walked, and the lines of Claude that you did not walk. **Walk** opens the first line of Claude that you did not walk. **Copy for the pull request** puts your decisions and the lines of each writer into the clipboard as Markdown.
+
+You write the commit message in the input box of Source Control. The tab **Ledger** of the panel shows the same text. Tell Claude "Check my commit message.". Claude compares the message with the diff, and gives its points with the badge **Model**: what agrees, what is missing, what is wrong, and its questions. If you change the message after the check, the panel tells you that the check is old.
+
+Shotgun makes no commit, and Claude changes no message. You commit in Source Control.
+
 ## Files
 
 | File | Content |
@@ -245,6 +271,8 @@ You can ask Claude about a line, for example "Does the lambda on line 95 copy ch
 | `.shotgun/<task>/build.json` | The state of each step of the build, its scope and its base. Also the receipt with the notes of Claude and your marks, and the holes of a frame with their hints. |
 | `.shotgun/<task>/lines.json` | The writer of each changed line, with a hash of each line of the file. |
 | `.shotgun/<task>/callouts.json` | The facts of DataFlow at the start of each step, the callouts with your reasons and the words of Claude, and the answers on lines. |
+| `.shotgun/<task>/loose.json` | The loose ends of the steps, with their state, your reasons and the steps of Claude for them. |
+| `.shotgun/<task>/message.json` | The last check of Claude of your commit message. |
 | `.shotgun/<task>/decisions.jsonl` | The ledger: 1 line for each decision of the user and for each deny of the guard. |
 | `~/.shotgun/claude` | The plugin of Shotgun for Claude Code, in a local marketplace. |
 | `.claude/settings.local.json` | The local settings of Claude Code in the project. The connection turns the plugin of Shotgun on there. |
@@ -257,7 +285,7 @@ You decide if git keeps the folder `.shotgun`.
 2. Run `npm run compile`.
 3. In VS Code, select F5. The configuration "Run Extension" opens a second window with Shotgun.
 
-The second window needs DataFlow 0.6.0 or a later version.
+The second window needs DataFlow 0.6.1 or a later version.
 
 To open the second window with no debugger, run `open-editor.bat` in the folder of the repository. The script compiles Shotgun, and opens VS Code with Shotgun. If VS Code has the second window already, it loads the window again with the new code. To open a folder in the window, give the folder as an argument, for example `open-editor.bat C:\Projects\App`.
 
@@ -266,9 +294,9 @@ The window uses the DataFlow extension of VS Code. To use DataFlow from its repo
 | Command | Tests |
 | --- | --- |
 | `npm test` | The unit tests in a test build of VS Code. The tests load DataFlow from `../DataFlow`, or from the folder of the environment variable `DATAFLOW_REPO`. If the environment variable `CLAUDE_EXE` gives the CLI of Claude Code, a test also checks the plugin with `claude plugin validate`. |
-| `node scripts/test-claude.mjs <run folder>` | The test with Claude Code. 2 tasks go from the brief to stage 2. Task 1 has a brief in a file, and task 2 has a brief from the chat. The guard denies a change in stage 1. Then Claude makes the survey of task 1, and task 1 goes to stage 3. On the order page, the test changes the order. Claude surveys the changed tasks, and task 1 goes to stage 4. Then Claude makes the plan, the test changes the levels, and task 1 goes to stage 5. In the build, the test writes step 1 as the user. Claude does step 2 and gives a receipt. The test puts an issue on a change, Claude fixes it, and the test accepts the receipt. Then the test sets step 3 to level 4 and asks for a frame. Claude gives the frame, and the test fills the holes with Tab and the hints. In step 4, the test writes a line with a race. The race shows as a callout, and Claude explains it and answers a question about a line. Use a new run folder outside of the repository. |
+| `node scripts/test-claude.mjs <run folder>` | The test with Claude Code. 2 tasks go from the brief to stage 2. Task 1 has a brief in a file, and task 2 has a brief from the chat. The guard denies a change in stage 1. Then Claude makes the survey of task 1, and task 1 goes to stage 3. On the order page, the test changes the order. Claude surveys the changed tasks, and task 1 goes to stage 4. Then Claude makes the plan, the test changes the levels, and task 1 goes to stage 5. In the build, a run of Claude Code with no plugins stands in for the user and writes step 1. Claude does step 2 and gives a receipt. The test puts an issue on a change, Claude fixes it, and the test accepts the receipt. Then the test sets step 3 to level 4 and asks for a frame. Claude gives the frame, and the test fills the holes with Tab and the hints. In step 4, the test writes a line with a race. The race shows as a callout, and Claude explains it and answers a question about a line. Then the test ends step 4, hands a loose end to Claude, writes a commit message, and Claude checks the message. Use a new run folder outside of the repository. |
 
-NOTE: `scripts/test-claude.mjs` uses the Claude subscription of the user for 10 runs of Claude Code. It does not change the settings of the user.
+NOTE: `scripts/test-claude.mjs` uses the Claude subscription of the user for 12 runs of Claude Code. It does not change the settings of the user.
 
 ## License
 

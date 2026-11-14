@@ -73,9 +73,16 @@ suite('Plugin of Shotgun', () => {
 		assert.deepStrictEqual(readSkills(dir), { shotgun: 'text' });
 	});
 
-	test('The extension has the skills of each stage of Claude, and of the callouts', () => {
+	test('The extension has the skills of each stage of Claude, of the callouts and of the commit message', () => {
 		const skills = readSkills(repo);
-		assert.deepStrictEqual(Object.keys(skills).sort(), ['shotgun', 'shotgun-errand', 'shotgun-explain', 'shotgun-frame', 'shotgun-plan', 'shotgun-survey']);
+		assert.deepStrictEqual(Object.keys(skills).sort(),
+			['shotgun', 'shotgun-commit', 'shotgun-errand', 'shotgun-explain', 'shotgun-frame', 'shotgun-plan', 'shotgun-survey']);
+		assert.match(skills['shotgun-commit'], /^---\r?\nname: shotgun-commit\r?\ndescription: '[^']*Check my commit message[^']*'\r?\n---/);
+		for (const tool of ['shotgun_get_commit_message', 'shotgun_submit_message_check']) {
+			assert.ok(skills['shotgun-commit'].includes(`mcp__plugin_dataflow_dataflow__${tool}`), tool);
+		}
+		assert.ok(skills.shotgun.includes('shotgun-commit'));
+		assert.match(skills['shotgun-errand'], /Do the loose ends/);
 		assert.match(skills['shotgun-plan'], /^---\r?\nname: shotgun-plan\r?\ndescription: '[^']*Make the plan[^']*'\r?\n---/);
 		for (const tool of ['shotgun_get_order', 'shotgun_submit_task_survey', 'shotgun_submit_plan', 'shotgun_get_plan', 'get_heat']) {
 			assert.ok(skills['shotgun-plan'].includes(`mcp__plugin_dataflow_dataflow__${tool}`), tool);

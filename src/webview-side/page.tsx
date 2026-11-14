@@ -1,5 +1,8 @@
 import { render } from 'preact';
+import { useEffect, useState } from 'preact/hooks';
+import type { TaskView, ToView, ViewModel } from '../views/protocol';
 import { CommandButton, Decisions, NoTask, Problems, SetupList, StageBar, TaskList, TaskSummary, useModel } from './common';
+import { LedgerPage } from './ledger';
 import { OrderPage } from './order';
 import { PlanPage } from './plan';
 import { applyStyles } from './styles';
@@ -11,12 +14,58 @@ import { SurveyPage } from './survey';
 applyStyles();
 document.body.classList.add('page-body');
 
+// The page of the ledger (phase 9): the decisions, the lines of each writer, and the commit message
+function LedgerScreen({ task, model }: { task: TaskView; model: ViewModel }) {
+	return (
+		<div class="page">
+			<header>
+				<div class="label">Shotgun {model.version} · Ledger</div>
+				<h1 class="page-title">{task.title}</h1>
+				<StageBar stages={model.stages} isLarge />
+				<p class="intro">
+					The ledger shows your decisions, the lines that you and Claude wrote, and the lines of Claude that you did not walk. You write the commit
+					message in Source Control, and Claude checks it when you ask.
+				</p>
+			</header>
+			<LedgerPage title={task.title} ledger={task.ledger!} />
+		</div>
+	);
+}
+
 function Page() {
 	const model = useModel();
+	const [tab, setTab] = useState<'plan' | 'ledger' | undefined>(undefined);
+	// "Show the ledger" of the panel, and a click on a CodeLens line in the text editor
+	useEffect(() => {
+		const listener = (event: MessageEvent<ToView>) => {
+			if (event.data?.type === 'showLedger') {
+				setTab('ledger');
+			} else if (event.data?.type === 'selectStep') {
+				setTab('plan');
+			}
+		};
+		window.addEventListener('message', listener);
+		return () => window.removeEventListener('message', listener);
+	}, []);
 	if (!model) {
 		return <div class="page"><p class="muted">Shotgun starts.</p></div>;
 	}
 	const { task } = model;
+	// stage 5: the plan and the ledger. After the last step, the ledger comes first
+	if (task?.plan && task.ledger) {
+		const shown = tab ?? (task.isDone || !task.build?.current ? 'ledger' : 'plan');
+		return (
+			<>
+				<div class="tabs page-tabs" role="tablist" aria-label="The pages of stage 5">
+					<button type="button" role="tab" class={`tab${shown === 'plan' ? ' on' : ''}`} aria-selected={shown === 'plan'} onClick={() => setTab('plan')}>Plan</button>
+					<button type="button" role="tab" class={`tab${shown === 'ledger' ? ' on' : ''}`} aria-selected={shown === 'ledger'} onClick={() => setTab('ledger')}>
+						Ledger
+					</button>
+				</div>
+				{shown === 'ledger' ? <LedgerScreen task={task} model={model} /> : <PlanPage task={task} model={model} />}
+			</>
+		);
+	}
 	// stage 4 and later: the plan of Claude. Stage 3, and stage 4 with no plan: the order of the user. Stage 2: the survey
 	if (task?.plan) {
 		return <PlanPage task={task} model={model} />;

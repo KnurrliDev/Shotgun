@@ -127,7 +127,7 @@ export interface SurveyContext {
 	readonly readLines: (file: string) => readonly string[] | undefined; // the lines of a file, or undefined if no file
 	readonly tools: readonly string[]; // the read tools of DataFlow. Empty: Shotgun does not check the names
 	// the tools of DataFlow that Claude called in this stage (decision 13). undefined: Shotgun does not check the calls,
-	// because DataFlow 0.6.0 does not tell the calls of the tools (item 43 of dataflow-gaps-2.md)
+	// for example in a test
 	readonly called?: ReadonlySet<string>;
 }
 

@@ -4,6 +4,19 @@
 
 This version has no release yet. Each phase of `implementation-plan.md` adds its items.
 
+### Phase 9: loose ends, ledger and commit message
+
+- Shotgun needs DataFlow 0.6.1 or a later version (decision 20). DataFlow 0.6.1 has the fixes of the second gap list. Shotgun has no procedures for DataFlow 0.6.0 now.
+- At the gate of each step, Shotgun gets the loose ends of the step from DataFlow, before the gate deletes the base of the step. A function that uses most data members of a type but not a new member, and a switch statement that does not handle a new enumerator, are mechanical loose ends. They come from `getMemberSites`. A new member is a data member or an enumerator with its declaration on an added line, from `getOutline`. A static data member does not count, and a new type has no loose ends. DataFlow finds a type only by a line with its name, so Shotgun finds the head of the type around the added lines with a scan of the text (item 48 of `dataflow-gaps-2.md`). The call graph of DataFlow does not see the changes that Claude Code writes on the disk. Thus each gate starts a scan of the call graph first, and waits for its end for a maximum of 30 seconds (item 49).
+- A caller that gets the result of a changed function is a loose end that the user decides. It comes from `getRipple` with the base of the step. The loose ends of Claude in a receipt are mechanical loose ends with the badge **Model**. The title of a loose end has the short name of each function, and the proof has the qualified name.
+- The panel in stage 5 has the tabs **Steps**, **Loose ends** and **Ledger**. **Hand to Claude** makes a mechanical loose end the next step of the plan, with risk level 2 (decision 21). Then the panel shows the request "Do the loose ends.". **Close** keeps the reason of the user in the ledger.
+- The page in stage 5 has the tabs **Plan** and **Ledger**. The ledger shows the decisions of the user, and the lines of each file: the lines of the user, the lines of Claude that the user walked, and the lines of Claude that the user did not walk. **Walk** opens the first line that the user did not walk. **Copy for the pull request** puts the decisions and the lines into the clipboard as Markdown.
+- The panel shows the commit message from the input box of Source Control, with the API of the Git extension of VS Code (P11). The new tool `shotgun_get_commit_message` gives the message, the changed files, the steps, the decisions of the user, the lines and the loose ends to Claude.
+- The new tool `shotgun_submit_message_check` keeps the check of Claude: the points ok, missing, wrong and question, with their places. Shotgun refuses a check of a message that changed. After a change of the message, the panel tells that the check is old. Shotgun makes no commit.
+- The plugin of Shotgun has the new skill `shotgun-commit`. The skill `shotgun-errand` also does the loose ends.
+- New commands: **Shotgun: Hand a Loose End to Claude**, **Shotgun: Close a Loose End**, **Shotgun: Show the Ledger** and **Shotgun: Copy the Ledger for a Pull Request**. New stage files: `loose.json` and `message.json`.
+- Tests: 126 unit tests. `scripts/test-claude.mjs` adds the loose ends at the gates, a loose end for Claude, the ledger page, and the check of a commit message. A run of Claude Code with no plugins stands in for the user in step 1, because step 2 can need its work.
+
 ### Phase 8: callouts
 
 - The user writes a step of the user, or the holes of a frame. Meanwhile, Shotgun gets the facts of DataFlow for the lines of the user. These are the races of the threads, the warnings of the logic, and the hidden C++ of the functions.

@@ -1,8 +1,8 @@
 // The version that Shotgun needs from DataFlow. This file uses no VS Code API, so the unit tests can call it directly.
 
 export const DATAFLOW_ID = 'KnurrliDev.dataflow';
-// DataFlow 0.6.0 has registerTools, the marks and the facts of the heat
-export const MIN_DATAFLOW = '0.6.0';
+// DataFlow 0.6.1 has registerTools, the marks, the facts of the heat, and the fixes of the second gap list (decision 20)
+export const MIN_DATAFLOW = '0.6.1';
 // The name of Shotgun in DataFlow. The MCP names of the tools of Shotgun start with "shotgun_"
 export const CLIENT = 'Shotgun';
 

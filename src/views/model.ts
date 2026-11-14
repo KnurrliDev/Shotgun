@@ -9,6 +9,8 @@ import {
 } from '../session/build';
 import { calloutStatus, DEFAULT_PAUSE_SECONDS, DEFAULT_VOICE, MAX_PER_PAUSE, Voice, VOICE_TEXT } from '../session/callouts';
 import { findMarkers, Hole, holeNow, isHoleDone } from '../session/frame';
+import { ledgerMarkdown, ledgerRows, MessageCheck, sameMessage } from '../session/ledger';
+import type { LineRun } from '../session/lines';
 import { absolutePath } from '../session/paths';
 import { levelOf, MAX_LEVEL_NOTE, placeName } from '../session/plan';
 import { LEVEL_INFO } from '../session/risk';
@@ -16,8 +18,8 @@ import { GATE_LABEL, STAGE_INFO, STAGES, stageText } from '../session/stages';
 import type { Snapshot } from '../session/store';
 import { excerptOf, findHook, Lines } from '../session/survey';
 import type {
-	BriefView, BuildStepView, BuildView, CurrentStepView, DecisionView, GateView, HoleView, HookView, NavigatorView, OrderTaskView, OrderView, PlanPlaceView,
-	PlanStepView, PlanView, ReceiptView, SetupRow, StageView, SurveyView, TaskView, ViewModel,
+	BriefView, BuildStepView, BuildView, CurrentStepView, DecisionView, GateView, HoleView, HookView, LedgerView, LooseEndView, LooseView, MessageView,
+	NavigatorView, OrderTaskView, OrderView, PlanPlaceView, PlanStepView, PlanView, ReceiptView, SetupRow, StageView, SurveyView, TaskView, ViewModel,
 } from './protocol';
 
 // The view model of the page and of the panel, from the session, the state of DataFlow and the connection to Claude
@@ -45,6 +47,10 @@ export interface ModelInput {
 	// the settings of the callouts (decision 19)
 	readonly voice?: Voice;
 	readonly pauseSeconds?: number;
+	// the lines of each writer in each file, for the ledger
+	readonly ledgerLines?: readonly { readonly file: string; readonly runs: readonly LineRun[] }[];
+	// the commit message in the input box of Source Control. undefined: no repository of git
+	readonly commit?: { readonly text: string };
 }
 
 const count = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -135,6 +141,15 @@ export function decisionText(decision: Decision): string {
 			return `Claude answered your question about ${decision.file}:${decision.line}: "${decision.question}".`;
 		case 'line-resolve':
 			return `You resolved the question ${decision.answer}.`;
+		case 'loose-hand':
+			return `You handed the loose end ${decision.end} to Claude as step ${decision.step}: "${decision.title}".`;
+		case 'loose-close':
+			return `You closed the loose end ${decision.end}, "${decision.title}": ${decision.reason}`;
+		case 'loose-open':
+			return `You opened the loose end ${decision.end} again.`;
+		case 'message-check':
+			return `Claude checked the commit message: ${decision.agrees ? 'it agrees with the diff' : 'it does not agree with the diff'}, `
+				+ `with ${decision.points} ${decision.points === 1 ? 'point' : 'points'}.`;
 	}
 }
 
@@ -387,6 +402,88 @@ function navigatorView(snapshot: Snapshot, voice: Voice, pauseSeconds: number): 
 
 // Stage 5: the steps in sequence, and the current step with its receipt. plan: the steps of the plan view, with their
 // places at the lines now
+// The numbers of steps as a text, for example "step 2", "steps 1 to 4" or "steps 1, 3 and 4"
+function stepsText(numbers: readonly number[]): string {
+	const sorted = [...new Set(numbers)].sort((a, b) => a - b);
+	if (sorted.length === 1) {
+		return `step ${sorted[0]}`;
+	}
+	const isRange = sorted.every((n, i) => i === 0 || n === sorted[i - 1] + 1);
+	return isRange ? `steps ${sorted[0]} to ${sorted[sorted.length - 1]}` : `steps ${sorted.slice(0, -1).join(', ')} and ${sorted[sorted.length - 1]}`;
+}
+
+// The loose ends of the build (phase 9), with the steps of Claude for the loose ends that the user handed over
+function looseView(snapshot: Snapshot): LooseView {
+	const { plan, build, loose, root, risk, levels } = snapshot;
+	const steps = plan?.steps ?? [];
+	const n = (id: string) => steps.findIndex((s) => s.id === id) + 1;
+	const ends = (loose?.ends ?? []).map((e): LooseEndView => ({
+		id: e.id,
+		kind: e.kind,
+		source: e.source,
+		title: e.title,
+		proof: [...e.proof],
+		...(e.file && root ? { place: e.lines ? placeName({ file: e.file, lines: e.lines }) : e.file, path: absolutePath(e.file, root), line: e.lines?.[0] ?? 1 } : {}),
+		state: e.state,
+		stepN: n(e.step),
+		...(e.handed ? { handed: { id: e.handed, n: n(e.handed), state: stateOf(build, e.handed) } } : {}),
+		...(e.reason ? { reason: e.reason } : {}),
+	}));
+	const checked = (loose?.checked ?? []).map(n).filter((x) => x > 0);
+	const current = currentStep(plan, risk, levels, build);
+	const request = current?.step.looseEnd ? buildNext(current).request : undefined;
+	return {
+		ends,
+		checked: checked.length > 0 ? `after ${stepsText(checked)}` : 'no step is done yet',
+		open: ends.filter((e) => e.state === 'open').length,
+		...(request ? { request } : {}),
+	};
+}
+
+// The commit message in Source Control, and the check of Claude. isOld: the message changed after the check
+function messageView(check: MessageCheck | undefined, commit: ModelInput['commit'], root: string): MessageView {
+	const text = commit?.text ?? '';
+	return {
+		hasRepository: !!commit,
+		text,
+		...(check ? {
+			check: {
+				agrees: check.agrees,
+				points: check.points.map((p) => ({
+					kind: p.kind,
+					text: p.text,
+					...(p.file ? { place: p.line ? `${p.file}:${p.line}` : p.file, path: absolutePath(p.file, root), line: p.line ?? 1 } : {}),
+				})),
+				...(check.note ? { note: check.note } : {}),
+				time: check.time,
+				isOld: !sameMessage(check.message, text),
+			},
+		} : {}),
+		request: 'Check my commit message.',
+	};
+}
+
+// The ledger of the task (phase 9): the decisions of the user and of Claude, the lines of each writer, and the commit message
+function ledgerView(snapshot: Snapshot, input: ModelInput): LedgerView | undefined {
+	const { task, build, root, decisions } = snapshot;
+	if (!task || task.stage !== 'build' || !root) {
+		return undefined;
+	}
+	const rows = ledgerRows(input.ledgerLines ?? [], build);
+	const sum = (key: 'user' | 'walked' | 'notWalked') => rows.reduce((total, r) => total + r[key], 0);
+	const ofUser = decisions.filter((d) => d.by === 'user');
+	return {
+		rows: rows.map((r) => ({ ...r, path: absolutePath(r.file, root) })),
+		user: sum('user'),
+		walked: sum('walked'),
+		notWalked: sum('notWalked'),
+		decisions: { user: ofUser.length, claude: decisions.filter((d) => d.by === 'claude').length },
+		userDecisions: ofUser.map((d, i) => ({ n: i + 1, text: decisionText(d), time: d.time })),
+		markdown: ledgerMarkdown(task.title, ofUser.map(decisionText), rows),
+		message: messageView(snapshot.message, input.commit, root),
+	};
+}
+
 function buildView(snapshot: Snapshot, plan: PlanView, readLines: ModelInput['readLines'], navigator: NavigatorView): BuildView | undefined {
 	const { task, risk, levels, build, root } = snapshot;
 	if (!task || !snapshot.plan || !root) {
@@ -482,6 +579,7 @@ function buildView(snapshot: Snapshot, plan: PlanView, readLines: ModelInput['re
 	}
 	return {
 		navigator,
+		loose: looseView(snapshot),
 		steps,
 		current: view,
 		done: steps.filter((s) => s.state === 'done').length,
@@ -552,7 +650,7 @@ function buildGate(build: BuildView): GateView {
 			note: '',
 			isEnabled: false,
 			reason: current.state === 'open' ? 'Claude writes the step. The receipt comes when Claude closes the step.'
-				: `Claude writes this step. Tell Claude: "Do step ${current.n}."`,
+				: `Claude writes this step. Tell Claude: "${build.loose.request ?? `Do step ${current.n}.`}"`,
 		};
 	}
 	const notWalked = receipt.total - receipt.walked;
@@ -732,11 +830,15 @@ function stageViews(snapshot: Snapshot): StageView[] {
 	});
 }
 
-function taskView(snapshot: Snapshot, briefInput: ModelInput['brief'], readLines: ModelInput['readLines'], voice: Voice, pauseSeconds: number): TaskView | null {
+function taskView(input: ModelInput): TaskView | null {
+	const { snapshot, brief: briefInput, readLines } = input;
+	const voice = input.voice ?? DEFAULT_VOICE;
+	const pauseSeconds = input.pauseSeconds ?? DEFAULT_PAUSE_SECONDS;
 	const task = snapshot.task;
 	if (!task) {
 		return null;
 	}
+	const ledger = ledgerView(snapshot, input);
 	const brief = task.stage === 'brief' && !task.isDone && briefInput ? briefView(snapshot, briefInput) : undefined;
 	const survey = task.stage !== 'brief' ? surveyView(snapshot, readLines) : undefined;
 	const order = orderView(snapshot, survey);
@@ -773,6 +875,7 @@ function taskView(snapshot: Snapshot, briefInput: ModelInput['brief'], readLines
 		...(order ? { order } : {}),
 		...(plan ? { plan } : {}),
 		...(build ? { build } : {}),
+		...(ledger ? { ledger } : {}),
 		...(gate ? { gate } : {}),
 		isDone: task.isDone,
 		isPaused: snapshot.isPaused,
@@ -787,7 +890,7 @@ export function buildModel(input: ModelInput): ViewModel {
 	return {
 		version: input.version,
 		stages: stageViews(snapshot),
-		task: taskView(snapshot, input.brief, input.readLines, input.voice ?? DEFAULT_VOICE, input.pauseSeconds ?? DEFAULT_PAUSE_SECONDS),
+		task: taskView(input),
 		tasks: snapshot.tasks.map((t) => ({
 			id: t.id, title: t.title, stageNumber: STAGE_INFO[t.stage].number, stageName: STAGE_INFO[t.stage].name, isDone: t.isDone,
 			isActive: t.id === snapshot.task?.id,

@@ -94,3 +94,7 @@ The steps of the plan go in sequence. The risk level of a step selects its write
 Use the skill `shotgun-errand` when the user asks for a step, for example "Do step 5". Also use it for a fix, for example "Fix the issues of step 5". Use the skill `shotgun-frame` when the user asks for a frame, for example "Give me a frame for step 4". Do not change a file before `shotgun_start_step` opens the step.
 
 While the user writes a step, Shotgun shows the new facts of DataFlow on the lines of the user as callouts. Use the skill `shotgun-explain` when the user asks about a callout, for example "Explain the callout on line 129". Also use it for a question about a line, for example "Does the lambda on line 95 copy charge?".
+
+At the gate of each step, Shotgun finds its loose ends. The user can hand a loose end to you as the next step. Use the skill `shotgun-errand` when the user asks for them, for example "Do the loose ends".
+
+The user writes the commit message in the input box of Source Control. Use the skill `shotgun-commit` when the user asks for a check of the message, for example "Check my commit message". You change no message, and you make no commit: the user commits.
