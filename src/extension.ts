@@ -7,6 +7,7 @@ import { linkDataFlow } from './dataflow/dataflow';
 import { HookDecorations } from './editor/hooks';
 import { parseBrief } from './session/brief';
 import { readText } from './session/files';
+import { orderWarnings } from './session/order';
 import { absolutePath, isCppFile, isInside } from './session/paths';
 import { GATE_LABEL, stageText } from './session/stages';
 import { messageOf, SessionStore, Snapshot } from './session/store';
@@ -367,7 +368,7 @@ class Shotgun implements vscode.Disposable {
 		await vscode.window.showTextDocument(vscode.Uri.file(file), { preview: false, selection: new vscode.Range(position, position) });
 	}
 
-	// The gate of the current stage. This version of Shotgun has the gates of the stages 1 and 2
+	// The gate of the current stage. This version of Shotgun has the gates of the stages 1 to 3
 	private async passGate(): Promise<void> {
 		const task = this.store.snapshot.task;
 		if (!task) {
@@ -381,6 +382,8 @@ class Shotgun implements vscode.Disposable {
 				return this.passBriefGate(task);
 			case 'survey':
 				return this.passSurveyGate(task);
+			case 'order':
+				return this.passOrderGate(task);
 			default:
 				throw new Error(`This version of Shotgun does not have the gate of ${stageText(task.stage)} yet.`);
 		}
@@ -403,6 +406,32 @@ class Shotgun implements vscode.Disposable {
 		}
 		this.store.passGate('order-tasks');
 		this.log.info(`The task ${task.id} passed the gate "${GATE_LABEL['order-tasks']}".`);
+	}
+
+	// The gate of stage 3, "Accept the order". The warnings of the order check do not stop the gate, but the user sees them
+	// first. A task with no survey gets its survey at the start of the plan
+	private async passOrderGate(task: NonNullable<Snapshot['task']>): Promise<void> {
+		const { survey } = this.store.snapshot;
+		const order = this.store.order;
+		const plan = order.tasks.filter((t) => !t.isLater);
+		if (plan.length === 0) {
+			throw new Error('Put 1 task or more into the plan first. Each task is for later now.');
+		}
+		const empty = plan.findIndex((t) => !t.text.trim());
+		if (empty >= 0) {
+			throw new Error(`Write the text of task ${empty + 1} first.`);
+		}
+		const warnings = orderWarnings(order, survey);
+		if (warnings.length > 0) {
+			const pick = await vscode.window.showWarningMessage(
+				`The order check has ${warnings.length === 1 ? '1 warning' : `${warnings.length} warnings`}. Do you want to pass the gate "${GATE_LABEL['accept-order']}"?`,
+				{ modal: true, detail: `${warnings.map((w) => w.text).join('\n')}\n\nThe needs are words of Claude. Shotgun does not move a task.` }, PASS_GATE);
+			if (pick !== PASS_GATE) {
+				return;
+			}
+		}
+		this.store.acceptOrder();
+		this.log.info(`The task ${task.id} passed the gate "${GATE_LABEL['accept-order']}" with ${plan.length} tasks in the plan.`);
 	}
 
 	// The gate of stage 1, "The brief is ready"
@@ -506,6 +535,9 @@ class Shotgun implements vscode.Disposable {
 					break;
 				case 'checkHooks':
 					await this.checkHooks(true);
+					break;
+				case 'editOrder':
+					this.store.editOrder(message.edit);
 					break;
 				default:
 					break;

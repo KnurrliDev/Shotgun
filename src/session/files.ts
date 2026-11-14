@@ -10,6 +10,8 @@ import { Gate, GateRecord, isGate, isStage, Stage } from './stages';
 // - <task>/questions.json: the questions of Claude about the brief.
 // - <task>/decisions.jsonl: 1 line for each decision of the user, for each deny of the guard, and for each result of
 //   Claude that Shotgun records.
+// - <task>/survey.json, engine.json and answers.json: the survey of stage 2 (survey.ts).
+// - <task>/order.json: the order of the user in stage 3 (order.ts).
 // Each JSON file and each line has the field version. Shotgun writes each JSON file in 1 step. These functions use no
 // VS Code API, so the unit tests can call them directly.
 
@@ -22,6 +24,11 @@ export const DECISIONS_FILE = 'decisions.jsonl';
 export const SURVEY_FILE = 'survey.json';
 export const ENGINE_FILE = 'engine.json';
 export const ANSWERS_FILE = 'answers.json';
+export const ORDER_FILE = 'order.json';
+
+// The edits of the user in stage 3. later and now: the user keeps a task for later, or puts it back into the plan
+export const ORDER_ACTIONS = ['move', 'text', 'add', 'later', 'now', 'remove'] as const;
+export type OrderAction = (typeof ORDER_ACTIONS)[number];
 
 export interface ActiveFile {
 	readonly version: 1;
@@ -61,6 +68,8 @@ export interface QuestionsFile {
 // - question: the user closed a question
 // - survey: Claude gave the survey, with the number of its tasks, hooks, facts and questions
 // - answer: the user answered a question of the survey
+// - order: an edit of the user in stage 3, with the text of the task. position: the place of a moved task, from 1
+// - task-survey: Claude surveyed 1 task in stage 3, with the number of its hooks and needs
 export type Decision =
 	| { readonly version: 1; readonly time: string; readonly kind: 'task'; readonly by: 'user' | 'claude'; readonly title: string }
 	| { readonly version: 1; readonly time: string; readonly kind: 'gate'; readonly by: 'user'; readonly gate: Gate; readonly stage: Stage }
@@ -73,7 +82,15 @@ export type Decision =
 		readonly version: 1; readonly time: string; readonly kind: 'survey'; readonly by: 'claude';
 		readonly tasks: number; readonly hooks: number; readonly facts: number; readonly questions: number;
 	}
-	| { readonly version: 1; readonly time: string; readonly kind: 'answer'; readonly by: 'user'; readonly id: string; readonly text: string };
+	| { readonly version: 1; readonly time: string; readonly kind: 'answer'; readonly by: 'user'; readonly id: string; readonly text: string }
+	| {
+		readonly version: 1; readonly time: string; readonly kind: 'order'; readonly by: 'user'; readonly action: OrderAction; readonly task: string;
+		readonly text: string; readonly position?: number;
+	}
+	| {
+		readonly version: 1; readonly time: string; readonly kind: 'task-survey'; readonly by: 'claude'; readonly task: string; readonly hooks: number;
+		readonly needs: number;
+	};
 
 // A decision before Shotgun adds the version and the time
 type WithoutStamp<T> = T extends unknown ? Omit<T, 'version' | 'time'> : never;
@@ -200,6 +217,16 @@ function parseDecision(value: unknown): Decision | undefined {
 		case 'answer':
 			return value.by === 'user' && isText(value.id) && typeof value.text === 'string'
 				? { version: FILE_VERSION, time, kind: 'answer', by: 'user', id: value.id, text: value.text } : undefined;
+		case 'order':
+			return value.by === 'user' && (ORDER_ACTIONS as readonly unknown[]).includes(value.action) && isText(value.task) && typeof value.text === 'string'
+				&& (value.position === undefined || Number.isInteger(value.position))
+				? {
+					version: FILE_VERSION, time, kind: 'order', by: 'user', action: value.action as OrderAction, task: value.task, text: value.text,
+					...(value.position !== undefined ? { position: value.position as number } : {}),
+				} : undefined;
+		case 'task-survey':
+			return value.by === 'claude' && isText(value.task) && typeof value.hooks === 'number' && typeof value.needs === 'number'
+				? { version: FILE_VERSION, time, kind: 'task-survey', by: 'claude', task: value.task, hooks: value.hooks, needs: value.needs } : undefined;
 		default:
 			return undefined;
 	}

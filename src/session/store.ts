@@ -3,12 +3,13 @@ import { EventEmitter } from 'events';
 import * as path from 'path';
 import { BRIEF_FILE, briefTemplate, PartId } from './brief';
 import {
-	ACTIVE_FILE, ActiveFile, ANSWERS_FILE, Decision, DECISIONS_FILE, decisionLine, DecisionInput, ENGINE_FILE, FILE_VERSION, jsonText, parseActive,
-	parseDecisions, parseQuestions, parseTask, Question, QUESTIONS_FILE, readText, SHOTGUN_DIR, SURVEY_FILE, TASK_FILE, TASK_ID, TaskFile, taskIdOf,
-	writeTextAtomic,
+	ACTIVE_FILE, ActiveFile, ANSWERS_FILE, Decision, DECISIONS_FILE, decisionLine, DecisionInput, ENGINE_FILE, FILE_VERSION, jsonText, ORDER_FILE,
+	parseActive, parseDecisions, parseQuestions, parseTask, Question, QUESTIONS_FILE, readText, SHOTGUN_DIR, SURVEY_FILE, TASK_FILE, TASK_ID, TaskFile,
+	taskIdOf, writeTextAtomic,
 } from './files';
+import { applyEdit, Order, OrderEdit, OrderFile, orderOf, OrderTask, parseOrder, surveyIds, TaskSurvey } from './order';
 import { Gate, passGate, Stage, START } from './stages';
-import { Answer, AnswersFile, checkAnswer, EngineFile, parseAnswers, parseEngine, parseSurvey, Survey, SurveyFile } from './survey';
+import { Answer, AnswersFile, checkAnswer, EngineFile, parseAnswers, parseEngine, parseSurvey, Survey, SurveyFile, SurveyHook } from './survey';
 
 // The session of Shotgun in a workspace: the tasks, the active task and its decisions. The store keeps the state in
 // memory, so the guard decides with no file access. Each change goes to the stage files first, and then into memory.
@@ -32,6 +33,7 @@ export interface Snapshot {
 	readonly survey: SurveyFile | undefined; // the survey of Claude for the active task
 	readonly engine: EngineFile | undefined; // the facts of DataFlow for the hooks of the survey
 	readonly answers: Readonly<Record<string, Answer>>; // the answers of the user to the questions of the survey
+	readonly order: OrderFile | undefined; // the order of the user in stage 3. undefined: the order of the survey
 	readonly problems: readonly string[]; // the stage files that Shotgun cannot read
 }
 
@@ -52,7 +54,8 @@ export class SessionStore {
 
 	constructor(private readonly root: string | undefined, private readonly now: () => Date = () => new Date()) {
 		this.state = {
-			root, task: undefined, isPaused: false, tasks: [], decisions: [], questions: [], survey: undefined, engine: undefined, answers: {}, problems: [],
+			root, task: undefined, isPaused: false, tasks: [], decisions: [], questions: [], survey: undefined, engine: undefined, answers: {},
+			order: undefined, problems: [],
 		};
 	}
 
@@ -116,6 +119,7 @@ export class SessionStore {
 		let survey: SurveyFile | undefined;
 		let engine: EngineFile | undefined;
 		let answers: Readonly<Record<string, Answer>> = {};
+		let order: OrderFile | undefined;
 		// a stage file that is there, but that Shotgun cannot read, is a problem
 		const readFile = <T>(name: string, parse: (text: string, id: string) => T): T | undefined => {
 			const text = task && dir ? readText(path.join(dir, task.id, name)) : undefined;
@@ -133,6 +137,7 @@ export class SessionStore {
 			survey = readFile(SURVEY_FILE, parseSurvey);
 			engine = readFile(ENGINE_FILE, parseEngine);
 			answers = readFile(ANSWERS_FILE, parseAnswers)?.answers ?? {};
+			order = readFile(ORDER_FILE, parseOrder);
 			const parsed = parseDecisions(readText(path.join(dir, task.id, DECISIONS_FILE)) ?? '');
 			decisions = parsed.decisions.slice(-MAX_DECISIONS);
 			if (parsed.invalid > 0) {
@@ -157,8 +162,14 @@ export class SessionStore {
 			survey,
 			engine,
 			answers,
+			order,
 			problems,
 		});
+	}
+
+	// The order of the active task: order.json, else the tasks of the survey in their sequence
+	get order(): Order {
+		return orderOf(this.state.order, this.state.survey);
 	}
 
 	// Makes a new task in stage 1 and makes it the active task, with brief.md from the template. by: the user with the
@@ -254,6 +265,50 @@ export class SessionStore {
 		this.load();
 	}
 
+	// 1 edit of the user in stage 3. The ledger records each edit. The result: the task of the edit, after the edit
+	editOrder(edit: OrderEdit): OrderTask {
+		const task = this.requireStage('order', 'You can change the order only in stage 3, the order.');
+		const before = edit.action === 'add' ? undefined : this.order.tasks.find((t) => t.id === edit.id);
+		const { order, task: changed, position } = applyEdit(this.order, edit, surveyIds(this.state.survey));
+		// an edit with no change is not a decision
+		if (before && ((edit.action === 'text' && before.text === changed.text) || (edit.action === 'later' && before.isLater === edit.isLater))) {
+			return before;
+		}
+		this.writeOrder(task.id, order);
+		const action = edit.action === 'later' ? (edit.isLater ? 'later' : 'now') : edit.action;
+		this.append(task.id, { kind: 'order', by: 'user', action, task: changed.id, text: changed.text, ...(edit.action === 'move' ? { position } : {}) });
+		this.load();
+		return changed;
+	}
+
+	// The survey of Claude for 1 task of the order in stage 3. The new hooks go into survey.json, after the hooks of stage 2
+	writeTaskSurvey(id: string, survey: Omit<TaskSurvey, 'time'>, newHooks: readonly SurveyHook[]): void {
+		const dir = this.requireDir();
+		const task = this.requireStage('order', 'Claude surveys a task of the order only in stage 3, the order.');
+		const current = this.state.survey;
+		if (!current) {
+			throw new Error('The active task has no survey.');
+		}
+		const order = this.order;
+		if (!order.tasks.some((t) => t.id === id)) {
+			throw new Error(`The order has no task ${id}.`);
+		}
+		if (newHooks.length > 0) {
+			writeTextAtomic(path.join(dir, task.id, SURVEY_FILE), jsonText({ ...current, hooks: [...current.hooks, ...newHooks] } satisfies SurveyFile));
+		}
+		const time = this.time();
+		this.writeOrder(task.id, { ...order, tasks: order.tasks.map((t) => (t.id === id ? { ...t, survey: { ...survey, time } } : t)) });
+		this.append(task.id, { kind: 'task-survey', by: 'claude', task: id, hooks: survey.hooks.length, needs: survey.needs.length });
+		this.load();
+	}
+
+	// The gate of stage 3, "Accept the order". order.json keeps the order that the user accepted
+	acceptOrder(): TaskFile {
+		const task = this.requireStage('order', 'The active task is not in stage 3, the order.');
+		this.writeOrder(task.id, this.order);
+		return this.passGate('accept-order');
+	}
+
 	// The user closes a question of Claude, for example after the answer in the brief
 	closeQuestion(id: string): void {
 		const dir = this.requireDir();
@@ -345,6 +400,20 @@ export class SessionStore {
 			throw new Error('No task is active. Make a task with "Shotgun: New Task", or select one with "Shotgun: Open Task".');
 		}
 		return task;
+	}
+
+	// The active task in this stage, else an error with the message
+	private requireStage(stage: Stage, message: string): TaskFile {
+		const task = this.requireTask();
+		if (task.isDone || task.stage !== stage) {
+			throw new Error(message);
+		}
+		return task;
+	}
+
+	private writeOrder(id: string, order: Order): void {
+		const file: OrderFile = { version: FILE_VERSION, time: this.time(), tasks: order.tasks, nextId: order.nextId };
+		writeTextAtomic(path.join(this.requireDir(), id, ORDER_FILE), jsonText(file));
 	}
 
 	private time(): string {

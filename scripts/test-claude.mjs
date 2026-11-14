@@ -1,6 +1,6 @@
 // The test of Shotgun with Claude Code. It starts the test build of VS Code with DataFlow and Shotgun from their
 // repository folders. In VS Code, it makes a task with "Shotgun: New Task", and connects DataFlow and Shotgun to Claude
-// Code with their commands. Then it runs 4 prompts of the CLI of Claude Code in print mode:
+// Code with their commands. Then it runs 5 prompts of the CLI of Claude Code in print mode:
 // 1. Task 1: the test writes the brief into brief.md, as the user does. "Ask me questions about my brief." loads the
 //    skill shotgun, and Claude gives its questions with shotgun_submit_questions. The test closes the questions.
 // 2. Claude tries to change a file of the project in stage 1, and the guard denies the change (phase 1).
@@ -9,13 +9,16 @@
 // 4. The test opens task 1 again. "Survey my brief." loads the skill shotgun-survey, and Claude gives the survey with
 //    shotgun_submit_survey. Shotgun adds the facts of DataFlow to each hook. The test answers the questions of the
 //    survey, and passes the gate "Order the tasks" (the condition of phase 3).
+// 5. On the order page, the test changes the text of a task, adds a task and moves it. "Survey my changed tasks."
+//    loads the skill shotgun-survey, and Claude surveys the 2 tasks with shotgun_submit_task_survey. Then the test
+//    passes the gate "Accept the order" on the page (the condition of phase 4).
 // The commands write the settings of proposal P15, and the test checks these files. The CLI loads the 2 plugins with
 // --plugin-dir from the folders that the commands wrote. The CLI uses the login and thus the config folder of the user,
 // and a marketplace from settings would go into the plugin data of the user.
 // The settings of the user do not change: the test build has its own user data, MCP registry, folder for the settings
 // of Claude Code and Shotgun folder. The test records the plugin data of Claude Code of the user before the runs, and
 // checks it after them. It removes the empty folders that the CLI makes there.
-// The test uses the Claude subscription of the user for 4 runs of Claude Code, so it runs only on request.
+// The test uses the Claude subscription of the user for 5 runs of Claude Code, so it runs only on request.
 // Usage: node scripts/test-claude.mjs <new run folder>
 // Environment: DATAFLOW_REPO (default: ../DataFlow), CLAUDE_EXE (default: the CLI of the VS Code extension of Claude Code)
 import { execFileSync, spawn } from 'node:child_process';
@@ -37,11 +40,13 @@ const GET_SESSION = 'mcp__plugin_dataflow_dataflow__shotgun_get_session';
 const SUBMIT_BRIEF = 'mcp__plugin_dataflow_dataflow__shotgun_submit_brief';
 const SUBMIT_QUESTIONS = 'mcp__plugin_dataflow_dataflow__shotgun_submit_questions';
 const SUBMIT_SURVEY = 'mcp__plugin_dataflow_dataflow__shotgun_submit_survey';
+const GET_ORDER = 'mcp__plugin_dataflow_dataflow__shotgun_get_order';
+const SUBMIT_TASK_SURVEY = 'mcp__plugin_dataflow_dataflow__shotgun_submit_task_survey';
 // The read tools of DataFlow for the survey
 const READ_TOOLS = ['list_functions', 'get_outline', 'get_place', 'get_callers', 'get_calls', 'get_threads', 'get_heat', 'get_flow', 'get_logic',
 	'get_structure', 'get_member_sites', 'get_includes', 'get_call_graph', 'get_hidden'].map((t) => `mcp__plugin_dataflow_dataflow__${t}`);
 // The number of the tools of Shotgun in the MCP server of DataFlow
-const SHOTGUN_TOOLS = 6;
+const SHOTGUN_TOOLS = 8;
 // The brief of task 1, as the user writes it in brief.md
 const BRIEF_1 = [
 	`# Brief: ${TITLE}`, '',
@@ -828,9 +833,110 @@ async function main() {
 		}
 		const ordered = await poll(() => (readJson(taskFile(TASK_1, 'task.json'))?.stage === 'order' ? readJson(taskFile(TASK_1, 'task.json')) : undefined), 20);
 		check('The gate "Order the tasks" takes task 1 to stage 3', ordered?.gates?.[1]?.gate === 'order-tasks', readJson(taskFile(TASK_1, 'task.json')));
-		text = await poll(async () => (await panelText())?.includes('Survey my changed tasks.') && true, 15);
-		check('The panel shows stage 3 of task 1 with its request', !!text, await panelText());
+		text = await poll(async () => (await panelText())?.includes('Your sequence:') && true, 15);
+		check('The panel shows the order of task 1 in stage 3', !!text, await panelText());
 		await wb.shot('panel-order.png');
+
+		// 5: the order of task 1 (phase 4). The user changes the text of a task, adds a task and moves it, on the page
+		await command(wb, 'Shotgun: Show Page');
+		const rows = await poll(async () => {
+			const n = await inWebview('.page', "() => d.querySelectorAll('.order-row').length");
+			return n > 0 ? n : undefined;
+		}, 20);
+		check('The page shows the order with the tasks of the survey', rows === survey?.tasks?.length, { rows, tasks: survey?.tasks?.length });
+		const before = (readJson(taskFile(TASK_1, 'survey.json'))?.tasks ?? []).map((t) => t.title);
+		const rewritten = `${before[0]}, with a limit from 1 to 100 cycles`;
+		const added = 'Write the cycle limit to the log at the start of the program';
+		// a text goes to the extension with Enter. The page needs a render between the input and the key
+		const typeInto = async (selector, value) => {
+			await inWebview('.page', `() => {
+				const input = d.querySelector(${JSON.stringify(selector)});
+				input.value = ${JSON.stringify(value)};
+				input.dispatchEvent(new d.defaultView.Event('input', { bubbles: true }));
+				return true;
+			}`);
+			await sleep(400);
+			await inWebview('.page', `() => {
+				d.querySelector(${JSON.stringify(selector)}).dispatchEvent(new d.defaultView.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+				return true;
+			}`);
+			await sleep(800);
+		};
+		await typeInto('.order-row .order-input', rewritten);
+		await typeInto('.order-add .order-input', added);
+		await poll(() => readJson(taskFile(TASK_1, 'order.json'))?.tasks?.length === before.length + 1, 10);
+		// the new task goes up 1 place
+		await inWebview('.page', `() => {
+			const rows = [...d.querySelectorAll('.order-row')];
+			rows[rows.length - 1].querySelector('button[aria-label="Move the task up"]').click();
+			return true;
+		}`);
+		const order1 = await poll(() => {
+			const o = readJson(taskFile(TASK_1, 'order.json'));
+			return o?.tasks?.[o.tasks.length - 2]?.isNew ? o : undefined;
+		}, 10);
+		const tasks1 = order1?.tasks ?? [];
+		check('The page changes the text of a task, adds a task and moves it', tasks1[0]?.text === rewritten && tasks1[tasks1.length - 2]?.text === added
+			&& tasks1[tasks1.length - 2]?.id === 'N1', tasks1);
+		check('The ledger records the 3 edits of the order', ledgerOf(TASK_1).filter((d) => d.kind === 'order').map((d) => d.action).join() === 'text,add,move',
+			ledgerOf(TASK_1).filter((d) => d.kind === 'order'));
+		text = await poll(async () => (await pageText())?.includes('2 with no survey') && true, 10);
+		check('The page shows 2 tasks with no survey', !!text, await pageText());
+		await wb.shot('page-order.png');
+
+		// Claude surveys the 2 changed tasks
+		const resurveyed = await runClaude('order', 'Survey my changed tasks.', {
+			tools: [GET_SESSION, GET_ORDER, SUBMIT_TASK_SURVEY, 'Skill', ...READ_TOOLS], maxTurns: 40, seconds: 900,
+		});
+		const orderNames = resurveyed.toolUses.map((t) => t.name);
+		check('The request loads the skill shotgun-survey', resurveyed.toolUses.some((t) => t.name === 'Skill' && String(t.input?.skill).includes('shotgun-survey')),
+			orderNames);
+		check('Claude reads the order with shotgun_get_order', orderNames.includes(GET_ORDER), orderNames);
+		check('Claude gives a survey for each changed task with shotgun_submit_task_survey', orderNames.filter((n) => n === SUBMIT_TASK_SURVEY).length >= 2,
+			orderNames);
+		const refusedTasks = resurveyed.toolResults.filter((r) => r.isError && r.text.includes('did not take the survey of the task')).length;
+		if (refusedTasks > 0) {
+			results.notes = [...(results.notes ?? []), `Shotgun refused ${refusedTasks} survey of a task before it took the survey.`];
+			console.log(`NOTE Shotgun refused ${refusedTasks} survey of a task before it took the survey.`);
+		}
+		const order2 = readJson(taskFile(TASK_1, 'order.json'));
+		const tasks2 = order2?.tasks ?? [];
+		check('Claude changed no text and no place of a task', JSON.stringify(tasks2.map((t) => [t.id, t.text])) === JSON.stringify(tasks1.map((t) => [t.id, t.text])),
+			{ before: tasks1.map((t) => [t.id, t.text]), after: tasks2.map((t) => [t.id, t.text]) });
+		// the changed tasks: the first task with its new text, and the new task N1
+		const changedNow = [tasks2[0], tasks2.find((t) => t.id === 'N1')].filter(Boolean);
+		check('Each changed task has a survey for its text now', changedNow.length === 2 && changedNow.every((t) => t.survey?.text === t.text),
+			changedNow.map((t) => ({ id: t.id, text: t.text, survey: t.survey })));
+		const engine2 = readJson(taskFile(TASK_1, 'engine.json'));
+		const newHooks = (readJson(taskFile(TASK_1, 'survey.json'))?.hooks ?? []).filter((h) => !(survey?.hooks ?? []).some((x) => x.id === h.id));
+		check('Each new hook of a task survey has the facts of DataFlow', newHooks.every((h) => !/\.(c|cc|cpp|cxx|h|hh|hpp|hxx)$/i.test(h.file)
+			|| engine2?.hooks?.[h.id]?.hasFacts === true), newHooks.map((h) => ({ id: h.id, file: h.file, engine: engine2?.hooks?.[h.id] })));
+		results.order = {
+			tasks: tasks2.map((t) => ({ id: t.id, text: t.text, hooks: t.survey?.hooks, needs: t.survey?.needs, size: t.survey?.size, note: t.survey?.note })),
+			newHooks: newHooks.map((h) => `${h.id} ${h.file}:${h.lines[0]}-${h.lines[1]}`),
+		};
+		console.log(`INFO The order: ${JSON.stringify(results.order)}`);
+		const changedFiles = execFileSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: p.project, encoding: 'utf8', windowsHide: true })
+			.split('\n').filter((l) => l.trim() && !l.includes('.shotgun/'));
+		check('Claude changed no file of the project in stage 3', changedFiles.length === 0, changedFiles);
+		text = await poll(async () => (await pageText())?.includes('none with no survey') && true, 15);
+		check('The page shows that each task has a survey', !!text, await pageText());
+		await wb.shot('page-order-surveyed.png');
+
+		// the gate "Accept the order". With a warning of the order check, a modal message asks first
+		await inWebview('.page', `() => {
+			const b = [...d.querySelectorAll('.gate button')].find((x) => x.textContent.includes('Accept'));
+			b?.click();
+			return !!b;
+		}`);
+		if (await poll(() => clickDialog(wb, 'Pass the Gate'), 3)) {
+			results.notes = [...(results.notes ?? []), 'The gate "Accept the order" asked about the warnings of the order check.'];
+		}
+		const planned = await poll(() => (readJson(taskFile(TASK_1, 'task.json'))?.stage === 'plan' ? readJson(taskFile(TASK_1, 'task.json')) : undefined), 20);
+		check('The gate "Accept the order" of the page takes task 1 to stage 4', planned?.gates?.[2]?.gate === 'accept-order', readJson(taskFile(TASK_1, 'task.json')));
+		text = await poll(async () => (await panelText())?.includes('Make the plan.') && true, 15);
+		check('The panel shows stage 4 of task 1 with its request', !!text, await panelText());
+		await wb.shot('panel-plan.png');
 		wb.ws.close();
 	} catch (error) {
 		check('The test runs to its end', false, String(error?.stack ?? error));

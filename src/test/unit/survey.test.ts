@@ -1,10 +1,9 @@
 import * as assert from 'assert';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { readFileSync, rmSync } from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import type { ClaudeState } from '../../claude/connection';
-import type { HeatFacts, HeatTypeFacts, PlaceFacts } from '../../dataflow/dataflow-api';
 import { HookDecorations } from '../../editor/hooks';
 import { parseDecisions, readText } from '../../session/files';
 import { isCppFile, isInside, projectPath } from '../../session/paths';
@@ -14,77 +13,10 @@ import {
 	SurveyContext, typeText,
 } from '../../session/survey';
 import { PromptLog } from '../../tools/prompts';
-import { EngineApi } from '../../tools/survey';
+import type { EngineApi } from '../../tools/survey';
 import { shotgunTools } from '../../tools/tools';
 import { buildModel, decisionText } from '../../views/model';
-
-// The code of the fixture: a C++ file with a loop, and a text file
-const SOLVER = [
-	'#include "solver.h"',
-	'',
-	'int solve(Plan& plan)',
-	'{',
-	'    for (int i = 0; i < plan.steps; ++i) {',
-	'        plan.step(i);',
-	'    }',
-	'    return plan.result();',
-	'}',
-].join('\n');
-const README = 'The solver.\n\nIt has no limit.\n';
-
-// The facts of DataFlow for a line in the loop of solve()
-const placeFacts = (file: string, line: number): PlaceFacts => ({
-	file, line, function: { name: 'solve', lines: [3, 9] }, isInBody: true,
-	around: [{ kind: 'for', lines: [5, 7], text: 'int i = 0; i < plan.steps' }],
-	locks: [], threads: [], isOnCallerThread: true, isReachComplete: false,
-});
-
-const heatFacts = (file: string, isReachComplete = false): HeatFacts => ({
-	file, isReachComplete, notices: [],
-	functions: [
-		{ name: 'helper', lines: [3, 4], score: 12, band: 'cool', flames: 1, reach: 0, risk: 0, history: 0, isReachComplete: true, reasons: [], signals: [] },
-		{ name: 'solve', lines: [3, 9], score: 64, band: 'hot', flames: 4, reach: 1, risk: 1, history: 1, isReachComplete, reasons: [], signals: [] },
-	],
-});
-
-const TYPE: HeatTypeFacts = {
-	name: 'Plan', kind: 'struct', lines: [1, 5], isReachComplete: true,
-	members: [
-		{ name: 'steps', line: 2, type: 'int', shared: 'unprotected' },
-		{ name: 'lock', line: 3, type: 'std::mutex' },
-		{ name: 'total', line: 4, type: 'int', shared: 'locked' },
-	],
-};
-
-// A fake of the API of DataFlow. calls: the files and the lines of each call
-function fakeEngine(calls: string[] = [], over: Partial<EngineApi> = {}): EngineApi {
-	return {
-		tools: () => ['get_place', 'get_heat', 'get_threads', 'get_callers'],
-		place: async (file, line) => {
-			calls.push(`place ${path.basename(file)}:${line}`);
-			return placeFacts(file, line);
-		},
-		heat: async (file, lines) => {
-			calls.push(`heat ${path.basename(file)}:${lines[0]}-${lines[1]}`);
-			return heatFacts(file);
-		},
-		...over,
-	};
-}
-
-// A correct survey of the fixture
-const SURVEY = {
-	tasks: [
-		{ id: 'T1', title: 'A cycle limit', text: 'Stop the loop after a limit.', hooks: ['H1'], needs: [] },
-		{ id: 'T2', title: 'A note in the README', hooks: ['H2'], needs: ['T1'] },
-	],
-	hooks: [
-		{ id: 'H1', title: 'The loop of solve()', kind: 'new check in solve()', file: 'src/solver.cpp', lines: [5, 7], code: 'for (int i = 0;  i < plan.steps; ++i)' },
-		{ id: 'H2', title: 'The limit in the README', kind: 'new sentence', file: 'README.md', line: 3, code: 'It has no limit.' },
-	],
-	facts: [{ text: 'solve() has 1 caller.', file: 'src/solver.cpp', lines: [3, 3], tool: 'mcp__plugin_dataflow_dataflow__get_callers' }],
-	questions: [{ id: 'Q1', text: 'What is the limit?' }, { id: 'Q2', text: 'What happens at the limit?' }],
-};
+import { fakeEngine, heatFacts, makeProject, placeFacts, SOLVER, SURVEY, TYPE } from './fixture';
 
 suite('Survey', () => {
 	let root: string;
@@ -104,10 +36,7 @@ suite('Survey', () => {
 	};
 
 	setup(() => {
-		root = mkdtempSync(path.join(os.tmpdir(), 'shotgun-survey-'));
-		mkdirSync(path.join(root, 'src'));
-		writeFileSync(solver(), SOLVER);
-		writeFileSync(path.join(root, 'README.md'), README);
+		root = makeProject('shotgun-survey-');
 		store = new SessionStore(root);
 	});
 	teardown(() => {
@@ -351,7 +280,7 @@ suite('Survey', () => {
 		// after the gate, the page shows the survey, but the user cannot answer
 		store.passGate('order-tasks');
 		const order = model();
-		assert.deepStrictEqual([order.task!.stage, order.task!.survey?.isEditable, order.task!.gate], ['order', false, undefined]);
+		assert.deepStrictEqual([order.task!.stage, order.task!.survey?.isEditable, order.task!.gate?.label], ['order', false, 'Accept the order']);
 		assert.throws(() => store.passGate('order-tasks'), /is not the gate of stage 3 of 5/);
 	});
 

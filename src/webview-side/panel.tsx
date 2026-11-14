@@ -1,5 +1,6 @@
 import { render } from 'preact';
 import { CommandButton, Decisions, NoTask, Problems, SetupList, StageBar, TaskSummary, useModel } from './common';
+import { OrderSummary } from './order';
 import { applyStyles } from './styles';
 import { SurveySummary } from './survey';
 
@@ -26,7 +27,11 @@ function Panel() {
 				</section>
 			)}
 			<section class="section">
-				{!task ? <NoTask hasTasks={canOpen} /> : task.stage === 'survey' && !task.isDone ? <SurveySummary task={task} /> : <TaskSummary task={task} />}
+				{!task ? <NoTask hasTasks={canOpen} />
+					: task.isDone ? <TaskSummary task={task} />
+						: task.stage === 'survey' ? <SurveySummary task={task} />
+							: task.stage === 'order' ? <OrderSummary task={task} />
+								: <TaskSummary task={task} />}
 				<div class="buttons">
 					{task && !task.isDone && (task.isPaused
 						? <CommandButton label="Continue" command="continue" isPrimary />

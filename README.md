@@ -16,11 +16,12 @@ A button of Shotgun records a decision of the user. It never starts Claude: you 
 
 ## Status
 
-Shotgun is in development. The phases 1 to 3 of 10 are complete:
+Shotgun is in development. The phases 1 to 4 of 10 are complete:
 
 - Phase 1: the tasks, the stages, the panel, the page, the guard and the connection to Claude Code.
 - Phase 2: the brief, the questions of Claude about the brief, and the gate of stage 1.
 - Phase 3: the survey of Claude with the facts of DataFlow, the hooks in the text editor, and the gate of stage 2.
+- Phase 4: your order of the tasks, the survey of the changed tasks, and the gate of stage 3.
 
 `implementation-plan.md` gives the phases, and `CHANGELOG.md` gives the content of each phase.
 
@@ -43,7 +44,10 @@ Shotgun is in development. The phases 1 to 3 of 10 are complete:
 7. Tell Claude "Survey my brief." Claude reads the code, and gives the tasks, the hooks, the facts and its questions to Shotgun.
 8. Read the survey on the page of Shotgun. Answer the questions of Claude on the page, or with **Shotgun: Answer Question**.
 9. If the survey must change, tell Claude what to change. When the survey is correct, select **Order the tasks**.
-10. Follow the panel of Shotgun in the secondary side bar. It shows the next work and the requests for Claude Code.
+10. On the order page, put the tasks in sequence. You can change the text of a task, add a task, and keep a task for later.
+11. Tell Claude "Survey my changed tasks." Claude gives the hooks and the needs of each task with a new text, and of each new task.
+12. When the order is correct, select **Accept the order**.
+13. Follow the panel of Shotgun in the secondary side bar. It shows the next work and the requests for Claude Code.
 
 | Command | Function |
 | --- | --- |
@@ -90,6 +94,24 @@ Until the scan of the call graph is complete, the heat can change. The page then
 
 In the stages 2 and 3, the text editor shows a line at the left side of each hook. The id and the title of the hook come after its first line. Move the pointer onto a hook to see its facts.
 
+## The order
+
+In stage 3, you put the tasks of the survey in sequence on the order page. Each task shows its text, its hooks, the estimate of Claude for its size, and the tasks that it needs. You can:
+
+- move a task up or down
+- change the text of a task
+- add a task
+- keep a task for later, or put it back into the plan
+- remove a task that you added
+
+Each edit is a decision of yours, and the ledger records it. Claude changes no text and no place of a task.
+
+The order check uses the needs from the survey of Claude. If a task comes before a task that it needs, the check gives a warning. Shotgun does not move a task.
+
+A task with a new text and a new task have no survey. Tell Claude "Survey my changed tasks." Claude then gives the hooks and the needs of each of these tasks. If you change the text again, the task has no survey again. A task with no survey at the gate gets its survey at the start of the plan.
+
+The gate **Accept the order** needs 1 task or more in the plan, and a text for each task of the plan. With warnings, the button tells their number, and a modal message asks you first.
+
 ## Files
 
 | File | Content |
@@ -101,6 +123,7 @@ In the stages 2 and 3, the text editor shows a line at the left side of each hoo
 | `.shotgun/<task>/survey.json` | The survey of Claude: the tasks, the hooks, the facts and the questions. |
 | `.shotgun/<task>/engine.json` | The facts of DataFlow for each hook of the survey. |
 | `.shotgun/<task>/answers.json` | Your answers to the questions of the survey. |
+| `.shotgun/<task>/order.json` | Your order of the tasks: the sequence, your texts, your new tasks, the tasks for later, and the surveys of Claude for the changed tasks. |
 | `.shotgun/<task>/decisions.jsonl` | The ledger: 1 line for each decision of the user and for each deny of the guard. |
 | `~/.shotgun/claude` | The plugin of Shotgun for Claude Code, in a local marketplace. |
 | `.claude/settings.local.json` | The local settings of Claude Code in the project. The connection turns the plugin of Shotgun on there. |
@@ -122,9 +145,9 @@ The window uses the DataFlow extension of VS Code. To use DataFlow from its repo
 | Command | Tests |
 | --- | --- |
 | `npm test` | The unit tests in a test build of VS Code. The tests load DataFlow from `../DataFlow`, or from the folder of the environment variable `DATAFLOW_REPO`. If the environment variable `CLAUDE_EXE` gives the CLI of Claude Code, a test also checks the plugin with `claude plugin validate`. |
-| `node scripts/test-claude.mjs <run folder>` | The test with Claude Code. 2 tasks go from the brief to stage 2. Task 1 has a brief in a file, and task 2 has a brief from the chat. The guard denies a change in stage 1. Then Claude makes the survey of task 1, and task 1 goes to stage 3. Use a new run folder outside of the repository. |
+| `node scripts/test-claude.mjs <run folder>` | The test with Claude Code. 2 tasks go from the brief to stage 2. Task 1 has a brief in a file, and task 2 has a brief from the chat. The guard denies a change in stage 1. Then Claude makes the survey of task 1, and task 1 goes to stage 3. On the order page, the test changes the order. Claude surveys the changed tasks, and task 1 goes to stage 4. Use a new run folder outside of the repository. |
 
-NOTE: `scripts/test-claude.mjs` uses the Claude subscription of the user for 4 runs of Claude Code. It does not change the settings of the user.
+NOTE: `scripts/test-claude.mjs` uses the Claude subscription of the user for 5 runs of Claude Code. It does not change the settings of the user.
 
 ## License
 

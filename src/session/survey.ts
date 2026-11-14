@@ -26,12 +26,17 @@ export const ITEM_ID = /^[A-Za-z][A-Za-z0-9_-]{0,31}$/;
 
 export type Lines = readonly [number, number];
 
+// The estimate of Claude for the work of a task
+export const SIZES = ['small', 'medium', 'large'] as const;
+export type Size = (typeof SIZES)[number];
+
 export interface SurveyTask {
 	readonly id: string;
 	readonly title: string;
 	readonly text?: string;
 	readonly hooks: readonly string[]; // the ids of the hooks of the task. A task with only new files has no hook
 	readonly needs: readonly string[]; // the ids of the tasks that this task needs first
+	readonly size?: Size;
 }
 
 export interface SurveyHook {
@@ -123,11 +128,10 @@ export interface SurveyContext {
 	readonly tools: readonly string[]; // the read tools of DataFlow. Empty: Shotgun does not check the names
 }
 
-// Checks a survey of Claude. The result has all problems in 1 list (proposal P7). A survey with a problem goes into
-// no file
-export function checkSurvey(raw: Json, ctx: SurveyContext): { survey: Survey; problems: string[] } {
-	const problems: string[] = [];
-	const listOf = (key: string, max: number, what: string): unknown[] => {
+// The checks of the items of a survey. Each check adds its problems to the list. ids: the ids that are in use, in lower
+// case, because each id of a survey must be different. The survey of a task in stage 3 uses the same checks
+export function itemChecks(ctx: SurveyContext, problems: string[], ids: Set<string>) {
+	const listOf = (raw: Json, key: string, max: number, what: string): unknown[] => {
 		const value = raw[key];
 		if (value === undefined) {
 			return [];
@@ -141,7 +145,6 @@ export function checkSurvey(raw: Json, ctx: SurveyContext): { survey: Survey; pr
 		}
 		return value.slice(0, max);
 	};
-	const ids = new Set<string>();
 	const idOf = (value: unknown, label: string, example: string): string | undefined => {
 		const id = textOf(value).trim();
 		if (!ITEM_ID.test(id)) {
@@ -232,25 +235,47 @@ export function checkSurvey(raw: Json, ctx: SurveyContext): { survey: Survey; pr
 		}
 		return (value as string[]).map((v) => v.trim());
 	};
-
-	const hooks: SurveyHook[] = [];
-	listOf('hooks', MAX_HOOKS, 'hooks').forEach((h, i) => {
-		const label = `Hook ${i + 1}`;
+	const sizeOf = (value: unknown, label: string): Size | undefined => {
+		if (value === undefined) {
+			return undefined;
+		}
+		if (typeof value === 'string' && (SIZES as readonly string[]).includes(value)) {
+			return value as Size;
+		}
+		problems.push(`${label}: "size" must be small, medium or large.`);
+		return undefined;
+	};
+	// a hook: its id, its title, its kind, and its place with its code
+	const hookOf = (h: unknown, label: string): SurveyHook | undefined => {
 		if (!isObject(h)) {
 			problems.push(`${label} is not an object.`);
-			return;
+			return undefined;
 		}
 		const id = idOf(h.id, label, 'H1');
 		const title = textField(h, 'title', label, MAX_TITLE);
 		const kind = textField(h, 'kind', label, MAX_TITLE);
 		const place = placeOf(h, label, true);
-		if (id && title && kind && place) {
-			hooks.push({ id, title, kind, ...place });
+		return id && title && kind && place ? { id, title, kind, ...place } : undefined;
+	};
+	return { listOf, idOf, textField, placeOf, idList, sizeOf, hookOf };
+}
+
+// Checks a survey of Claude. The result has all problems in 1 list (proposal P7). A survey with a problem goes into
+// no file
+export function checkSurvey(raw: Json, ctx: SurveyContext): { survey: Survey; problems: string[] } {
+	const problems: string[] = [];
+	const { listOf, idOf, textField, placeOf, idList, sizeOf, hookOf } = itemChecks(ctx, problems, new Set<string>());
+
+	const hooks: SurveyHook[] = [];
+	listOf(raw, 'hooks', MAX_HOOKS, 'hooks').forEach((h, i) => {
+		const hook = hookOf(h, `Hook ${i + 1}`);
+		if (hook) {
+			hooks.push(hook);
 		}
 	});
 
 	const tasks: SurveyTask[] = [];
-	const tasksRaw = listOf('tasks', MAX_TASKS, 'tasks');
+	const tasksRaw = listOf(raw, 'tasks', MAX_TASKS, 'tasks');
 	if (tasksRaw.length === 0) {
 		problems.push('Give 1 task or more in "tasks".');
 	}
@@ -265,13 +290,14 @@ export function checkSurvey(raw: Json, ctx: SurveyContext): { survey: Survey; pr
 		const text = textField(t, 'text', label, MAX_TEXT, true);
 		const hookIds = idList(t.hooks, label, 'hooks');
 		const needs = idList(t.needs, label, 'needs');
+		const size = sizeOf(t.size, label);
 		if (id && title) {
-			tasks.push({ id, title, ...(text ? { text } : {}), hooks: hookIds, needs });
+			tasks.push({ id, title, ...(text ? { text } : {}), hooks: hookIds, needs, ...(size ? { size } : {}) });
 		}
 	});
 
 	const facts: SurveyFact[] = [];
-	listOf('facts', MAX_FACTS, 'facts').forEach((f, i) => {
+	listOf(raw, 'facts', MAX_FACTS, 'facts').forEach((f, i) => {
 		const label = `Fact ${i + 1}`;
 		if (!isObject(f)) {
 			problems.push(`${label} is not an object.`);
@@ -291,7 +317,7 @@ export function checkSurvey(raw: Json, ctx: SurveyContext): { survey: Survey; pr
 	});
 
 	const questions: SurveyQuestion[] = [];
-	listOf('questions', MAX_QUESTIONS, 'questions').forEach((q, i) => {
+	listOf(raw, 'questions', MAX_QUESTIONS, 'questions').forEach((q, i) => {
 		const label = `Question ${i + 1}`;
 		if (!isObject(q)) {
 			problems.push(`${label} is not an object.`);
@@ -325,7 +351,7 @@ export function checkSurvey(raw: Json, ctx: SurveyContext): { survey: Survey; pr
 }
 
 // The tasks of a circle of needs, or undefined. A task that needs itself has its own problem, so it is not a circle here
-function circleOf(tasks: readonly SurveyTask[]): string[] | undefined {
+export function circleOf(tasks: readonly { readonly id: string; readonly needs: readonly string[] }[]): string[] | undefined {
 	const needs = new Map(tasks.map((t) => [t.id, t.needs.filter((n) => n !== t.id)]));
 	const state = new Map<string, 'open' | 'done'>();
 	const stack: string[] = [];
@@ -524,7 +550,8 @@ export function parseSurvey(text: string, id: string): SurveyFile {
 	if (typeof value.time !== 'string' || !Array.isArray(tasks) || !Array.isArray(hooks) || !Array.isArray(facts) || !Array.isArray(questions)) {
 		throw new Error(`${name} needs the fields time, tasks, hooks, facts and questions.`);
 	}
-	const isTask = (t: unknown) => isObject(t) && typeof t.id === 'string' && typeof t.title === 'string' && isIdList(t.hooks) && isIdList(t.needs);
+	const isTask = (t: unknown) => isObject(t) && typeof t.id === 'string' && typeof t.title === 'string' && isIdList(t.hooks) && isIdList(t.needs)
+		&& (t.size === undefined || (SIZES as readonly unknown[]).includes(t.size));
 	const isHook = (h: unknown) => isObject(h) && typeof h.id === 'string' && typeof h.title === 'string' && typeof h.kind === 'string'
 		&& typeof h.code === 'string' && isPlace(h) && (h.codeLine === undefined || (Number.isInteger(h.codeLine) && (h.codeLine as number) >= 1));
 	const isFact = (f: unknown) => isObject(f) && typeof f.text === 'string' && typeof f.tool === 'string' && isPlace(f);

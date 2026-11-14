@@ -133,6 +133,7 @@ export function SurveyPage({ task, model }: { task: TaskView; model: ViewModel }
 										{t.title}
 										{t.text && <span class="muted small"> {t.text}</span>}
 										{t.needs.length > 0 && <span class="muted small"> · needs {t.needs.join(', ')}</span>}
+										{t.size && <span class="muted small"> · size {t.size}</span>}
 									</span>
 									<span class="chips">
 										{t.hooks.length === 0 ? <span class="muted small">new files, no hook</span> : t.hooks.map((h) => (

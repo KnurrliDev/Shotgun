@@ -1,5 +1,6 @@
 import { render } from 'preact';
 import { CommandButton, Decisions, NoTask, Problems, SetupList, StageBar, TaskList, TaskSummary, useModel } from './common';
+import { OrderPage } from './order';
 import { applyStyles } from './styles';
 import { SurveyPage } from './survey';
 
@@ -15,7 +16,10 @@ function Page() {
 		return <div class="page"><p class="muted">Shotgun starts.</p></div>;
 	}
 	const { task } = model;
-	// stage 2 and later: the survey of Claude on the full page
+	// stage 3 and later: the order of the user on the full page. Stage 2: the survey of Claude
+	if (task?.order) {
+		return <OrderPage task={task} model={model} />;
+	}
 	if (task?.survey) {
 		return <SurveyPage task={task} model={model} />;
 	}

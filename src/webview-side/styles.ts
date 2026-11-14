@@ -117,6 +117,49 @@ h1, h2 { margin: 0; font-weight: 600; }
   font: inherit; }
 .answer textarea:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
 
+/* stage 3: the order. Each task has its place, its text, its hooks, its size, its needs and its buttons. A task for later
+   is dim, and a task with a warning has the color of the warning */
+.order-list { margin: 6px 0 8px; padding: 0; list-style: none; }
+.order-row { margin: 0 0 6px; padding: 6px 8px; border: 1px solid var(--sg-border); border-radius: 4px; }
+.order-row.later { opacity: 0.6; }
+.order-row.warn { border-color: color-mix(in srgb, var(--sg-warn) 70%, transparent); }
+.order-main, .order-add, .order-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.order-meta { margin: 4px 0 0 2.9em; }
+.order-add { margin: 0 0 8px; padding: 6px 8px; border: 1px dashed var(--sg-border); border-radius: 4px; }
+.order-num { flex: none; min-width: 1.8em; padding: 0 4px; border-radius: 999px; text-align: center; font-size: 12px; font-weight: 700;
+  color: var(--sg-you); background: color-mix(in srgb, var(--sg-you) 16%, transparent); }
+.order-row.later .order-num { color: var(--vscode-descriptionForeground); background: color-mix(in srgb, var(--sg-border) 40%, transparent); }
+.order-input, .order-text { flex: 1 1 180px; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
+.order-input { box-sizing: border-box; height: 24px; padding: 0 6px; border: 1px solid var(--vscode-input-border, var(--sg-border)); border-radius: 2px;
+  background: var(--vscode-input-background); color: var(--vscode-input-foreground); font: inherit; font-weight: 600; }
+.order-input:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+.order-row.nosurvey .order-input { border-color: color-mix(in srgb, var(--sg-you) 60%, transparent); }
+.tag { flex: none; padding: 0 6px; border-radius: 999px; font-size: 11px; white-space: nowrap; }
+.tag.user { color: var(--sg-you); background: color-mix(in srgb, var(--sg-you) 14%, transparent); }
+.tag.claude { color: var(--sg-claude); background: color-mix(in srgb, var(--sg-claude) 14%, transparent); }
+.order-hooks { flex: none; display: inline-flex; flex-wrap: wrap; gap: 3px; }
+.order-size { flex: none; min-width: 3.5em; padding: 0 5px; border-radius: 4px; text-align: center; font-size: 11px;
+  background: color-mix(in srgb, var(--sg-border) 30%, transparent); }
+.order-needs { flex: none; font-size: 12px; }
+.order-buttons { flex: none; display: inline-flex; align-items: center; gap: 4px; }
+.icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 24px; padding: 0; border: 1px solid var(--sg-border);
+  border-radius: 4px; background: none; color: inherit; cursor: pointer; }
+.icon-btn:disabled, .chip:disabled { opacity: 0.35; cursor: default; }
+.pill { min-width: 4.5em; padding: 1px 9px; border: 1px solid var(--sg-border); border-radius: 11px; background: none; color: inherit; font: inherit;
+  cursor: pointer; white-space: nowrap; }
+.pill.on { border-color: var(--vscode-focusBorder); background: var(--vscode-list-inactiveSelectionBackground, transparent); }
+.order-note, .order-warn { display: flex; align-items: baseline; gap: 6px; margin: 5px 0 0; padding: 3px 6px; border-radius: 4px; }
+.order-note.user { background: color-mix(in srgb, var(--sg-you) 8%, transparent); }
+.order-note.claude { background: color-mix(in srgb, var(--sg-claude) 8%, transparent); }
+.order-warn { background: color-mix(in srgb, var(--sg-warn) 12%, transparent); }
+.badge.check { color: var(--vscode-foreground); background: color-mix(in srgb, var(--sg-border) 50%, transparent); }
+.row-head > .state { margin-left: auto; }
+.hint { font-size: 11px; color: var(--vscode-descriptionForeground); }
+.ok-text { color: var(--sg-ok); }
+.warn-text { color: var(--sg-warn); }
+.check-line { margin: 4px 0; }
+.icon-btn:focus-visible, .pill:focus-visible, .chip:focus-visible, .link:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
+
 /* lists: the setup, the decisions and the tasks */
 .list { margin: 4px 0 0; padding: 0; list-style: none; }
 .list li { display: flex; align-items: baseline; gap: 6px; padding: 3px 0; }

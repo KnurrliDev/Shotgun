@@ -37,6 +37,32 @@ export function isFromView(value: unknown): value is FromView {
 			return typeof m.path === 'string' && Number.isInteger(m.line) && (m.line as number) > 0;
 		case 'saveAnswer':
 			return typeof m.id === 'string' && typeof m.text === 'string' && m.text.length <= 4000;
+		case 'editOrder':
+			return isOrderEdit(m.edit);
+		default:
+			return false;
+	}
+}
+
+// An edit of the order. The store checks the length of a text, so a long text gets a message for the user
+function isOrderEdit(value: unknown): boolean {
+	if (typeof value !== 'object' || value === null) {
+		return false;
+	}
+	const e = value as Record<string, unknown>;
+	const isId = typeof e.id === 'string' && e.id.length <= 64;
+	const isText = typeof e.text === 'string' && e.text.length <= 2000;
+	switch (e.action) {
+		case 'move':
+			return isId && (e.step === -1 || e.step === 1);
+		case 'text':
+			return isId && isText;
+		case 'add':
+			return isText;
+		case 'later':
+			return isId && typeof e.isLater === 'boolean';
+		case 'remove':
+			return isId;
 		default:
 			return false;
 	}

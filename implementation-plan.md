@@ -147,7 +147,7 @@ The other stages of Claude run in the same way: the user asks, Claude reads, and
 | `survey.json` | Claude | The facts, the tasks, the hooks and the questions of the survey. |
 | `engine.json` | Shotgun | The facts of DataFlow for each hook of the survey: the function, the threads, the locks and the heat. |
 | `answers.json` | User | The answers of the user to the questions of the survey. |
-| `order.json` | User | The tasks in sequence, with the new texts, the new tasks and the tasks for later. |
+| `order.json` | User | The tasks in sequence, with the new texts, the new tasks and the tasks for later. Each changed task keeps the last survey of Claude for its text. |
 | `plan.json` | Claude and user | The steps, the levels of the rules, the levels of the user and the notes of the user. |
 | `build.json` | Shotgun | The state of each step, the holes, the receipts and the loose ends. |
 | `lines.json` | Shotgun | The writer of each changed line. |
@@ -162,7 +162,7 @@ The MCP name of each tool starts with `shotgun_`. In Claude Code, the full name 
 | Tool | Kind | Stage | Function |
 | --- | --- | --- | --- |
 | `get_session` | read | all | The active task, the stage, the gates of the user, and the next work of Claude. |
-| `get_order` | read | 3, 4 | The tasks in the order of the user. |
+| `get_order` | read | 3, 4 | The tasks in the order of the user, the tasks with no survey for their text, and the warnings of the order check. |
 | `get_plan` | read | 4, 5 | The steps with their levels, writers, places and notes. |
 | `get_step` | read | 5 | The current step, its scope, its kind, and the marks and notes of its receipt. |
 | `get_callouts` | read | 5 | The open callouts with their facts. |
@@ -170,7 +170,7 @@ The MCP name of each tool starts with `shotgun_`. In Claude Code, the full name 
 | `submit_brief` | submit | 1 | The brief that the user wrote in the chat, and a short title of the task. Each line must be in a recent prompt of the user (decision 12). The brief goes into a new task, or into the active task in stage 1 if its brief has no text. |
 | `submit_questions` | submit | 1 | 1 to 10 questions of Claude about the brief, each with a part and a quote of the brief. A new list replaces the open questions. |
 | `submit_survey` | submit | 2 | The facts, the tasks, the hooks and the questions. Each hook gives a short text of its code. Shotgun then gets the facts of DataFlow for each hook. A new survey replaces the old survey. |
-| `submit_task_survey` | submit | 3 | The hooks and the needs of a rewritten task or of a new task. |
+| `submit_task_survey` | submit | 3 | The hooks, the new hooks, the needs, the size and a note of a rewritten task or of a new task. Claude gives the text of the task too, so that Shotgun refuses a survey of an old text. |
 | `submit_plan` | submit | 4 | The steps of the plan. |
 | `start_step` | submit | 5 | Opens a step for an errand or for a frame. |
 | `submit_frame` | submit | 5 | The holes of a frame with their hints. |
@@ -408,6 +408,23 @@ Differences from the plan:
 - **Panel:** the next request, for example "Survey my changed tasks".
 - **Gate:** **Accept the order**. A task with no survey gets its survey at the start of the plan. The skill `shotgun-plan` has this rule.
 - **Done when:** the user rewrites a task, adds a task, gets their surveys, and accepts the order.
+
+**Status, 14 November 2026:** done. `scripts/test-claude.mjs` passed all 70 checks with 5 prompts of Claude Code:
+
+- The order page showed the 4 tasks of the survey of task 1. On the page, the test changed the text of task 1, added a task, and moved the new task up 1 place. The ledger recorded the 3 edits.
+- "Survey my changed tasks." loaded the skill `shotgun-survey`. Claude read the order with `shotgun_get_order`, and gave a survey for each of the 2 changed tasks. Shotgun took both surveys at the first call. Claude changed no text, no place and no file.
+- The new task got a new hook in `src/main.cpp`, with the facts of DataFlow. A note of Claude named a new decision of the user: the range of the limit.
+- The gate **Accept the order** on the page took task 1 to stage 4. The panel showed the request "Make the plan.".
+- In the survey of the changed tasks, Claude read the code only with the tools Read and Grep. A survey of a task has no facts, so no fact names a tool.
+
+Differences from the plan:
+
+- The canvas shows a size for each task. The survey of stage 2 and the survey of a task now have an optional size: small, medium or large.
+- The canvas gives a reason for each need, for example "the limit". The survey has only the ids of the tasks. Thus a warning gives the places of the tasks, for example "Task 1 needs task 2. Task 2 comes later.".
+- Claude gives the text of the task to `submit_task_survey`. Shotgun refuses a survey of a text that the user changed after the call of `get_order`.
+- The user removes only a task that the user added. A task of the survey can only go to "later".
+- In stage 4, the page shows the order with no edit, until phase 5 adds the plan page.
+- After the test with Claude Code, the rows of the order page got a fixed form of 2 lines. The unit tests and a check in a browser ran after this change of the layout. The test with Claude Code did not run again.
 
 ### Phase 5: plan
 

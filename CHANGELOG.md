@@ -4,6 +4,22 @@
 
 This version has no release yet. Each phase of `implementation-plan.md` adds its items.
 
+### Phase 4: order
+
+- The order page shows the tasks of the survey in sequence, with their text, their hooks, their size and the tasks that they need.
+- On the page, the user moves a task, changes its text, adds a task, keeps a task for later, and removes a new task. The ledger records each edit.
+- `order.json` keeps the order. With no edit, the order is the order of the survey.
+- The order check gives a warning for a task that comes before a task that it needs, and for a task with no text. The needs are words of Claude (the badge **Model**), and Shotgun never moves a task.
+- A task with a new text and a new task have no survey. The new tool `shotgun_get_order` gives the order and these tasks.
+- The new tool `shotgun_submit_task_survey` gives the hooks, the needs, the size and a note of Claude for 1 task. Shotgun refuses a survey for a text that the user changed after the call of `shotgun_get_order`.
+- The new hooks of a task survey go into `survey.json`, and they get the facts of DataFlow.
+- The gate **Accept the order**, or **Accept with N warnings**. With warnings, a modal message asks the user first. The gate needs 1 task or more in the plan, and a text for each task of the plan.
+- The panel shows the sequence, the order check, the tasks with no survey and the request "Survey my changed tasks."
+- The survey of stage 2 can give the size of each task: small, medium or large.
+- `shotgun_get_session` also gives a summary of the order.
+- The skill `shotgun-survey` has the procedure for the changed tasks of stage 3.
+- Tests: 78 unit tests. `scripts/test-claude.mjs` adds the order of task 1, the survey of the changed tasks and the gate of stage 3.
+
 ### Phase 3: survey
 
 - The new tool `shotgun_submit_survey` gives the survey of Claude in stage 2: the tasks in no sequence, the hooks, the facts and the questions.

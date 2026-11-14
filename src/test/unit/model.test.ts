@@ -16,7 +16,8 @@ suite('View model', () => {
 		version: 1, id: 'fix', title: 'Fix', created: '2026-11-14T10:00:00.000Z', stage: 'survey', isDone: false, gates: [], ...over,
 	});
 	const snapshot = (over: Partial<Snapshot> = {}): Snapshot => ({
-		root, task: undefined, isPaused: false, tasks: [], decisions: [], questions: [], survey: undefined, engine: undefined, answers: {}, problems: [], ...over,
+		root, task: undefined, isPaused: false, tasks: [], decisions: [], questions: [], survey: undefined, engine: undefined, answers: {},
+		order: undefined, problems: [], ...over,
 	});
 	const model = (s: Snapshot, claude = connected, dataflow = ready) => buildModel({ version: '0.1.0', snapshot: s, dataflow, claude });
 

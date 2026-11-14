@@ -1,18 +1,20 @@
 ---
 name: shotgun-survey
-description: 'Make the survey of the active Shotgun task in stage 2. Read the brief and the code, and give the tasks, hooks, facts and questions to Shotgun. Use this skill when the user asks for the survey, for example "Survey my brief", or for a change of the survey.'
+description: 'Make the survey of the active Shotgun task in stage 2, and the survey of the changed tasks in stage 3. Use this skill when the user asks for the survey, for example "Survey my brief", or for a change of the survey. Also use it when the user asks for the survey of changed tasks, for example "Survey my changed tasks".'
 ---
 
 # The survey of Shotgun
 
-The survey is stage 2 of a Shotgun task. You read the brief and the code. Then you give the survey to Shotgun. In stage 3, the user puts the tasks of the survey in sequence.
+The survey is stage 2 of a Shotgun task. You read the brief and the code. Then you give the survey to Shotgun. In stage 3, the user puts the tasks of the survey in sequence. The user can also change the text of a task, and add a task. Then you survey these tasks.
 
-You change no file in this stage. The guard of Shotgun stops each change. If the guard stops a change, do not try a different way, for example a shell command.
+You change no file in the stages 2 and 3. The guard of Shotgun stops each change. If the guard stops a change, do not try a different way, for example a shell command.
 
 ## The tools
 
 - `mcp__plugin_dataflow_dataflow__shotgun_get_session` gives the active task, its stage, the brief and the survey.
-- `mcp__plugin_dataflow_dataflow__shotgun_submit_survey` gives the survey to Shotgun.
+- `mcp__plugin_dataflow_dataflow__shotgun_submit_survey` gives the survey to Shotgun in stage 2.
+- `mcp__plugin_dataflow_dataflow__shotgun_get_order` gives the order of the user in stage 3, and the tasks with no survey.
+- `mcp__plugin_dataflow_dataflow__shotgun_submit_task_survey` gives the survey of 1 task of the order to Shotgun in stage 3.
 - The read tools of DataFlow give the facts of the C and C++ code:
   - `mcp__plugin_dataflow_dataflow__list_functions` gives the functions of a file with their lines.
   - `mcp__plugin_dataflow_dataflow__get_place` gives the function, the statements, the threads and the locks of a line.
@@ -47,6 +49,7 @@ A task is a part of the work of the brief. Give the tasks in no sequence, becaus
 - `text`: you can give the work of the task in 1 to 3 sentences.
 - `hooks`: the ids of the hooks of the task. Give an empty list only for a task with only new files.
 - `needs`: the ids of the tasks that this task needs first. The needs must not make a circle.
+- `size`: your estimate of the work of the task: `small`, `medium` or `large`.
 
 ## The hooks
 
@@ -94,3 +97,25 @@ When the user asks for a change of the survey:
 4. Call `shotgun_submit_survey` with the full survey. The new survey replaces the old survey.
 
 The answers of the user stay with the ids of their questions.
+
+## Stage 3: the changed tasks
+
+In stage 3, the user can change the text of a task, and add a task. Such a task has no survey for its text. When the user asks for the survey of these tasks, for example "Survey my changed tasks":
+
+1. Call `shotgun_get_order`. The field `changed` gives the tasks of the plan with no survey.
+2. If `changed` is empty, tell the user that each task of the plan has a survey. Then stop.
+3. Read the code for the text of each task in `changed`, with the read tools of DataFlow and with the tool Read.
+4. Call `shotgun_submit_task_survey` 1 time for each task in `changed`. The fields are below.
+5. If Shotgun gives problems, correct all of them. Then call the tool again.
+6. Tell the user the hooks and the needs of each task. The order page of Shotgun shows them.
+
+The fields of `shotgun_submit_task_survey`:
+
+- `task` and `text`: the id and the text of the task, copied exactly from `shotgun_get_order`.
+- `hooks`: the ids of the hooks of the survey that the task changes.
+- `newHooks`: the new hooks of the task, with ids that the survey does not have. A new hook has the fields of a hook of the survey.
+- `needs`: the ids of the tasks of the order that this task needs first. The needs must not make a circle.
+- `size`: your estimate of the work of the task.
+- `note`: a short note for the user, for example "The same hook, H6. The range from 1 to 100 is a new decision."
+
+Do not change the text or the place of a task. The order is the decision of the user. If a text is not clear, write this in the note, and tell the user.

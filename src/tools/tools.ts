@@ -1,12 +1,15 @@
 import * as path from 'path';
 import type { ExtensionTool } from '../dataflow/dataflow-api';
 import { parseBrief, partSummary, questionLine } from '../session/brief';
+import { changedTasks, Order, orderWarnings } from '../session/order';
 import { IS_CASE_SENSITIVE } from '../session/paths';
 import { GATE_LABEL, GATE_OF, STAGE_INFO, STAGES } from '../session/stages';
 import type { Snapshot, SessionStore } from '../session/store';
+import { SIZES } from '../session/survey';
 import { submitBrief, submitQuestions } from './brief';
 import { contextOutput, contextText } from './context';
 import { decide, GuardInput, hookOutput, isInside, targetOf } from './guard';
+import { orderData, submitTaskSurvey } from './order';
 import type { PromptLog } from './prompts';
 import { EngineApi, submitSurvey } from './survey';
 
@@ -14,7 +17,24 @@ export { IS_CASE_SENSITIVE };
 
 // The tools of Shotgun for the MCP server of DataFlow. DataFlow puts "shotgun_" before each name, so Claude Code sees
 // for example mcp__plugin_dataflow_dataflow__shotgun_get_session. Phase 1 has the read tool get_session and the 2 tools
-// of the hooks. Phase 2 adds submit_brief and submit_questions.
+// of the hooks. Phase 2 adds submit_brief and submit_questions, phase 3 submit_survey, and phase 4 get_order and
+// submit_task_survey.
+
+// A hook in the survey of stage 2 and in the survey of a task in stage 3
+const HOOK_SCHEMA = {
+	type: 'object',
+	properties: {
+		id: { type: 'string', description: 'For example H1.' },
+		title: { type: 'string' },
+		kind: { type: 'string', description: 'The new code at the place, for example "new check in solve()".' },
+		file: { type: 'string', description: 'The file, relative to the first folder of the project, or absolute.' },
+		lines: { type: 'array', items: { type: 'integer' }, minItems: 2, maxItems: 2, description: '[first, last], from 1.' },
+		code: { type: 'string', description: 'A short text of the code in the lines, copied exactly.' },
+	},
+	required: ['id', 'title', 'kind', 'file', 'lines', 'code'],
+};
+
+const SIZE_SCHEMA = { type: 'string', enum: [...SIZES], description: 'Your estimate of the work of the task.' };
 
 export interface ToolDeps {
 	readonly store: SessionStore;
@@ -28,9 +48,10 @@ export interface ToolDeps {
 
 const textOf = (value: unknown): string => (typeof value === 'string' ? value : '');
 
-// The result of get_session: the active task, its stage and gates, the brief, the survey, the rule of the guard and the
-// next work. brief: the file brief.md of the active task and its text. surveyFile: the file survey.json
-export function sessionData(snapshot: Snapshot, brief?: { file: string; text: string }, surveyFile?: string): Record<string, unknown> {
+// The result of get_session: the active task, its stage and gates, the brief, the survey, the order, the rule of the guard
+// and the next work. brief: the file brief.md of the active task and its text. surveyFile: the file survey.json. order:
+// the order of the user, for stage 3 and later
+export function sessionData(snapshot: Snapshot, brief?: { file: string; text: string }, surveyFile?: string, order?: Order): Record<string, unknown> {
 	const task = snapshot.task;
 	let guard: string;
 	let next: string;
@@ -81,6 +102,15 @@ export function sessionData(snapshot: Snapshot, brief?: { file: string; text: st
 				})),
 			},
 		} : {}),
+		...(task && order && snapshot.survey && task.stage !== 'brief' && task.stage !== 'survey' ? {
+			order: {
+				inPlan: order.tasks.filter((t) => !t.isLater).length,
+				later: order.tasks.filter((t) => t.isLater).length,
+				changed: changedTasks(order, snapshot.survey).map((t) => t.id),
+				warnings: orderWarnings(order, snapshot.survey).length,
+				tool: 'Call shotgun_get_order for the tasks in sequence.',
+			},
+		} : {}),
 		isPaused: snapshot.isPaused,
 		guard,
 		next,
@@ -106,8 +136,39 @@ export function shotgunTools(deps: ToolDeps): ExtensionTool[] {
 				const text = file ? deps.readText(file) : undefined;
 				const task = deps.store.snapshot.task;
 				const surveyFile = task && deps.store.dir ? path.join(deps.store.dir, task.id, 'survey.json') : undefined;
-				return sessionData(deps.store.snapshot, file && text !== undefined ? { file, text } : undefined, surveyFile);
+				return sessionData(deps.store.snapshot, file && text !== undefined ? { file, text } : undefined, surveyFile, deps.store.order);
 			},
+		},
+		{
+			name: 'get_order',
+			title: 'Shotgun order',
+			description: 'Gives the order of the user, in stage 3 and later: the tasks in sequence, with their text, their hooks and the tasks '
+				+ 'that they need. "changed" gives the tasks of the plan with no survey for their text: a new task of the user, or a task '
+				+ 'with a new text. Survey each of them with submit_task_survey.',
+			inputSchema: { type: 'object', properties: {} },
+			isReadOnly: true,
+			call: () => orderData(deps.store.snapshot, deps.store.order),
+		},
+		{
+			name: 'submit_task_survey',
+			title: 'Shotgun: give the survey of a task',
+			description: 'Gives your survey of 1 task of the order to Shotgun, in stage 3: its hooks and the tasks that it needs first. Give '
+				+ 'the text of the task exactly as get_order gives it. Do not change the text or the place of a task: the order is the '
+				+ 'decision of the user. Give a hook of the survey by its id in "hooks", and a new hook in "newHooks".',
+			inputSchema: {
+				type: 'object',
+				properties: {
+					task: { type: 'string', description: 'The id of the task, from get_order.' },
+					text: { type: 'string', description: 'The text of the task now, copied from get_order.' },
+					hooks: { type: 'array', items: { type: 'string' }, description: 'The ids of the hooks of the survey that the task changes.' },
+					newHooks: { type: 'array', items: HOOK_SCHEMA, description: 'The new hooks of the task, with ids that the survey does not have.' },
+					needs: { type: 'array', items: { type: 'string' }, description: 'The ids of the tasks of the order that this task needs first.' },
+					size: SIZE_SCHEMA,
+					note: { type: 'string', description: 'A short note for the user, for example the hooks that changed. A maximum of 500 characters.' },
+				},
+				required: ['task', 'text', 'hooks', 'needs'],
+			},
+			call: (args) => submitTaskSurvey(deps, args),
 		},
 		{
 			name: 'submit_survey',
@@ -128,25 +189,12 @@ export function shotgunTools(deps: ToolDeps): ExtensionTool[] {
 								text: { type: 'string' },
 								hooks: { type: 'array', items: { type: 'string' }, description: 'The ids of the hooks of the task. Empty for only new files.' },
 								needs: { type: 'array', items: { type: 'string' }, description: 'The ids of the tasks that this task needs first.' },
+								size: SIZE_SCHEMA,
 							},
 							required: ['id', 'title', 'hooks'],
 						},
 					},
-					hooks: {
-						type: 'array',
-						items: {
-							type: 'object',
-							properties: {
-								id: { type: 'string', description: 'For example H1.' },
-								title: { type: 'string' },
-								kind: { type: 'string', description: 'The new code at the place, for example "new check in solve()".' },
-								file: { type: 'string', description: 'The file, relative to the first folder of the project, or absolute.' },
-								lines: { type: 'array', items: { type: 'integer' }, minItems: 2, maxItems: 2, description: '[first, last], from 1.' },
-								code: { type: 'string', description: 'A short text of the code in the lines, copied exactly.' },
-							},
-							required: ['id', 'title', 'kind', 'file', 'lines', 'code'],
-						},
-					},
+					hooks: { type: 'array', items: HOOK_SCHEMA },
 					facts: {
 						type: 'array',
 						items: {

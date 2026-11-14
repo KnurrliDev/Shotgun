@@ -3,11 +3,14 @@ import type { ClaudeState } from '../claude/connection';
 import { MIN_DATAFLOW } from '../dataflow/version';
 import { parseBrief, partName, partSummary, questionLine } from '../session/brief';
 import type { Decision, TaskFile } from '../session/files';
+import { changedTasks, factsOf, MAX_TASK_TEXT, orderOf, orderWarnings } from '../session/order';
 import { absolutePath } from '../session/paths';
 import { GATE_LABEL, STAGE_INFO, STAGES, stageText } from '../session/stages';
 import type { Snapshot } from '../session/store';
 import { excerptOf, findHook, Lines } from '../session/survey';
-import type { BriefView, DecisionView, GateView, HookView, SetupRow, StageView, SurveyView, TaskView, ViewModel } from './protocol';
+import type {
+	BriefView, DecisionView, GateView, HookView, OrderTaskView, OrderView, SetupRow, StageView, SurveyView, TaskView, ViewModel,
+} from './protocol';
 
 // The view model of the page and of the panel, from the session, the state of DataFlow and the connection to Claude
 // Code. These functions use no VS Code API, so the unit tests can call them directly.
@@ -62,6 +65,24 @@ export function decisionText(decision: Decision): string {
 				+ `and ${count(decision.questions, 'question')}.`;
 		case 'answer':
 			return decision.text ? `You answered the question ${decision.id}: "${decision.text}".` : `You removed the answer to the question ${decision.id}.`;
+		case 'order':
+			switch (decision.action) {
+				case 'move':
+					return `You moved "${decision.text}" to place ${decision.position ?? '?'}.`;
+				case 'text':
+					return decision.text ? `You changed the text of task ${decision.task} to "${decision.text}".` : `You removed the text of task ${decision.task}.`;
+				case 'add':
+					return `You added the task "${decision.text}".`;
+				case 'later':
+					return `You kept "${decision.text}" for later.`;
+				case 'now':
+					return `You put "${decision.text}" back into the plan.`;
+				case 'remove':
+					return `You removed the task "${decision.text}".`;
+			}
+			return 'You changed the order.';
+		case 'task-survey':
+			return `Claude surveyed the task ${decision.task}: ${count(decision.hooks, 'hook')}, and it needs ${decision.needs === 0 ? 'no task' : count(decision.needs, 'task')}.`;
 	}
 }
 
@@ -100,13 +121,74 @@ function surveyView(snapshot: Snapshot, readLines: ModelInput['readLines']): Sur
 	});
 	return {
 		time: survey.time,
-		tasks: survey.tasks.map((t) => ({ id: t.id, title: t.title, ...(t.text ? { text: t.text } : {}), hooks: [...t.hooks], needs: [...t.needs] })),
+		tasks: survey.tasks.map((t) => ({
+			id: t.id, title: t.title, ...(t.text ? { text: t.text } : {}), hooks: [...t.hooks], needs: [...t.needs], ...(t.size ? { size: t.size } : {}),
+		})),
 		hooks,
 		facts: survey.facts.map((f) => ({ text: f.text, place: placeText(f.file, f.lines), path: absolutePath(f.file, root), line: f.lines[0], tool: f.tool })),
 		questions: survey.questions.map((q) => ({ id: q.id, text: q.text, ...(snapshot.answers[q.id] ? { answer: snapshot.answers[q.id].text } : {}) })),
 		isReachComplete: snapshot.engine?.isReachComplete ?? false,
 		...(snapshot.engine ? { engineTime: snapshot.engine.time } : {}),
 		isEditable: task.stage === 'survey' && !task.isDone,
+	};
+}
+
+// Stage 3 and later: the order of the user, with the facts of each task and the order check. survey: the hooks at
+// their lines now
+function orderView(snapshot: Snapshot, survey: SurveyView | undefined): OrderView | undefined {
+	const { task } = snapshot;
+	if (!task || !snapshot.survey || task.stage === 'brief' || task.stage === 'survey') {
+		return undefined;
+	}
+	const order = orderOf(snapshot.order, snapshot.survey);
+	const plan = order.tasks.filter((t) => !t.isLater);
+	const place = (id: string) => plan.findIndex((t) => t.id === id) + 1;
+	const warnings = orderWarnings(order, snapshot.survey);
+	const hooks = new Map((survey?.hooks ?? []).map((h) => [h.id, h]));
+	const tasks: OrderTaskView[] = order.tasks.map((t) => {
+		const facts = factsOf(t, snapshot.survey);
+		const needs = facts.needs.map(place).filter((p) => p > 0).sort((a, b) => a - b);
+		let needsText = needs.length > 0 ? `needs ${needs.join(', ')}` : 'needs no task';
+		if (t.isLater) {
+			needsText = 'later';
+		} else if (t.isNew && !facts.hasSurvey) {
+			needsText = 'needs not known';
+		}
+		let note: OrderTaskView['note'];
+		if (t.isNew && !facts.hasSurvey) {
+			note = { by: 'user', text: 'Your task. It has no survey yet: no hooks and no needs.' };
+		} else if (!facts.hasSurvey) {
+			note = { by: 'user', text: `You changed the text. The hooks and the needs are from the old text: "${facts.oldText ?? ''}".` };
+		} else if (facts.note) {
+			note = { by: 'claude', text: facts.note };
+		}
+		return {
+			id: t.id,
+			text: t.text,
+			place: t.isLater ? null : place(t.id),
+			isNew: t.isNew,
+			isChanged: facts.isChanged,
+			hasSurvey: facts.hasSurvey,
+			isSurveyedAgain: facts.isSurveyedAgain,
+			isLater: t.isLater,
+			hooks: facts.hooks.map((id) => {
+				const h = hooks.get(id);
+				return h ? { id, place: h.place, path: h.path, line: h.lines[0] } : { id, place: '', path: '', line: 0 };
+			}),
+			needsText,
+			...(facts.size ? { size: facts.size } : {}),
+			...(note ? { note } : {}),
+			warnings: warnings.filter((w) => w.task === t.id).map((w) => w.text),
+		};
+	});
+	return {
+		tasks,
+		warnings: warnings.map((w) => w.text),
+		inPlan: plan.length,
+		later: order.tasks.length - plan.length,
+		changed: changedTasks(order, snapshot.survey).length,
+		isEditable: task.stage === 'order' && !task.isDone,
+		maxText: MAX_TASK_TEXT,
 	};
 }
 
@@ -128,10 +210,34 @@ function briefView(snapshot: Snapshot, brief: NonNullable<ModelInput['brief']>):
 	};
 }
 
-// The gate of the stage. This version of Shotgun has the gates of the stages 1 and 2
-function gateView(task: TaskFile, brief: BriefView | undefined, survey: SurveyView | undefined): GateView | undefined {
+// The gate of the stage. This version of Shotgun has the gates of the stages 1 to 3
+function gateView(task: TaskFile, brief: BriefView | undefined, survey: SurveyView | undefined, order: OrderView | undefined): GateView | undefined {
 	if (task.isDone) {
 		return undefined;
+	}
+	if (task.stage === 'order') {
+		if (!order) {
+			return undefined;
+		}
+		const n = order.warnings.length;
+		const empty = order.tasks.find((t) => t.place !== null && !t.text.trim());
+		let reason: string | undefined;
+		if (order.inPlan === 0) {
+			reason = 'Put 1 task or more into the plan.';
+		} else if (empty) {
+			reason = `Write the text of task ${empty.place}.`;
+		}
+		return {
+			// the label tells the number of the warnings, and the gate does not stop because of them
+			label: n === 0 ? GATE_LABEL['accept-order'] : `Accept with ${count(n, 'warning')}`,
+			note: 'Your gate. After it, Claude makes the plan in this sequence.',
+			isEnabled: !reason,
+			...(reason ? { reason } : {}),
+			...(order.changed > 0
+				? { warning: `${count(order.changed, 'task')} of the plan ${order.changed === 1 ? 'has' : 'have'} no survey. Claude surveys `
+					+ `${order.changed === 1 ? 'it' : 'them'} at the start of the plan.` } : {}),
+			...(STAGE_INFO.plan.request ? { after: STAGE_INFO.plan.request } : {}),
+		};
 	}
 	if (task.stage === 'survey') {
 		const open = survey ? survey.questions.filter((q) => !q.answer).length : 0;
@@ -251,7 +357,8 @@ function taskView(snapshot: Snapshot, briefInput: ModelInput['brief'], readLines
 	}
 	const brief = task.stage === 'brief' && !task.isDone && briefInput ? briefView(snapshot, briefInput) : undefined;
 	const survey = task.stage !== 'brief' ? surveyView(snapshot, readLines) : undefined;
-	const gate = gateView(task, brief, survey);
+	const order = orderView(snapshot, survey);
+	const gate = gateView(task, brief, survey, order);
 	const info = STAGE_INFO[task.stage];
 	const isActive = !task.isDone && !snapshot.isPaused;
 	let next = info.next;
@@ -277,6 +384,7 @@ function taskView(snapshot: Snapshot, briefInput: ModelInput['brief'], readLines
 		...(isActive && info.request ? { request: info.request } : {}),
 		...(brief ? { brief } : {}),
 		...(survey ? { survey } : {}),
+		...(order ? { order } : {}),
 		...(gate ? { gate } : {}),
 		isDone: task.isDone,
 		isPaused: snapshot.isPaused,
