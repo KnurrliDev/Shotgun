@@ -6,7 +6,7 @@ A task goes through 5 stages:
 
 | Stage | Writer | Work |
 | --- | --- | --- |
-| 1 Brief | You | You write the brief: the goal, the facts, the specs, the limits and the condition of done. |
+| 1 Brief | You | You write the brief: the goal, the facts, the specs, the limits and the condition of done. Each part is optional. |
 | 2 Survey | Claude | Claude reads the code. It gives the facts, the tasks and the hooks: the places where new code goes into the code that is there. |
 | 3 Order | You | You put the tasks in sequence. You can rewrite a task, add a task, or keep a task for later. |
 | 4 Plan | Claude | Claude makes the steps of the plan. Shotgun gives each step a risk level from the facts of DataFlow. |
@@ -28,6 +28,8 @@ Shotgun is in development. The phases 1 to 9 of 10 are complete:
 - Phase 8: the callouts with the new facts of DataFlow on your lines, and the answers of Claude to your questions about a line.
 - Phase 9: the loose ends of the steps, the ledger of the task, and the check of your commit message by Claude.
 
+After phase 9, Shotgun got a sidebar in the activity bar, and each part of the brief became optional.
+
 `implementation-plan.md` gives the phases, and `CHANGELOG.md` gives the content of each phase.
 
 ## Prerequisites
@@ -41,11 +43,11 @@ Shotgun is in development. The phases 1 to 9 of 10 are complete:
 ## Use
 
 1. Run **Shotgun: Connect to Claude Code**.
-2. Run **Shotgun: New Task**, and give the title of the task. Shotgun opens `brief.md` with its 5 parts.
+2. Run **Shotgun: New Task**, or select **New Task…** in the sidebar of Shotgun. Give the title of the task. Shotgun opens `brief.md` with its 5 parts.
 3. Start a new session of Claude Code in the project. Claude gets the context of the task with each prompt.
-4. Write the brief in `brief.md`. Or give the brief to Claude in the chat, and tell Claude to give it to Shotgun.
-5. Optionally, tell Claude "Ask me questions about my brief." Answer each question in the brief, and then close it in the panel.
-6. When each part has text, select **The brief is ready** in the panel.
+4. Write the brief in `brief.md`, or give the brief to Claude in the chat and tell Claude to give it to Shotgun. Each part of the brief is optional.
+5. Optionally, tell Claude "Ask me questions about my brief." You can answer a question in the brief, and close it in the panel.
+6. Select **The brief is ready** in the panel. The gate does not wait for a part of the brief or for an answer.
 7. Tell Claude "Survey my brief." Claude reads the code, and gives the tasks, the hooks, the facts and its questions to Shotgun.
 8. Read the survey on the page of Shotgun. Answer the questions of Claude on the page, or with **Shotgun: Answer Question**.
 9. If the survey must change, tell Claude what to change. When the survey is correct, select **Order the tasks**.
@@ -68,10 +70,25 @@ Shotgun is in development. The phases 1 to 9 of 10 are complete:
 26. Write the commit message in Source Control. Tell Claude "Check my commit message.". Then commit in Source Control.
 27. Follow the panel of Shotgun in the secondary side bar. It shows the next work and the requests for Claude Code.
 
+## The sidebar
+
+The icon of Shotgun in the activity bar opens the sidebar of Shotgun, as DataFlow has its sidebar:
+
+- **New Task…** and the tasks of the project with their stages. A click on a task makes it the active task, and shows the panel.
+- **Show Page**, **Open Brief** and **Show the Ledger** for the active task.
+- **Pause** or **Continue** for the guard.
+- **Show Panel** for the panel of Shotgun in the secondary side bar.
+- **Open Project Folder…** and **Recent Projects**: the last 10 folders with a task of Shotgun, from all windows. A click opens the folder in this window.
+- **Claude Code**, with the state of the connection: a click connects Shotgun to Claude Code. And **Show Log**.
+
 | Command | Function |
 | --- | --- |
 | Shotgun: New Task | Makes a task in stage 1 with `brief.md`. The new task becomes the active task. |
 | Shotgun: Open Task | Selects a different task of the folder. |
+| Shotgun: Show Panel | Shows the panel of Shotgun in the secondary side bar. |
+| Shotgun: Open Project Folder... | Opens the folder of a project in this window. |
+| Shotgun: Open Recent Project... | Opens a recent project with a task of Shotgun in this window. |
+| Shotgun: Show Log | Shows the log of Shotgun. |
 | Shotgun: Open Brief | Opens the brief of the active task. |
 | Shotgun: Close Question | Closes a question of Claude about the brief. |
 | Shotgun: Answer Question | Gives your answer to a question of the survey. An empty answer removes the answer. |
@@ -294,7 +311,7 @@ The window uses the DataFlow extension of VS Code. To use DataFlow from its repo
 | Command | Tests |
 | --- | --- |
 | `npm test` | The unit tests in a test build of VS Code. The tests load DataFlow from `../DataFlow`, or from the folder of the environment variable `DATAFLOW_REPO`. If the environment variable `CLAUDE_EXE` gives the CLI of Claude Code, a test also checks the plugin with `claude plugin validate`. |
-| `node scripts/test-claude.mjs <run folder>` | The test with Claude Code. 2 tasks go from the brief to stage 2. Task 1 has a brief in a file, and task 2 has a brief from the chat. The guard denies a change in stage 1. Then Claude makes the survey of task 1, and task 1 goes to stage 3. On the order page, the test changes the order. Claude surveys the changed tasks, and task 1 goes to stage 4. Then Claude makes the plan, the test changes the levels, and task 1 goes to stage 5. In the build, a run of Claude Code with no plugins stands in for the user and writes step 1. Claude does step 2 and gives a receipt. The test puts an issue on a change, Claude fixes it, and the test accepts the receipt. Then the test sets step 3 to level 4 and asks for a frame. Claude gives the frame, and the test fills the holes with Tab and the hints. In step 4, the test writes a line with a race. The race shows as a callout, and Claude explains it and answers a question about a line. Then the test ends step 4, hands a loose end to Claude, writes a commit message, and Claude checks the message. Use a new run folder outside of the repository. |
+| `node scripts/test-claude.mjs <run folder>` | The test with Claude Code. 2 tasks go from the brief to stage 2. The gate of the empty brief is on, and the sidebar shows the task. Task 1 has a brief in a file, and task 2 has a brief from the chat. The guard denies a change in stage 1. Then Claude makes the survey of task 1, and task 1 goes to stage 3. On the order page, the test changes the order. Claude surveys the changed tasks, and task 1 goes to stage 4. Then Claude makes the plan, the test changes the levels, and task 1 goes to stage 5. In the build, a run of Claude Code with no plugins stands in for the user and writes step 1. Claude does step 2 and gives a receipt. The test puts an issue on a change, Claude fixes it, and the test accepts the receipt. Then the test sets step 3 to level 4 and asks for a frame. Claude gives the frame, and the test fills the holes with Tab and the hints. In step 4, the test writes a line with a race. The race shows as a callout, and Claude explains it and answers a question about a line. Then the test ends step 4, hands a loose end to Claude, writes a commit message, and Claude checks the message. Use a new run folder outside of the repository. |
 
 NOTE: `scripts/test-claude.mjs` uses the Claude subscription of the user for 12 runs of Claude Code. It does not change the settings of the user.
 

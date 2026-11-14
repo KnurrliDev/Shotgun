@@ -24,9 +24,9 @@ export interface StageInfo {
 export const STAGE_INFO: Readonly<Record<Stage, StageInfo>> = {
 	brief: {
 		number: 1, name: 'Brief', writer: 'user',
-		text: 'You write the brief in brief.md, or you give it to Claude in the chat. Claude gives your text to Shotgun unchanged. Each later stage starts from these words.',
+		text: 'You write the brief in brief.md, or you give it to Claude in the chat. Each part is optional. Claude gives your text to Shotgun unchanged, and each later stage starts from these words.',
 		guard: 'Claude changes no file in this stage.',
-		next: 'The user writes the brief, and then selects "The brief is ready".',
+		next: 'The user can write the brief. Each part of the brief is optional. The user selects "The brief is ready" when the brief is ready.',
 		request: 'Ask me questions about my brief.',
 	},
 	survey: {

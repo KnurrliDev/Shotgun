@@ -57,7 +57,7 @@ export function submitBrief(deps: BriefDeps, args: Record<string, unknown>): Rec
 			const more = foreign.length > MAX_QUOTED ? `, and ${foreign.length - MAX_QUOTED} more` : '';
 			problems.push(`${foreign.length === 1 ? '1 line is' : `${foreign.length} lines are`} not in the words of the user: ${quoted}${more}. `
 				+ 'Copy the words of the user exactly. Add only the headings of the 5 parts and the list mark "- ". If a part is not in the words of '
-				+ 'the user, leave it out: Shotgun adds its heading, and the user fills it.');
+				+ 'the user, leave it out: Shotgun adds its heading, and the part stays empty. Each part is optional.');
 		}
 	}
 	// the task of the brief: a new task, or the active task in stage 1 if its brief has no text
@@ -91,9 +91,9 @@ export function submitBrief(deps: BriefDeps, args: Record<string, unknown>): Rec
 		file,
 		parts: partData(brief.parts),
 		isComplete: brief.isComplete,
-		next: missing.length === 0
-			? 'Tell the user that brief.md is open. The user checks it, and then selects "The brief is ready" in the panel of Shotgun.'
-			: `These parts have no text: ${missing.join(', ')}. Ask the user to write them in brief.md. Do not write them yourself.`,
+		next: 'Tell the user that brief.md is open. The user checks it, and then selects "The brief is ready" in the panel of Shotgun.'
+			+ (missing.length > 0 ? ` These parts have no text: ${missing.join(', ')}. Each part is optional, so do not ask the user to write them, `
+				+ 'and do not write them yourself.' : ''),
 	};
 }
 

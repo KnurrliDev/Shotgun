@@ -1,8 +1,9 @@
 // The test of Shotgun with Claude Code. It starts the test build of VS Code with DataFlow and Shotgun from their
 // repository folders. In VS Code, it makes a task with "Shotgun: New Task", and connects DataFlow and Shotgun to Claude
 // Code with their commands. Then it runs 12 prompts of the CLI of Claude Code in print mode:
-// 1. Task 1: the test writes the brief into brief.md, as the user does. "Ask me questions about my brief." loads the
-//    skill shotgun, and Claude gives its questions with shotgun_submit_questions. The test closes the questions.
+// 1. Task 1: the gate of the empty brief is on, because each part is optional. The sidebar of Shotgun shows the task.
+//    The test writes the brief into brief.md, as the user does. "Ask me questions about my brief." loads the skill
+//    shotgun, and Claude gives its questions with shotgun_submit_questions. The test closes the questions.
 // 2. Claude tries to change a file of the project in stage 1, and the guard denies the change (phase 1).
 // 3. The test passes the gate of task 1. Then the user gives a brief in the chat, and Claude gives it to Shotgun with
 //    shotgun_submit_brief. Shotgun makes task 2, and the test passes its gate (the condition of phase 2).
@@ -493,6 +494,14 @@ const panelText = () => inWebview('.panel', '() => d.body.innerText');
 // The text of the page of Shotgun, or undefined
 const pageText = () => inWebview('.page', '() => d.body.innerText');
 
+// A click of the mouse at a point of the workbench, as the user clicks
+async function clickAt(wb, { x, y }) {
+	for (const type of ['mousePressed', 'mouseReleased']) {
+		await wb.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: 1 });
+	}
+	await sleep(400);
+}
+
 // Clicks the button of a modal message of VS Code with this text. The result: true if the message was there
 async function clickDialog(wb, label) {
 	return wb.evaluate(`(() => {
@@ -681,10 +690,39 @@ async function main() {
 		// task 1: the brief in a file. "Shotgun: New Task" made brief.md from the template and opened it
 		const brief1 = taskFile(TASK_1, 'brief.md');
 		const tab = await wb.evaluate("document.querySelector('.part.editor .tab.active')?.textContent ?? ''");
-		check('"Shotgun: New Task" makes brief.md from the template and opens it',
-			fs.readFileSync(brief1, 'utf8').startsWith(`# Brief: ${TITLE}\n\n## Goal\n`) && String(tab).includes('brief.md'), tab);
+		const template = fs.readFileSync(brief1, 'utf8');
+		check('"Shotgun: New Task" makes brief.md from the template, with the note that each part is optional, and opens it',
+			template.startsWith(`# Brief: ${TITLE}\n\n<!-- All parts are optional.`) && template.includes('\n## Goal\n') && String(tab).includes('brief.md'), tab);
 		let text = await poll(async () => (await panelText())?.includes('0 of 5') && true, 15);
 		check('The panel shows the parts of the empty brief', !!text, await panelText());
+		// each part of the brief is optional, so the gate is on with the empty brief (decision 22)
+		const isGateOn = await inWebview('.panel', `() => {
+			const b = [...d.querySelectorAll('.gate button')].find((x) => x.textContent.includes('The brief is ready'));
+			return !!b && !b.disabled;
+		}`);
+		check('The gate "The brief is ready" is on with the empty brief', isGateOn === true, await panelText());
+		// the sidebar of Shotgun in the activity bar: the task, the page and the other commands (decision 23)
+		const sidebarBox = await wb.evaluate(`(() => {
+			const a = [...document.querySelectorAll('.part.activitybar .action-item .action-label')].find((e) => /^Shotgun/.test(e.getAttribute('aria-label') ?? ''));
+			const r = a?.getBoundingClientRect();
+			return r && r.width > 0 ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : undefined; })()`);
+		if (sidebarBox) {
+			await clickAt(wb, sidebarBox);
+		}
+		const sidebar = await poll(() => wb.evaluate(`(() => {
+			const t = document.querySelector('.part.sidebar')?.innerText ?? '';
+			return ['${TITLE}', 'Show Page', 'Open Brief', 'Open Project Folder', 'Show Log'].every((x) => t.includes(x)) ? t : undefined; })()`), 15);
+		check('The sidebar of Shotgun shows the task, "Show Page", "Open Brief", "Open Project Folder" and "Show Log"', !!sidebarBox && !!sidebar,
+			{ sidebarBox, sidebar: await wb.evaluate("document.querySelector('.part.sidebar')?.innerText ?? ''") });
+		await wb.shot('sidebar.png');
+		// the Explorer comes back into the sidebar
+		const explorerBox = await wb.evaluate(`(() => {
+			const a = [...document.querySelectorAll('.part.activitybar .action-item .action-label')].find((e) => /^Explorer/.test(e.getAttribute('aria-label') ?? ''));
+			const r = a?.getBoundingClientRect();
+			return r && r.width > 0 ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : undefined; })()`);
+		if (explorerBox) {
+			await clickAt(wb, explorerBox);
+		}
 		fs.writeFileSync(brief1, BRIEF_1);
 		text = await poll(async () => (await panelText())?.includes('5 of 5') && true, 15);
 		check('The panel shows the 5 parts of the brief of the user', !!text, await panelText());
@@ -1489,7 +1527,8 @@ async function main() {
 		const batteryFile = path.join(p.project, 'src', 'battery.cpp');
 		const batteryLines = fs.readFileSync(batteryFile, 'utf8').split('\n');
 		const target = batteryLines.findIndex((l) => l.includes('if (home_battery_ctl.state == HOMEPOWER_CHARGE_PLANNING)')) + 1;
-		const lambda = batteryLines.findIndex((l) => l.includes('solve_power_plan(charge)')) + 1;
+		// the lambda that executor.async gets. A step of Claude can add arguments to its call of solve_power_plan
+		const lambda = batteryLines.findIndex((l) => /\.async\(\s*\[/.test(l)) + 1;
 		const lambdaLine = lambda > target ? lambda + 1 : lambda;
 		await command(wb, 'Go to File');
 		await quickInput(wb, 'src/battery.cpp');

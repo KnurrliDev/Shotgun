@@ -30,7 +30,7 @@ Load all these tools with 1 call of `ToolSearch`, with `select:` and the full na
 
 1. Call `shotgun_get_session`. Make sure that the stage is 2.
 2. If the stage is 1, stop. Tell the user to select "The brief is ready" in the panel of Shotgun.
-3. Read the brief with the tool Read. The field `brief.file` gives its path.
+3. Read the brief with the tool Read. The field `brief.file` gives its path. Each part of the brief is optional. If the brief has little text, use the title of the task, and put the decisions that the brief does not give into your questions.
 4. Find the files of the code that the brief names. If the brief names no file, find them with the tools Glob and Grep.
 5. Call `list_functions` for these files. Then call `get_place`, `get_callers`, `get_threads` and `get_logic` for the functions and the lines that the brief names.
 6. Read the lines of the code with the tool Read.

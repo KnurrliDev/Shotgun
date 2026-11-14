@@ -23,6 +23,13 @@
 	],
 	"contributes": {
 		"viewsContainers": {
+			"activitybar": [
+				{
+					"id": "shotgun-sidebar",
+					"title": "Shotgun",
+					"icon": "media/shotgun.svg"
+				}
+			],
 			"secondarySidebar": [
 				{
 					"id": "shotgun",
@@ -32,6 +39,12 @@
 			]
 		},
 		"views": {
+			"shotgun-sidebar": [
+				{
+					"id": "shotgun.home",
+					"name": "Shotgun"
+				}
+			],
 			"shotgun": [
 				{
 					"type": "webview",
@@ -49,6 +62,26 @@
 			{
 				"command": "shotgun.openTask",
 				"title": "Open Task",
+				"category": "Shotgun"
+			},
+			{
+				"command": "shotgun.showPanel",
+				"title": "Show Panel",
+				"category": "Shotgun"
+			},
+			{
+				"command": "shotgun.showLog",
+				"title": "Show Log",
+				"category": "Shotgun"
+			},
+			{
+				"command": "shotgun.openProjectFolder",
+				"title": "Open Project Folder...",
+				"category": "Shotgun"
+			},
+			{
+				"command": "shotgun.openRecentProject",
+				"title": "Open Recent Project...",
 				"category": "Shotgun"
 			},
 			{

@@ -197,10 +197,12 @@ suite('Tools of stage 1', () => {
 		assert.strictEqual(result.isNewTask, false);
 		assert.strictEqual(store.snapshot.tasks.length, 1);
 		const text = readFileSync(store.briefFile()!, 'utf8');
-		// the title of the user stays, and the parts that the user did not give get their headings
-		assert.ok(text.startsWith('# Brief: Cycle limit\n\n## Goal\nThe controller must not wait without end.\n\n## Facts\n\n<!-- '), text);
+		// the title of the user stays. The note tells that each part is optional, and the parts that the user did not give get
+		// their headings
+		assert.ok(text.startsWith('# Brief: Cycle limit\n\n<!-- All parts are optional.'), text);
+		assert.ok(text.includes('-->\n\n## Goal\nThe controller must not wait without end.\n\n## Facts\n\n<!-- Optional. '), text);
 		assert.deepStrictEqual(result.parts.map((p: { hasText: boolean }) => p.hasText), [true, false, false, false, false]);
-		assert.match(result.next, /These parts have no text: Facts, Specs, Not in scope, Done when\. Ask the user/);
+		assert.match(result.next, /These parts have no text: Facts, Specs, Not in scope, Done when\. Each part is optional, so do not ask the user/);
 		assert.throws(() => call('submit_brief', { title: 'x', text: 'The controller must not wait without end.' }),
 			/The brief of the active task "Cycle limit" has text\. Shotgun does not change the text of a brief/);
 		const second = call('submit_brief', { title: 'Second', text: 'The controller must not wait without end.', isNewTask: true });
@@ -261,6 +263,7 @@ suite('Tools of stage 1', () => {
 		assert.strictEqual(session.brief.file, store.briefFile());
 		assert.deepStrictEqual(session.brief.parts.map((p: { name: string; summary: string }) => [p.name, p.summary])[0], ['Goal', 'no text']);
 		assert.strictEqual(session.brief.isComplete, false);
-		assert.deepStrictEqual(session.brief.openQuestions, [{ id: 'q1', text: 'Why?', line: 3 }]);
+		// the heading of the part Goal is on line 5, after the title and the note of the template
+		assert.deepStrictEqual(session.brief.openQuestions, [{ id: 'q1', text: 'Why?', line: 5 }]);
 	});
 });

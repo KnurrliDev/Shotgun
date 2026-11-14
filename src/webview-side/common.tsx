@@ -145,8 +145,8 @@ function BriefStage({ brief, request }: { brief: BriefView; request?: string }) 
 			</div>
 			<ul class="list">
 				{brief.parts.map((p) => (
-					<li class={p.hasText ? 'ok' : 'todo'}>
-						<span class="mark" aria-label={p.hasText ? 'Has text' : 'No text'}>{p.hasText ? '✓' : '!'}</span>
+					<li class={p.hasText ? 'ok' : 'empty'}>
+						<span class="mark" aria-label={p.hasText ? 'Has text' : 'Empty, optional'}>{p.hasText ? '✓' : '○'}</span>
 						<button type="button" class="link part grow" title={`Open brief.md at the part ${p.name}`}
 							onClick={() => post({ type: 'openBrief', ...(p.line ? { line: p.line } : {}) })}>
 							{p.name}
@@ -155,6 +155,7 @@ function BriefStage({ brief, request }: { brief: BriefView; request?: string }) 
 					</li>
 				))}
 			</ul>
+			<p class="muted small">All parts are optional. Claude works with the text that you write.</p>
 			{brief.isDirty && <p class="muted small">brief.md has changes that are not saved.</p>}
 			<div class="buttons">
 				<button type="button" class="btn secondary small" onClick={() => post({ type: 'openBrief' })}>Open brief</button>

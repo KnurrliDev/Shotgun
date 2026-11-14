@@ -3,12 +3,15 @@
 
 export const BRIEF_FILE = 'brief.md';
 
+// The note at the top of a new brief. Each part of the brief is optional (decision 22)
+export const BRIEF_NOTE = 'All parts are optional. Claude works with the text that you write here, and it can ask you about the rest.';
+
 export const PARTS = [
-	{ id: 'goal', name: 'Goal', hint: 'What must the change do? Write 1 or 2 sentences.' },
-	{ id: 'facts', name: 'Facts', hint: 'What is true in the code and in the product now? Write 1 fact on each line.' },
-	{ id: 'specs', name: 'Specs', hint: 'What must the new code do? Write 1 rule on each line.' },
-	{ id: 'scope', name: 'Not in scope', hint: 'What must the change not do?' },
-	{ id: 'done', name: 'Done when', hint: 'Which tests or checks show that the task is done?' },
+	{ id: 'goal', name: 'Goal', hint: 'Optional. The purpose of the change.' },
+	{ id: 'facts', name: 'Facts', hint: 'Optional. What is true in the code or in the product now, for example a limit, a thread or a known fault.' },
+	{ id: 'specs', name: 'Specs', hint: 'Optional. What the new code must do.' },
+	{ id: 'scope', name: 'Not in scope', hint: 'Optional. The work that is not a part of this task.' },
+	{ id: 'done', name: 'Done when', hint: 'Optional. The tests or the checks that show that the task is done.' },
 ] as const;
 
 export type PartId = (typeof PARTS)[number]['id'];
@@ -28,7 +31,7 @@ export interface BriefPart {
 export interface Brief {
 	readonly title: string | undefined; // the text of the heading "# Brief: ..."
 	readonly parts: readonly BriefPart[];
-	readonly isComplete: boolean; // each part has text
+	readonly isComplete: boolean; // each part has text. Only a fact: each part is optional (decision 22)
 }
 
 // A heading of Markdown, and a line with a list mark
@@ -46,8 +49,9 @@ export function withoutComments(text: string): string {
 	return text.replace(/<!--[\s\S]*?(?:-->|$)/g, (comment) => comment.replace(/[^\n]/g, ''));
 }
 
+// The title, the note, and each part with its hint. The note and the hints are comments, so they are no text of the user
 export function briefTemplate(title: string): string {
-	return [`# Brief: ${title}`, '', ...PARTS.flatMap((p) => [`## ${p.name}`, '', `<!-- ${p.hint} -->`, ''])].join('\n');
+	return [`# Brief: ${title}`, '', `<!-- ${BRIEF_NOTE} -->`, '', ...PARTS.flatMap((p) => [`## ${p.name}`, '', `<!-- ${p.hint} -->`, ''])].join('\n');
 }
 
 export function parseBrief(text: string): Brief {
@@ -139,12 +143,14 @@ export function foreignLines(text: string, prompts: readonly string[]): string[]
 }
 
 // The text of brief.md for a brief from the chat: the title, the text of the user, and the headings of the parts that
-// the text does not have, with their hints. Shotgun fills no part
+// the text does not have, with their hints. With such parts, the note comes after the title. Shotgun fills no part
 export function briefFromChat(title: string, text: string): string {
 	const brief = parseBrief(text);
 	const missing = PARTS.filter((p) => brief.parts.find((x) => x.id === p.id)?.line === undefined);
-	return [`# Brief: ${title}`, '', text.replace(/\r\n/g, '\n').trim(), '', ...missing.flatMap((p) => [`## ${p.name}`, '', `<!-- ${p.hint} -->`, ''])]
-		.join('\n');
+	return [
+		`# Brief: ${title}`, '', ...(missing.length > 0 ? [`<!-- ${BRIEF_NOTE} -->`, ''] : []), text.replace(/\r\n/g, '\n').trim(), '',
+		...missing.flatMap((p) => [`## ${p.name}`, '', `<!-- ${p.hint} -->`, '']),
+	].join('\n');
 }
 
 // The line of a question in the brief: the line of its quote, else the heading of its part

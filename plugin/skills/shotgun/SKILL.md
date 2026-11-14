@@ -29,7 +29,7 @@ The full names of the tools start with `mcp__plugin_dataflow_dataflow__shotgun_`
 
 ## Stage 1: the brief
 
-The brief is the text of the user, in the file `brief.md` of the task. It has 5 parts: Goal, Facts, Specs, Not in scope, and Done when. Write no word in the brief.
+The brief is the text of the user, in the file `brief.md` of the task. It has 5 parts: Goal, Facts, Specs, Not in scope, and Done when. Each part is optional, and a brief can have only its title. Write no word in the brief.
 
 ### A brief in the chat
 
@@ -38,7 +38,7 @@ When the user gives a brief in the chat:
 1. Copy the words of the user exactly. Do not correct, shorten or add a word, and do not move a fact to a different part.
 2. You can put the headings of the parts above the lines of the user: `## Goal`, `## Facts`, `## Specs`, `## Not in scope` and `## Done when`.
 3. You can put the list mark `- ` at the start of a line. Do not put a title line into the text.
-4. If the user did not give a part, leave it out. Shotgun adds its heading to `brief.md`, and the user writes it.
+4. If the user did not give a part, leave it out. Shotgun adds its heading to `brief.md`, and the part stays empty. Do not ask the user for the empty parts.
 5. Call `shotgun_submit_brief` with a short title and the text.
 6. If the user wants a new task for the brief, give `"isNewTask": true`.
 
@@ -60,11 +60,11 @@ When the user asks for questions about the brief, for example "Ask me questions 
 4. Call `shotgun_submit_questions` with 1 to 10 short questions. Give the part of each question. If a question is about a line, give a short quote of the brief, copied exactly.
 5. Do not answer your questions, and do not write in the brief. Tell the user that the panel of Shotgun shows the questions.
 
-The user answers in the brief, and closes each question in the panel.
+The user can answer in the brief, and close each question in the panel. An answer is optional.
 
 ### The gate
 
-When each part of the brief has text, the user selects "The brief is ready" in the panel of Shotgun. Then the task goes to stage 2. The next request of the user is "Survey my brief.".
+The user selects "The brief is ready" in the panel of Shotgun when the brief is ready. The gate does not wait for a part of the brief or for an answer. Then the task goes to stage 2. The next request of the user is "Survey my brief.".
 
 ## Stage 2: the survey
 

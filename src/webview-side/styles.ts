@@ -348,6 +348,7 @@ progress.walk-track::-webkit-progress-value { border-radius: 2px; background: va
 .mark { flex: none; width: 1em; text-align: center; font-weight: 700; }
 .ok .mark { color: var(--sg-ok); }
 .todo .mark { color: var(--sg-warn); }
+.empty .mark { color: var(--vscode-descriptionForeground); }
 .time { flex: none; font-variant-numeric: tabular-nums; color: var(--vscode-descriptionForeground); }
 .by-guard .text { color: var(--vscode-descriptionForeground); }
 .active-task { font-weight: 600; }

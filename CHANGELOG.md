@@ -4,6 +4,16 @@
 
 This version has no release yet. Each phase of `implementation-plan.md` adds its items.
 
+### After phase 9: the sidebar and the optional brief
+
+- Shotgun has a sidebar in the activity bar, as DataFlow has (decision 23). It shows **New Task…** and the tasks of the project with their stages. A click on a task makes it the active task. For the active task, it shows **Show Page**, **Open Brief**, **Show the Ledger** in stage 5, and **Pause** or **Continue**.
+- The sidebar also shows **Show Panel**, **Open Project Folder…**, **Recent Projects**, **Claude Code** with the state of the connection, and **Show Log**. A task shows its stage in the short form of the stage chips, for example "2 Survey". The recent projects are the last 10 folders with a task of Shotgun, from all windows.
+- New commands: **Shotgun: Show Panel**, **Shotgun: Show Log**, **Shotgun: Open Project Folder...** and **Shotgun: Open Recent Project...**. **Shotgun: Open Task** takes the id of a task from the sidebar.
+- The brief cannot stop the next stage (decision 22). Each part of the brief is optional, and each question of Claude is optional. The gate **The brief is ready** is always on, and it asks nothing about open questions.
+- The template of `brief.md` tells that each part is optional. The hints describe each part, and they give no orders. An empty part shows a neutral mark in the panel, not a warning.
+- Claude does not ask the user to write the empty parts. With little text in the brief, the survey uses the title of the task, and Claude puts the open decisions into its questions.
+- Tests: 130 unit tests. `scripts/test-claude.mjs` checks the gate of the empty brief and the sidebar.
+
 ### Phase 9: loose ends, ledger and commit message
 
 - Shotgun needs DataFlow 0.6.1 or a later version (decision 20). DataFlow 0.6.1 has the fixes of the second gap list. Shotgun has no procedures for DataFlow 0.6.0 now.

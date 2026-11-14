@@ -100,20 +100,20 @@ suite('View model', () => {
 		]);
 		assert.deepStrictEqual([view.complete, view.isComplete, view.isDirty, view.closed], [2, false, true, 1]);
 		assert.deepStrictEqual(view.questions, [{ id: 'q1', text: 'Why?', partName: 'Facts', line: 8 }]);
+		// each part and each question is optional, so the gate is on with empty parts and an open question (decision 22)
 		assert.deepStrictEqual(m.task!.gate, {
 			label: 'The brief is ready',
-			note: 'Your gate. It starts the scan of the call graph.',
-			isEnabled: false,
-			reason: 'Write Specs, Not in scope, Done when in brief.md first.',
-			warning: '1 question of Claude is open.',
+			note: 'Your gate. The parts of the brief are optional. The gate starts the scan of the call graph.',
+			isEnabled: true,
+			warning: '1 question of Claude is open. An answer is optional.',
 			after: 'Survey my brief.',
 		});
-		// a complete brief with no open question enables the gate
-		const done = buildModel({
+		// a brief with only its title, and no open question
+		const empty = buildModel({
 			version: '0.1.0', snapshot: snapshot({ task: task({ stage: 'brief' }) }), dataflow: ready, claude: connected,
-			brief: { ...brief, text: `${brief.text}## Specs\nS.\n## Not in scope\nN.\n## Done when\nD.\n` },
+			brief: { ...brief, text: '# Brief: Fix\n' },
 		});
-		assert.deepStrictEqual([done.task!.gate!.isEnabled, done.task!.gate!.reason, done.task!.gate!.warning], [true, undefined, undefined]);
+		assert.deepStrictEqual([empty.task!.brief!.complete, empty.task!.gate!.isEnabled, empty.task!.gate!.reason, empty.task!.gate!.warning], [0, true, undefined, undefined]);
 		// after stage 1, the task has no view of the brief, and the gate is the gate of the new stage
 		const survey = buildModel({ version: '0.1.0', snapshot: snapshot({ task: task({ stage: 'survey' }) }), dataflow: ready, claude: connected, brief });
 		assert.strictEqual(survey.task!.brief, undefined);

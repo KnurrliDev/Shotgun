@@ -732,14 +732,13 @@ function gateView(task: TaskFile, brief: BriefView | undefined, survey: SurveyVi
 	if (task.stage !== 'brief' || !brief) {
 		return undefined;
 	}
-	const missing = brief.parts.filter((p) => !p.hasText).map((p) => p.name);
+	// each part of the brief and each question of Claude is optional, so the gate is always on (decision 22)
 	const open = brief.questions.length;
 	return {
 		label: GATE_LABEL['brief-ready'],
-		note: 'Your gate. It starts the scan of the call graph.',
-		isEnabled: missing.length === 0,
-		...(missing.length > 0 ? { reason: `Write ${missing.join(', ')} in brief.md first.` } : {}),
-		...(open > 0 ? { warning: `${open === 1 ? '1 question' : `${open} questions`} of Claude ${open === 1 ? 'is' : 'are'} open.` } : {}),
+		note: 'Your gate. The parts of the brief are optional. The gate starts the scan of the call graph.',
+		isEnabled: true,
+		...(open > 0 ? { warning: `${open === 1 ? '1 question' : `${open} questions`} of Claude ${open === 1 ? 'is' : 'are'} open. An answer is optional.` } : {}),
 		...(STAGE_INFO.survey.request ? { after: STAGE_INFO.survey.request } : {}),
 	};
 }

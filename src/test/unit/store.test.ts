@@ -92,7 +92,7 @@ suite('Session store', () => {
 	test('A new task gets brief.md from the template, and Claude gives the brief and the questions', () => {
 		const store = new SessionStore(root, clock());
 		store.newTask('Fix');
-		assert.ok(readFileSync(store.briefFile()!, 'utf8').startsWith('# Brief: Fix\n\n## Goal\n'));
+		assert.ok(readFileSync(store.briefFile()!, 'utf8').startsWith('# Brief: Fix\n\n<!-- All parts are optional.'));
 		store.writeBrief('# Brief: Fix\n\n## Goal\nA goal.\n', 1);
 		assert.strictEqual(file('fix', 'brief.md'), '# Brief: Fix\n\n## Goal\nA goal.\n');
 		const added = store.setQuestions([{ text: 'Why?', part: 'goal' }, { text: 'How?', quote: 'A goal.' }]);

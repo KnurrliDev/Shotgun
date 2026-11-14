@@ -59,8 +59,10 @@ These items are not in the scope of version 1:
 19. D2: the default voice of the callouts is normal: problems and warnings. A pause is 2 seconds with no edit in the files of the step.
 20. Shotgun needs DataFlow 0.6.1 or a later version. DataFlow 0.6.1 has the fixes of the second gap list, also `getRipple` with a base. Shotgun has no procedures for older versions.
 21. A loose end that the user hands to Claude becomes the next step of the plan, with risk level 2: after the step that is open, or before the next step that nobody started.
+22. The brief cannot stop the next stage. Each part of the brief is optional, and each question of Claude about the brief is optional. The gate "The brief is ready" never waits. The template tells that each part is optional, and its hints are descriptions, not orders.
+23. Shotgun has a sidebar in the activity bar, as DataFlow has: the tasks of the project, the page, the brief, the ledger, the guard, the panel, a project folder to open, the recent projects, the connection to Claude Code and the log.
 
-The user gave decision 10 on 13 November 2026, and the decisions 11 to 21 on 14 November 2026. Decision 10 changes the buttons of the canvas that started Claude. Section 12 lists these changes.
+The user gave decision 10 on 13 November 2026, and the decisions 11 to 23 on 14 November 2026. Decision 10 changes the buttons of the canvas that started Claude. Section 12 lists these changes.
 
 ## 3. Proposals of this plan
 
@@ -367,7 +369,7 @@ If S2 fails, the guard is a hook of type `command` with a small script. The scri
 - **Brief from the chat:** the user writes the brief in Claude Code. Claude calls `submit_brief` with the text of the user. Shotgun makes a task if no task is active, writes `brief.md`, and opens it.
 - **Panel:** the check of the 5 parts, and the next request, for example "Ask me questions about my brief".
 - **Questions:** `submit_questions`. The panel shows each question with its line of the brief. The user answers in the brief, or closes the question.
-- **Gate:** **The brief is ready**, when each part has text. The gate starts the scan of the call graph.
+- **Gate:** **The brief is ready**, when each part has text. The gate starts the scan of the call graph. Decision 22 changed this rule: each part is optional, and the gate never waits.
 - **Skill:** `shotgun`: the stages, the contract, the tools, and the rule that Claude writes no text in the brief. Claude gives a brief from the chat unchanged.
 - **Done when:** 2 new tasks go from the brief to stage 2. The first task has a brief in a file, and the second task has a brief from the chat.
 

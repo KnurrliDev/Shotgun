@@ -1,18 +1,20 @@
 import * as assert from 'assert';
 import {
-	briefFromChat, briefTemplate, foreignLines, isEmptyBrief, lineOfText, parseBrief, PartId, partSummary, questionLine, wordLines,
+	BRIEF_NOTE, briefFromChat, briefTemplate, foreignLines, isEmptyBrief, lineOfText, parseBrief, PartId, PARTS, partSummary, questionLine, wordLines,
 } from '../../session/brief';
 import { PromptLog } from '../../tools/prompts';
 
 // The brief: the template, the parts, the words of the user (decision 12) and the lines of the questions
 suite('Brief', () => {
-	test('The template has the title and the 5 parts with their hints, and no part has text', () => {
+	test('The template has the title, the note that each part is optional, and the 5 parts with their hints. No part has text', () => {
 		const text = briefTemplate('Cycle limit');
-		assert.ok(text.startsWith('# Brief: Cycle limit\n\n## Goal\n\n<!-- What must the change do?'), text);
+		assert.ok(text.startsWith(`# Brief: Cycle limit\n\n<!-- ${BRIEF_NOTE} -->\n\n## Goal\n\n<!-- Optional. The purpose of the change. -->`), text);
+		// each hint starts with "Optional." and gives no order to the user
+		assert.ok(PARTS.every((p) => p.hint.startsWith('Optional. ') && !/\bWrite\b/.test(p.hint)), JSON.stringify(PARTS));
 		const brief = parseBrief(text);
 		assert.strictEqual(brief.title, 'Cycle limit');
 		assert.deepStrictEqual(brief.parts.map((p) => [p.name, p.hasText, p.line]),
-			[['Goal', false, 3], ['Facts', false, 7], ['Specs', false, 11], ['Not in scope', false, 15], ['Done when', false, 19]]);
+			[['Goal', false, 5], ['Facts', false, 9], ['Specs', false, 13], ['Not in scope', false, 17], ['Done when', false, 21]]);
 		assert.strictEqual(brief.isComplete, false);
 		assert.ok(isEmptyBrief(text));
 	});
@@ -64,15 +66,18 @@ suite('Brief', () => {
 		assert.deepStrictEqual(foreignLines('Stop now. Go on.', ['Stop now.', 'Go on.']), ['Stop now. Go on.']);
 	});
 
-	test('A brief from the chat: the text of the user, and the headings of the missing parts', () => {
+	test('A brief from the chat: the text of the user, and the headings of the missing parts after the note', () => {
 		const text = briefFromChat('Fix', '## Goal\r\nStop the wait.\r\n## Done when\r\n- A test passes.');
-		assert.ok(text.startsWith('# Brief: Fix\n\n## Goal\nStop the wait.\n## Done when\n- A test passes.\n\n## Facts\n\n<!-- '), text);
+		assert.ok(text.startsWith(`# Brief: Fix\n\n<!-- ${BRIEF_NOTE} -->\n\n## Goal\nStop the wait.\n## Done when\n- A test passes.\n\n## Facts\n\n<!-- `), text);
 		const brief = parseBrief(text);
 		assert.deepStrictEqual(brief.parts.map((p) => [p.id, p.hasText, p.line !== undefined]),
 			[['goal', true, true], ['facts', false, true], ['specs', false, true], ['scope', false, true], ['done', true, true]]);
 		// a text with no headings stays as it is, and the 5 parts come after it
 		const prose = parseBrief(briefFromChat('Fix', 'Stop the wait.'));
 		assert.ok(prose.parts.every((p) => !p.hasText && p.line !== undefined));
+		// a brief with all 5 parts gets no note
+		const all = '## Goal\nG.\n## Facts\nF.\n## Specs\nS.\n## Not in scope\nN.\n## Done when\nD.';
+		assert.strictEqual(briefFromChat('Fix', all), `# Brief: Fix\n\n${all}\n`);
 	});
 
 	test('The line of a quote, and the line of a question', () => {

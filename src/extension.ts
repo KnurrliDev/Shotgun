@@ -1,3 +1,4 @@
+import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { ClaudeConnection, ClaudeState } from './claude/connection';
@@ -10,7 +11,6 @@ import { HookDecorations } from './editor/hooks';
 import { ClaudeLines } from './editor/lines';
 import { StepDecorations } from './editor/steps';
 import { commitMessage } from './git/message';
-import { parseBrief } from './session/brief';
 import { addedLines, buildNext, ChangeMark, CurrentStep, markName, receiptCounts, scopeOf, stateOf } from './session/build';
 import {
 	CALLOUTS_FILE, DEFAULT_PAUSE_SECONDS, DEFAULT_VOICE, factKeys, isVoice, keepUserState, LENS_OF, revealCallouts, updateCallouts, Voice, VOICE_TEXT, VOICES,
@@ -23,7 +23,7 @@ import { orderWarnings } from './session/order';
 import { absolutePath, IS_CASE_SENSITIVE, isCppFile, isInside, projectPath } from './session/paths';
 import { levelOf, PlanPlace } from './session/plan';
 import { Level, LEVEL_INFO, LEVELS } from './session/risk';
-import { GATE_LABEL, stageText } from './session/stages';
+import { GATE_LABEL, STAGE_INFO, stageText } from './session/stages';
 import { messageOf, SessionStore, Snapshot } from './session/store';
 import { findHook, MAX_ANSWER, movedHook } from './session/survey';
 import { BaseApi, markScope } from './tools/build';
@@ -34,6 +34,7 @@ import { PromptLog } from './tools/prompts';
 import { planRisk } from './tools/plan';
 import { EngineApi, engineFacts } from './tools/survey';
 import { shotgunTools } from './tools/tools';
+import { claudeText, HOME_ID, HomeState, HomeView, parseRecent, Project, RECENT_KEY, withRecent } from './views/home';
 import { buildModel, DataFlowView, statusOf } from './views/model';
 import type { FromView, ViewCommand, ViewModel } from './views/protocol';
 import { PANEL_ID, Views } from './views/views';
@@ -86,6 +87,8 @@ class Shotgun implements vscode.Disposable {
 	private readonly store: SessionStore;
 	private readonly claude: ClaudeConnection;
 	private readonly views: Views;
+	// the sidebar in the activity bar (decision 23)
+	private readonly home = new HomeView();
 	// the last prompts of the user, only in memory, for the check of a brief from the chat (decision 12)
 	private readonly prompts = new PromptLog();
 	// the hooks of the survey in the text editor, in the stages 2 and 3, and the steps of the plan in the stages 4 and 5
@@ -126,6 +129,7 @@ class Shotgun implements vscode.Disposable {
 		this.status.command = `${PANEL_ID}.focus`;
 		this.disposables.push(
 			this.log, this.status, this.views, this.hooks, this.steps, this.claudeLines, this.frameHoles, this.calloutMarks,
+			this.home, vscode.window.registerTreeDataProvider(HOME_ID, this.home),
 			new vscode.Disposable(() => clearTimeout(this.pauseTimer)),
 			// the voice of the callouts: a new voice shows the callouts that it allows at once
 			vscode.workspace.onDidChangeConfiguration((e) => {
@@ -801,7 +805,11 @@ class Shotgun implements vscode.Disposable {
 		};
 		return [
 			vscode.commands.registerCommand('shotgun.newTask', run(() => this.newTask())),
-			vscode.commands.registerCommand('shotgun.openTask', run(() => this.openTask())),
+			vscode.commands.registerCommand('shotgun.openTask', run((id?: unknown) => this.openTask(id))),
+			vscode.commands.registerCommand('shotgun.showPanel', run(() => vscode.commands.executeCommand(`${PANEL_ID}.focus`))),
+			vscode.commands.registerCommand('shotgun.showLog', run(() => this.log.show())),
+			vscode.commands.registerCommand('shotgun.openProjectFolder', run(() => this.openProjectFolder())),
+			vscode.commands.registerCommand('shotgun.openRecentProject', run((root?: unknown) => this.openRecentProject(root))),
 			vscode.commands.registerCommand('shotgun.pause', run(() => this.pause(true))),
 			vscode.commands.registerCommand('shotgun.continue', run(() => this.pause(false))),
 			vscode.commands.registerCommand('shotgun.showPage', run(() => this.views.showPage())),
@@ -854,8 +862,17 @@ class Shotgun implements vscode.Disposable {
 		await this.openBrief();
 	}
 
-	private async openTask(): Promise<void> {
+	// With the id of a task, for example from the sidebar, the task becomes the active task, and the panel shows it. With no
+	// id, the user selects the task
+	private async openTask(idArg?: unknown): Promise<void> {
 		const snapshot = this.store.snapshot;
+		if (typeof idArg === 'string') {
+			if (idArg !== snapshot.task?.id) {
+				this.store.openTask(idArg);
+			}
+			await vscode.commands.executeCommand(`${PANEL_ID}.focus`);
+			return;
+		}
 		const items = snapshot.tasks.map((t) => ({
 			label: t.title,
 			description: t.isDone ? 'done' : stageText(t.stage),
@@ -870,6 +887,76 @@ class Shotgun implements vscode.Disposable {
 		if (pick) {
 			this.store.openTask(pick.id);
 		}
+	}
+
+	// Opens the folder of a project in this window, as "File: Open Folder" does
+	private async openProjectFolder(): Promise<void> {
+		const pick = await vscode.window.showOpenDialog({
+			canSelectFiles: false, canSelectFolders: true, canSelectMany: false, title: 'Shotgun: Open Project Folder', openLabel: 'Open',
+		});
+		if (pick?.[0]) {
+			await vscode.commands.executeCommand('vscode.openFolder', pick[0]);
+		}
+	}
+
+	// Opens a recent project in this window. With no folder, the user selects the project
+	private async openRecentProject(rootArg?: unknown): Promise<void> {
+		let root = typeof rootArg === 'string' ? rootArg : undefined;
+		if (root === undefined) {
+			const recent = this.recentProjects();
+			if (recent.length === 0) {
+				void vscode.window.showInformationMessage('Shotgun: no recent project yet. A folder with a task of Shotgun becomes a recent project.');
+				return;
+			}
+			const pick = await vscode.window.showQuickPick(recent.map((p) => ({ label: p.name, description: p.root, root: p.root })), {
+				title: 'Shotgun: Open Recent Project', placeHolder: 'Select the project',
+			});
+			root = pick?.root;
+		}
+		if (!root) {
+			return;
+		}
+		if (!fs.existsSync(root)) {
+			const gone = root;
+			await this.context.globalState.update(RECENT_KEY, parseRecent(this.context.globalState.get(RECENT_KEY)).filter((p) => !isSamePath(p.root, gone)));
+			this.update();
+			throw new Error(`The folder ${root} is not there. Shotgun removed it from the recent projects.`);
+		}
+		await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(root));
+	}
+
+	// The recent projects of all windows that are still on the disk
+	private recentProjects(): Project[] {
+		return parseRecent(this.context.globalState.get(RECENT_KEY)).filter((p) => fs.existsSync(p.root));
+	}
+
+	// A folder with a task of Shotgun goes to the top of the recent projects
+	private rememberProject(root: string | undefined, hasTasks: boolean): void {
+		if (!root || !hasTasks) {
+			return;
+		}
+		const recent = parseRecent(this.context.globalState.get(RECENT_KEY));
+		if (recent[0] && isSamePath(recent[0].root, root)) {
+			return;
+		}
+		void this.context.globalState.update(RECENT_KEY, withRecent(recent, { name: path.basename(root), root }));
+	}
+
+	// The state of the sidebar: the tasks of the project, the guard, the connection to Claude Code and the recent projects
+	private homeState(snapshot: Snapshot, claude: ClaudeState): HomeState {
+		const { root, task } = snapshot;
+		return {
+			...(root ? { project: { name: path.basename(root), root } } : {}),
+			tasks: snapshot.tasks.map((t) => ({
+				id: t.id, title: t.title, isActive: t.id === task?.id, isDone: t.isDone,
+				stage: t.isDone ? 'done' : `${STAGE_INFO[t.stage].number} ${STAGE_INFO[t.stage].name}`,
+				stageText: t.isDone ? 'done' : stageText(t.stage),
+			})),
+			hasLedger: !!task && (task.isDone || task.stage === 'build'),
+			isPaused: snapshot.isPaused,
+			claude: claudeText(claude, snapshot.tasks.length > 0),
+			recent: this.recentProjects(),
+		};
 	}
 
 	private pause(isPaused: boolean): void {
@@ -1429,27 +1516,14 @@ class Shotgun implements vscode.Disposable {
 		this.log.info(`The task ${task.id} passed the gate "${GATE_LABEL['accept-plan']}" with ${plan.steps.length} steps.`);
 	}
 
-	// The gate of stage 1, "The brief is ready"
+	// The gate of stage 1, "The brief is ready". Each part of the brief and each question of Claude is optional, so the
+	// gate never waits (decision 22). The open questions stay in the ledger
 	private async passBriefGate(task: NonNullable<Snapshot['task']>): Promise<void> {
 		const file = this.store.briefFile(task.id)!;
-		// the gate uses the text on the disk, so the text editor saves it first
+		// the survey uses the text on the disk, so the text editor saves it first
 		const doc = this.documentOf(file);
 		if (doc?.isDirty) {
 			await doc.save();
-		}
-		const brief = parseBrief(readText(file) ?? '');
-		const missing = brief.parts.filter((p) => !p.hasText).map((p) => p.name);
-		if (missing.length > 0) {
-			throw new Error(`These parts of the brief have no text: ${missing.join(', ')}. Write them in brief.md, and then select the gate again.`);
-		}
-		const open = this.store.snapshot.questions.filter((q) => q.state === 'open').length;
-		if (open > 0) {
-			const pick = await vscode.window.showWarningMessage(
-				`Claude has ${open === 1 ? '1 open question' : `${open} open questions`} about the brief. Do you want to pass the gate "${GATE_LABEL['brief-ready']}"?`,
-				{ modal: true, detail: 'The open questions stay in the ledger. The survey of Claude starts from the brief as it is.' }, PASS_GATE);
-			if (pick !== PASS_GATE) {
-				return;
-			}
 		}
 		this.store.passGate('brief-ready');
 		this.log.info(`The task ${task.id} passed the gate "${GATE_LABEL['brief-ready']}".`);
@@ -1647,6 +1721,8 @@ class Shotgun implements vscode.Disposable {
 			...(commit ? { commit } : {}),
 		});
 		this.views.update(this.lastModel);
+		this.rememberProject(snapshot.root, snapshot.tasks.length > 0);
+		this.home.update(this.homeState(snapshot, claude));
 		this.hooks.update(snapshot);
 		this.steps.update(snapshot);
 		this.claudeLines.update(snapshot, this.lines);
