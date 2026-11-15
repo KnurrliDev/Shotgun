@@ -95,7 +95,7 @@ The user can change each proposal before the phase that needs it starts.
 | --- | --- | --- |
 | D1 | Decided on 14 November 2026: the user accepted the 5 rules. Decision 14 gives them. | Before phase 5 |
 | D2 | Decided on 14 November 2026: the voice normal, and a pause of 2 seconds. Decision 19 gives them. | Before phase 8 |
-| D3 | The users of Shotgun: only the user, a team, or a public release. This decision sets the release form and the documents. | Before phase 10 |
+| D3 | Decided on 15 November 2026: a public release, as for DataFlow. The VSIX package goes to the GitHub page of the releases, not to the Marketplace, because DataFlow is not in the Marketplace. The documents are as in DataFlow: a short README, `docs/install.md`, `docs/usage.md`, `docs/tools.md` and `docs/development.md`. | Before phase 10 |
 
 ## 5. Terms
 
@@ -631,6 +631,14 @@ Differences from the plan:
 - **Package:** a script for the VSIX package, as in DataFlow.
 - **Full test:** 1 task from the brief to the commit message, with Claude Code in a real project of the user. This test uses the Claude subscription of the user.
 - **D3:** the release form and the documents for the users of Shotgun.
+
+**Status, 15 November 2026:** done, except the full test in a real project of the user:
+
+- D3: the user selected a public release, as for DataFlow. The VSIX package goes to the GitHub page of the releases. It is not in the Marketplace, because DataFlow is not in the Marketplace.
+- Documents: the README is short, with 5 screenshots of run 10 of `scripts/test-claude.mjs`. `docs/install.md`, `docs/usage.md`, `docs/tools.md` and `docs/development.md` give the details. `docs/tools.md` gives the 2 hooks, the 7 skills, and the 19 tools with their parameters. The file `LICENSE` has the MIT License.
+- Package: `npm run package` makes `shotgun-0.1.0.vsix` with `scripts/package-vsix.mjs`: 60 files and 242 KB, for all systems. vsce 4.1.0 is a development dependency, as in DataFlow.
+- A check of the package: a script installed the VSIX packages of DataFlow 0.6.1 and Shotgun 0.1.0 into the test build of VS Code 1.146.0, with its own extensions folder and user data. All 15 checks passed. Shotgun started from the package, and DataFlow got the 19 tools of Shotgun. The panel and the page showed the new task. The connection wrote the plugin of version 0.1.0 with its 2 hooks and 7 skills. The data of Claude Code of the user did not change.
+- Full test: run 10 of `scripts/test-claude.mjs` did 1 task from the brief to the check of the commit message in the fixture of DataFlow. It passed all 151 checks. The user does the full test in a real project with the VSIX before the push of the release.
 
 ## 9. Tests
 

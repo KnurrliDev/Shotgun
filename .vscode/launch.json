@@ -1,7 +1,7 @@
 // The F5 key starts the "Run Extension" configuration.
 // First, it compiles the code. Then it opens a second VS Code window with Shotgun loaded.
 // The title of the second window starts with "[Extension Development Host]".
-// Shotgun needs DataFlow 0.6.0 or a later version in the VS Code of the user.
+// Shotgun needs DataFlow 0.6.1 or a later version in the VS Code of the user.
 {
 	"version": "0.2.0",
 	"configurations": [

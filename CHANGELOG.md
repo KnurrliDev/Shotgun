@@ -2,7 +2,24 @@
 
 ## 0.1.0
 
-This version has no release yet. Each phase of `implementation-plan.md` adds its items.
+The first release of Shotgun. The VSIX package is for all systems, but Shotgun needs DataFlow 0.6.1 or later, and DataFlow works only on Windows x64.
+
+- A task goes through 5 stages: brief, survey, order, plan and build. Only the user passes a gate, and the user can return the task to an earlier stage at any time.
+- Claude Code gives its results to Shotgun with the tools of Shotgun in the MCP server of DataFlow. Shotgun checks each result, and gets the facts of DataFlow for each hook and each step.
+- Shotgun gives each step of the plan a risk level from the facts of DataFlow. The level selects the writer: Claude with a receipt, Claude with a frame that has holes for the user, or the user.
+- The guard denies each file change of Claude in the stages 1 to 4. In stage 5, it lets Claude change only the files of its open step.
+- Callouts show the new facts of DataFlow on the lines of the user. At the gate of each step, Shotgun finds the loose ends of the step.
+- The ledger keeps the decisions of the user and the writer of each changed line. Claude checks the commit message of the user against the diff.
+- The plugin of Shotgun for Claude Code has 2 hooks and 7 skills. **Shotgun: Connect to Claude Code** turns it on.
+
+The sections below give the changes of each phase of `implementation-plan.md`.
+
+### Phase 10: release
+
+- `npm run package` makes the VSIX package `shotgun-<version>.vsix` with `scripts/package-vsix.mjs`. The script removes the folder `out` first, so the package has no files of an old build. vsce 4.1.0 is a new development dependency, as in DataFlow.
+- `package.json` has the repository, the home page and the page of the issues. vsce uses the repository for the links of the README in the package.
+- The README is short, with 5 screenshots of a task in the fixture of DataFlow. The new documents `docs/install.md`, `docs/usage.md`, `docs/tools.md` and `docs/development.md` give the details. `docs/tools.md` gives the 2 hooks, the 7 skills, and each tool of Shotgun with its parameters.
+- The file `LICENSE` has the MIT License.
 
 ### After phase 9: the return to a stage, and the places in DataFlow
 
