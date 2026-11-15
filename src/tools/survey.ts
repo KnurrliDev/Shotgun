@@ -3,6 +3,7 @@ import { absolutePath, IS_CASE_SENSITIVE, isCppFile } from '../session/paths';
 import { stageText } from '../session/stages';
 import type { SessionStore } from '../session/store';
 import { checkSurvey, EngineFile, HookEngine, hookEngineOf, Lines, SurveyHook } from '../session/survey';
+import type { BaseApi } from './build';
 import { stageStart } from './calls';
 
 // The submit tool of stage 2: submit_survey gives the survey of Claude. The tool checks all data and gives all problems
@@ -32,6 +33,9 @@ export interface SurveyDeps {
 	readonly engine: () => EngineApi | undefined; // undefined: no link to DataFlow
 	// the tools of DataFlow that the MCP clients called since a time. undefined: DataFlow does not tell the calls
 	readonly calls?: (since: number) => ReadonlySet<string> | undefined;
+	// the bases of DataFlow, for the steps of the build that a new plan does not keep. undefined: no link to DataFlow
+	readonly base?: () => BaseApi | undefined;
+	readonly log?: (message: string) => void;
 }
 
 const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error));

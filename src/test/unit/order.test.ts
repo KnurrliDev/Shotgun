@@ -68,6 +68,10 @@ suite('Order', () => {
 		});
 		assert.deepStrictEqual(orderWarnings(order, THREE), []);
 		assert.deepStrictEqual(changedTasks(order, THREE), []);
+		// an order before a new survey of Claude, for example after a return to stage 2 (decision 24), starts again from the survey
+		const old = { tasks: [{ id: 'T3', text: 'Leave the state', isNew: false, isLater: false }], nextId: 1, time: '2026-11-14T10:00:00.000Z' };
+		assert.deepStrictEqual(orderOf(old, { ...THREE, time: '2026-11-14T09:00:00.000Z' }).tasks.map((t) => t.id), ['T3']);
+		assert.deepStrictEqual(orderOf(old, { ...THREE, time: '2026-11-14T11:00:00.000Z' }).tasks.map((t) => t.id), ['T1', 'T2', 'T3']);
 	});
 
 	test('A rewritten task and a new task have no survey until Claude surveys their text', () => {

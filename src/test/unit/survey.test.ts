@@ -68,6 +68,8 @@ suite('Survey', () => {
 		assert.strictEqual(stageStart({ created: '2026-11-14T09:00:00.000Z', gates: [] }), Date.parse('2026-11-14T09:00:00.000Z'));
 		assert.strictEqual(stageStart({ created: '2026-11-14T09:00:00.000Z', gates: [{ gate: 'brief-ready', stage: 'survey', time: '2026-11-14T11:00:00.000Z' }] }),
 			Date.parse('2026-11-14T11:00:00.000Z'));
+		// a return to an earlier stage starts the stage again (decision 24)
+		assert.strictEqual(stageStart({ created: '2026-11-14T09:00:00.000Z', gates: [], returned: '2026-11-14T12:00:00.000Z' }), Date.parse('2026-11-14T12:00:00.000Z'));
 		// submit_survey takes the calls since the gate of the brief
 		surveyTask();
 		const called = new Set<string>();

@@ -38,9 +38,12 @@ export interface OrderFile extends Order {
 	readonly time: string;
 }
 
-// The order of the user: order.json, else the tasks of the survey in their sequence
-export function orderOf(file: Order | undefined, survey: Survey | undefined): Order {
-	return file ?? { tasks: (survey?.tasks ?? []).map((t) => ({ id: t.id, text: t.title, isNew: false, isLater: false })), nextId: 1 };
+// The order of the user: order.json, else the tasks of the survey in their sequence. An order before a new survey of
+// Claude, for example after a return to stage 2 (decision 24), is for the tasks of the old survey: the order then starts
+// again from the new survey. The ledger keeps the decisions of the old order
+export function orderOf(file: (Order & { readonly time?: string }) | undefined, survey: (Survey & { readonly time?: string }) | undefined): Order {
+	const isOld = !!file?.time && !!survey?.time && Date.parse(file.time) < Date.parse(survey.time);
+	return file && !isOld ? file : { tasks: (survey?.tasks ?? []).map((t) => ({ id: t.id, text: t.title, isNew: false, isLater: false })), nextId: 1 };
 }
 
 //-------------------

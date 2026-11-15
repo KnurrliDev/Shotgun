@@ -27,13 +27,15 @@ suite('Sidebar', () => {
 				{ id: 'a-log-line', title: 'A log line', stage: 'done', stageText: 'done', isActive: false, isDone: true },
 			],
 			hasLedger: false,
+			canReturn: true,
 			isPaused: false,
 			claude: 'connected',
 			// the same folder with a different case is the same project on Windows and macOS
 			recent: [{ name: 'battery', root: process.platform === 'linux' ? root : root.toUpperCase() }, { name: 'planner', root: other }],
 		};
 		const items = homeItems(state);
-		assert.deepStrictEqual(ids(items), ['newTask', 'tasks', 'showPage', 'openBrief', 'pause', 'showPanel', 'openFolder', 'recent', 'claude', 'log']);
+		assert.deepStrictEqual(ids(items), ['newTask', 'tasks', 'showPage', 'openBrief', 'returnToStage', 'pause', 'showPanel', 'openFolder', 'recent', 'claude', 'log']);
+		assert.strictEqual(items.find((i) => i.id === 'returnToStage')!.description, 'from 2 Survey');
 		// the short stage is the description, and the tooltip has the full stage
 		assert.deepStrictEqual(items.find((i) => i.id === 'tasks')!.children!.map((c) => [c.label, c.description, c.tooltip, c.icon, c.arguments]), [
 			['A cycle limit', '2 Survey', 'The active task: A cycle limit, stage 2 of 5, the survey', 'circle-filled', ['a-cycle-limit']],
@@ -44,7 +46,9 @@ suite('Sidebar', () => {
 		assert.strictEqual(items.find((i) => i.id === 'openBrief')!.description, 'A cycle limit');
 		// stage 5: the ledger. A paused guard gives "Continue"
 		const build = homeItems({ ...state, hasLedger: true, isPaused: true, recent: [] });
-		assert.deepStrictEqual(ids(build), ['newTask', 'tasks', 'showPage', 'openBrief', 'showLedger', 'continue', 'showPanel', 'openFolder', 'claude', 'log']);
+		assert.deepStrictEqual(ids(build), ['newTask', 'tasks', 'showPage', 'openBrief', 'showLedger', 'returnToStage', 'continue', 'showPanel', 'openFolder', 'claude', 'log']);
+		// a task in stage 1 has no earlier stage
+		assert.ok(!ids(homeItems({ ...state, canReturn: false })).includes('returnToStage'));
 		assert.strictEqual(build.find((i) => i.id === 'continue')!.description, 'the guard is off');
 		// a folder with no task: no tasks, no page and no guard
 		assert.deepStrictEqual(ids(homeItems({ ...EMPTY_HOME, project: { name: 'battery', root } })), ['newTask', 'showPanel', 'openFolder', 'claude', 'log']);

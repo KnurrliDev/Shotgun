@@ -320,6 +320,31 @@ suite('Loose ends and ledger', () => {
 		]);
 	});
 
+	test('A return from the build to the plan: the open step goes back to todo, and a new plan keeps the steps with the same title (decisions 24 and 25)', async () => {
+		await buildStage();
+		finishErrand('S1');
+		// Claude opened step 2
+		store.startStep('S2', { writer: 'claude', level: 1, scope: [], base: 'sg.base.S2' });
+		const { task, removed } = store.returnToStage('plan');
+		assert.deepStrictEqual([task.stage, task.isDone, task.gates.map((g) => g.gate), removed?.id, removed?.step.base],
+			['plan', false, ['brief-ready', 'order-tasks', 'accept-order'], 'S2', 'sg.base.S2']);
+		assert.deepStrictEqual(Object.entries(store.snapshot.build!.steps).map(([id, b]) => [id, b.state]), [['S1', 'done']]);
+		assert.strictEqual(decisionText(store.snapshot.decisions.at(-1)!),
+			'You returned the task from stage 5 to stage 4 of 5, the plan. Step S2 was open, and it went back to todo.');
+		// the stage chips of the stages before the plan are returns
+		assert.deepStrictEqual(model().stages.map((s) => s.canReturn), [true, true, true, false, false]);
+		assert.throws(() => store.returnToStage('build'), /It can return only to an earlier stage/);
+		// a new plan with the same title of step 1 keeps its state in the build
+		await call('submit_plan', PLAN);
+		assert.deepStrictEqual(Object.keys(store.snapshot.build!.steps), ['S1']);
+		store.acceptPlan();
+		assert.deepStrictEqual([store.snapshot.task!.stage, store.current?.step.id, store.current?.state], ['build', 'S2', 'todo']);
+		// a return to the plan, and a plan with a different step 1: the state of step 1 goes away
+		store.returnToStage('plan');
+		await call('submit_plan', { steps: PLAN.steps.map((x) => (x.id === 'S1' ? { ...x, title: 'A different first step' } : x)) });
+		assert.deepStrictEqual(Object.keys(store.snapshot.build?.steps ?? {}), []);
+	});
+
 	test('"Hand to Claude": the loose end is the next step of the plan with level 2, and the user tells Claude "Do the loose ends."', async () => {
 		await buildStage();
 		finishErrand('S1');
@@ -361,6 +386,12 @@ suite('Loose ends and ledger', () => {
 			[['E1', 'mechanical', 'handed', 1, 2, 'src/solver.cpp:3-9'], ['E2', 'decision', 'open', 1, undefined, 'README.md:3'], ['E3', 'mechanical', 'open', 1, undefined, undefined]]);
 		assert.deepStrictEqual(['handLooseEnd', 'closeLooseEnd', 'reopenLooseEnd'].map((type) => isFromView({ type, id: 'E1' })), [true, true, true]);
 		assert.deepStrictEqual([isFromView({ type: 'showLedger' }), isFromView({ type: 'copyLedger' }), isFromView({ type: 'handLooseEnd', id: 5 })], [true, true, false]);
+		// a place in DataFlow (decision 26), and a return to a stage (decision 24)
+		assert.deepStrictEqual([
+			isFromView({ type: 'showPlace', path: 'a.cpp', lines: [3, 5], note: 'H1 · A hook' }), isFromView({ type: 'showPlace', path: 'a.cpp', lines: [5, 3], note: '' }),
+			isFromView({ type: 'showPlace', path: 'a.cpp', lines: [3], note: '' }), isFromView({ type: 'returnToStage', stage: 'brief' }),
+			isFromView({ type: 'returnToStage', stage: 'done' }),
+		], [true, false, false, true, false]);
 	});
 
 	test('The ledger: the lines of each writer, the lines of Claude that the user walked, and the Markdown for a pull request', async () => {

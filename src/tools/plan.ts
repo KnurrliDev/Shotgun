@@ -196,7 +196,12 @@ export async function submitPlan(deps: SurveyDeps, args: Record<string, unknown>
 	if (checked.problems.length > 0) {
 		throw new Error(`Shotgun did not take the plan. Correct these problems, and call the tool again:\n${checked.problems.map((p) => `- ${p}`).join('\n')}`);
 	}
-	const file = store.writePlan(checked.plan);
+	const { file, removed } = store.writePlan(checked.plan);
+	// a new plan after a return from the build: the steps of the build that the plan does not keep lose their bases
+	const base = deps.base?.();
+	for (const r of removed.filter((x) => x.step.base)) {
+		await base?.deleteMark(r.step.base!).catch((error: unknown) => deps.log?.(`DataFlow did not delete the base ${r.step.base}: ${messageOf(error)}`));
+	}
 	const risk = await planRisk(deps.engine(), root, checked.plan, readLines);
 	// a new plan can come while DataFlow works. The levels are only for the plan that is there now
 	if (store.snapshot.plan?.time === file.time) {

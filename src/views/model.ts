@@ -14,7 +14,7 @@ import type { LineRun } from '../session/lines';
 import { absolutePath } from '../session/paths';
 import { levelOf, MAX_LEVEL_NOTE, placeName } from '../session/plan';
 import { LEVEL_INFO } from '../session/risk';
-import { GATE_LABEL, STAGE_INFO, STAGES, stageText } from '../session/stages';
+import { GATE_LABEL, returnStages, STAGE_INFO, STAGES, stageText } from '../session/stages';
 import type { Snapshot } from '../session/store';
 import { excerptOf, findHook, Lines } from '../session/survey';
 import type {
@@ -65,6 +65,9 @@ export function decisionText(decision: Decision): string {
 			return `${decision.by === 'claude' ? 'Claude' : 'You'} started the task "${decision.title}".`;
 		case 'gate':
 			return `You passed the gate "${GATE_LABEL[decision.gate]}" of stage ${STAGE_INFO[decision.stage].number}.`;
+		case 'return':
+			return `You returned the task from stage ${STAGE_INFO[decision.from].number} to ${stageText(decision.to)}.`
+				+ (decision.step ? ` Step ${decision.step} was open, and it went back to todo.` : '');
 		case 'pause':
 			return 'You paused the guard for work outside of the task.';
 		case 'continue':
@@ -817,6 +820,7 @@ export function setupRows(input: ModelInput): SetupRow[] {
 function stageViews(snapshot: Snapshot): StageView[] {
 	const task = snapshot.task;
 	const current = task ? STAGES.indexOf(task.stage) : -1;
+	const back = task ? returnStages(task) : [];
 	return STAGES.map((stage, i) => {
 		const info = STAGE_INFO[stage];
 		let state: StageView['state'] = 'todo';
@@ -825,7 +829,7 @@ function stageViews(snapshot: Snapshot): StageView[] {
 		} else if (i === current) {
 			state = 'current';
 		}
-		return { stage, number: info.number, name: info.name, writer: info.writer, state };
+		return { stage, number: info.number, name: info.name, writer: info.writer, state, canReturn: back.includes(stage) };
 	});
 }
 

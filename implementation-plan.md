@@ -61,8 +61,11 @@ These items are not in the scope of version 1:
 21. A loose end that the user hands to Claude becomes the next step of the plan, with risk level 2: after the step that is open, or before the next step that nobody started.
 22. The brief cannot stop the next stage. Each part of the brief is optional, and each question of Claude about the brief is optional. The gate "The brief is ready" never waits. The template tells that each part is optional, and its hints are descriptions, not orders.
 23. Shotgun has a sidebar in the activity bar, as DataFlow has: the tasks of the project, the page, the brief, the ledger, the guard, the panel, a project folder to open, the recent projects, the connection to Claude Code and the log.
+24. The user can return the active task to each earlier stage at any time, also a done task. The work of the later stages stays, and the user passes the gates again. Claude does a stage again only when the user asks. A new survey starts a new order, and a new plan keeps the state of each step of the build with the same id and the same title.
+25. A return from the build closes an open step: the step goes back to todo, its changes stay in the files, and its base goes away. A step with a receipt or with holes keeps its state.
+26. A click on a hook, on a place of a step or on a change shows the place in the side view of DataFlow, with its lines highlighted and a short note. A small button beside it opens the text editor. This changes decision 5: after a click of the user, Shotgun puts 1 note into the side view of DataFlow, in 1 file at a time.
 
-The user gave decision 10 on 13 November 2026, and the decisions 11 to 23 on 14 November 2026. Decision 10 changes the buttons of the canvas that started Claude. Section 12 lists these changes.
+The user gave decision 10 on 13 November 2026, the decisions 11 to 23 on 14 November 2026, and the decisions 24 to 26 on 15 November 2026. Decision 10 changes the buttons of the canvas that started Claude. Section 12 lists these changes.
 
 ## 3. Proposals of this plan
 

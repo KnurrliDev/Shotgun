@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { OrderEditView, OrderTaskView, OrderView, TaskView, ViewModel } from '../views/protocol';
-import { CommandButton, GateBlock, StageBar, TellClaude, WriterBadges } from './common';
+import { CommandButton, GateBlock, linesOf, StageBar, TellClaude, WriterBadges } from './common';
 import { post } from './vscode';
 
 // Stage 3: the order of the user (decision 3). The page shows each task with its text, its hooks, its size and the
@@ -86,8 +86,8 @@ function OrderRow({ task, index, last, view }: { task: OrderTaskView; index: num
 				{tag && <span class={`tag ${task.isSurveyedAgain ? 'claude' : 'user'}`}>{tag}</span>}
 				<span class="order-hooks">
 					{task.hooks.length === 0 ? <span class="muted small">{task.hasSurvey ? 'no hook' : 'no hook yet'}</span> : task.hooks.map((h) => (
-						<button type="button" class="chip mono" title={h.place ? `Open ${h.place}` : 'The survey has no hook with this id'} disabled={!h.path}
-							onClick={() => post({ type: 'openPlace', path: h.path, line: h.line })}>
+						<button type="button" class="chip mono" title={h.place ? `Show ${h.place} in DataFlow` : 'The survey has no hook with this id'} disabled={!h.path}
+							onClick={() => post({ type: 'showPlace', path: h.path, lines: linesOf(h.place, h.line), note: `${h.id} · ${task.text}`.slice(0, 300) })}>
 							{h.id}
 						</button>
 					))}

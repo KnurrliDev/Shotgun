@@ -39,17 +39,26 @@ export function WriterBadges({ writer }: { writer: WriterName }) {
 	return <>{writersOf(writer).map((w) => <span class={`badge ${w}`}>{WRITER_NAMES[w]}</span>)}</>;
 }
 
+// The 5 stages. A click on an earlier stage returns the active task to that stage (decision 24). The extension asks first
 export function StageBar({ stages, isLarge }: { stages: StageView[]; isLarge?: boolean }) {
 	return (
 		<ol class={isLarge ? 'stages large' : 'stages'} aria-label="Stages">
-			{stages.map((s) => (
-				<li class={`stage ${s.state}`} aria-current={s.state === 'current' ? 'step' : undefined}
-					title={`Stage ${s.number}: ${s.name}. Writer: ${writersOf(s.writer).map((w) => WRITER_NAMES[w]).join(' and ')}.`}>
-					<WriterDots writer={s.writer} />
-					<span>{s.number} {s.name}</span>
-					{s.state === 'done' && <span class="check" aria-label="done">✓</span>}
-				</li>
-			))}
+			{stages.map((s) => {
+				const title = `Stage ${s.number}: ${s.name}. Writer: ${writersOf(s.writer).map((w) => WRITER_NAMES[w]).join(' and ')}.`;
+				const content = (
+					<>
+						<WriterDots writer={s.writer} />
+						<span>{s.number} {s.name}</span>
+						{s.state === 'done' && <span class="check" aria-label="done">✓</span>}
+					</>
+				);
+				return (
+					<li class={`stage ${s.state}${s.canReturn ? ' back' : ''}`} aria-current={s.state === 'current' ? 'step' : undefined}
+						title={s.canReturn ? `${title} Click to return the task to this stage.` : title}>
+						{s.canReturn ? <button type="button" class="stage-btn" onClick={() => post({ type: 'returnToStage', stage: s.stage })}>{content}</button> : content}
+					</li>
+				);
+			})}
 		</ol>
 	);
 }
@@ -63,17 +72,56 @@ function ChatIcon() {
 	);
 }
 
-// A request that the user types in Claude Code. A click puts the words into the clipboard. It does not start Claude
-// A place in the project as a link: a click opens the file at the line in the text editor
-export function PlaceLink({ place }: { place: { name: string; path: string; line: number } }) {
+// The lines of a place from its text, for example [85, 170] from "src/battery.cpp:85-170". With no lines in the text: the
+// line of the place
+export function linesOf(name: string, line: number): [number, number] {
+	const m = /:(\d+)(?:-(\d+))?$/.exec(name);
+	const first = m ? Number(m[1]) : line;
+	const last = m?.[2] ? Number(m[2]) : first;
+	return [first, Math.max(first, last)];
+}
+
+// A long path can break after each slash
+function breakable(text: string) {
+	return text.split('/').map((part, i, parts) => (i < parts.length - 1 ? <>{part}/<wbr /></> : part));
+}
+
+// A place in the project as a link (decision 26): a click shows the place in the side view of DataFlow, with its lines
+// highlighted and the note. A file that is not C or C++ opens in the text editor. The small button beside it opens the
+// text editor. editor: the link opens the text editor, for example for a whole file
+export function PlaceLink({ place, note, editor }: { place: { name: string; path: string; line: number }; note?: string; editor?: boolean }) {
+	if (editor) {
+		return (
+			<button type="button" class="link mono small" title="Open in the text editor" onClick={() => post({ type: 'openPlace', path: place.path, line: place.line })}>
+				{breakable(place.name)}
+			</button>
+		);
+	}
 	return (
-		<button type="button" class="link mono small" title="Open in the text editor" onClick={() => post({ type: 'openPlace', path: place.path, line: place.line })}>
-			{/* a long path can break after each slash */}
-			{place.name.split('/').map((part, i, parts) => (i < parts.length - 1 ? <>{part}/<wbr /></> : part))}
-		</button>
+		<span class="place-link">
+			<button type="button" class="link mono small" title="Show in DataFlow, with the lines highlighted"
+				onClick={() => post({ type: 'showPlace', path: place.path, lines: linesOf(place.name, place.line), note: note ?? place.name })}>
+				{breakable(place.name)}
+			</button>
+			<button type="button" class="editor-link" title="Open in the text editor" aria-label={`Open ${place.name} in the text editor`}
+				onClick={() => post({ type: 'openPlace', path: place.path, line: place.line })}>
+				<EditorIcon />
+			</button>
+		</span>
 	);
 }
 
+function EditorIcon() {
+	return (
+		<svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+			stroke-linejoin="round">
+			<path d="M12 20h9" />
+			<path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" />
+		</svg>
+	);
+}
+
+// A request that the user types in Claude Code. A click puts the words into the clipboard. It does not start Claude
 export function TellClaude({ text }: { text: string }) {
 	return (
 		<button type="button" class="tell" title="Copy the request. Then paste it in Claude Code." onClick={() => post({ type: 'copy', text })}>

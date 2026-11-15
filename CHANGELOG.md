@@ -4,6 +4,15 @@
 
 This version has no release yet. Each phase of `implementation-plan.md` adds its items.
 
+### After phase 9: the return to a stage, and the places in DataFlow
+
+- The user can return the active task to each earlier stage at any time, also a done task (decision 24). A click on an earlier stage in the stage bar of the panel or of the page returns the task after a question. **Shotgun: Return to a Stage...** and **Return to a Stage…** in the sidebar do the same. The ledger records each return.
+- The work of the later stages stays, and the user passes the gates again. A new survey of Claude starts a new order. A new plan keeps the state of each step of the build with the same id and the same title, and the other steps lose their bases.
+- A return from the build puts an open step back to todo (decision 25). Its changes stay in the files, and its base goes away.
+- A click on a hook of the survey page shows the hook in the side view of DataFlow, with its lines highlighted and its id and title as the note (decision 26). The hooks of the order page, the places of the steps, the changes of a receipt, the holes and the loose ends do the same. A small pen button beside each place opens the text editor. A file that is not C or C++ opens in the text editor.
+- The notes of Shotgun in DataFlow stay in 1 file at a time. The panel of a receipt tells that the loose ends of Claude go into the tab **Loose ends**.
+- Tests: 132 unit tests. `scripts/test-claude.mjs` checks the highlight of a hook in DataFlow, and a return from stage 2 to stage 1 with the same survey after the gate.
+
 ### After phase 9: the sidebar and the optional brief
 
 - Shotgun has a sidebar in the activity bar, as DataFlow has (decision 23). It shows **New Task…** and the tasks of the project with their stages. A click on a task makes it the active task. For the active task, it shows **Show Page**, **Open Brief**, **Show the Ledger** in stage 5, and **Pause** or **Continue**.

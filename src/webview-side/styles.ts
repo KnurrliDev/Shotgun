@@ -27,6 +27,14 @@ h1, h2 { margin: 0; font-weight: 600; }
 .stage.current { border-color: var(--vscode-focusBorder); color: var(--vscode-foreground); background: var(--vscode-list-inactiveSelectionBackground, transparent); }
 .stage.done { color: var(--vscode-foreground); }
 .stage .check { color: var(--sg-ok); }
+.stage-btn { display: inline-flex; align-items: center; gap: 4px; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
+.stage.back:hover { border-color: var(--vscode-focusBorder); }
+.stage-btn:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
+.place-link { display: inline-flex; align-items: baseline; gap: 2px; max-width: 100%; }
+.editor-link { display: inline-flex; align-self: center; padding: 1px 2px; border: 0; border-radius: 3px; background: none;
+  color: var(--vscode-descriptionForeground); cursor: pointer; }
+.editor-link:hover { color: var(--vscode-foreground); background: var(--vscode-list-hoverBackground, transparent); }
+.editor-link:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
 .large .stage { gap: 6px; padding: 2px 9px; font-size: 12px; }
 .dots { display: inline-flex; }
 .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; }

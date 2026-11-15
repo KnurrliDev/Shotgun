@@ -65,6 +65,11 @@
 				"category": "Shotgun"
 			},
 			{
+				"command": "shotgun.returnToStage",
+				"title": "Return to a Stage...",
+				"category": "Shotgun"
+			},
+			{
 				"command": "shotgun.showPanel",
 				"title": "Show Panel",
 				"category": "Shotgun"
@@ -244,6 +249,10 @@
 		},
 		"menus": {
 			"commandPalette": [
+				{
+					"command": "shotgun.returnToStage",
+					"when": "shotgun.hasTask"
+				},
 				{
 					"command": "shotgun.pause",
 					"when": "shotgun.hasTask && !shotgun.isPaused"

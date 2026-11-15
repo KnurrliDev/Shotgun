@@ -87,9 +87,7 @@ function ChangeCard({ step, change, maxNote, isEditable }: { step: string; chang
 				<span class="mono small"><span class="plus">+{change.added}</span> <span class="minus">−{change.removed}</span></span>
 			</div>
 			<p class="change-place">
-				<button type="button" class="link mono small" title="Open in the text editor" onClick={() => post({ type: 'openPlace', path: change.path, line: change.line })}>
-					{change.place}
-				</button>
+				<PlaceLink place={{ name: change.place, path: change.path, line: change.line }} note={`${change.id} · ${change.title}`} />
 				{change.heat && <span class={`heat ${change.heat.band.replace(' ', '-')}`} title={`${change.heat.function}: heat ${change.heat.score}`}>{change.heat.band}</span>}
 			</p>
 			{change.note && <div class="order-note claude"><span class="badge claude">Model</span><span>{change.note}</span></div>}
@@ -175,14 +173,14 @@ function Receipt({ step, receipt, maxNote }: { step: CurrentStepView; receipt: R
 									{e.place && e.path && (
 										<>
 											{' '}
-											<button type="button" class="link mono small" onClick={() => post({ type: 'openPlace', path: e.path!, line: e.line ?? 1 })}>{e.place}</button>
+											<PlaceLink place={{ name: e.place, path: e.path, line: e.line ?? 1 }} note={e.text} />
 										</>
 									)}
 								</span>
 							</li>
 						))}
 					</ul>
-					<p class="muted small">Places outside of the scope that the step can also need. A later version of Shotgun makes them into steps.</p>
+					<p class="muted small">Places outside of the scope that the step can also need. At the gate of the step, they go into the tab Loose ends.</p>
 				</>
 			)}
 			{receipt.notice && <p class="muted small">DataFlow: {receipt.notice}</p>}
@@ -199,7 +197,7 @@ function HoleDetail({ step, hole }: { step: string; hole: HoleView }) {
 		<div class="hole-detail">
 			<div class="row-head"><span class="name">Hole {hole.n}</span><span class={`hole-state h-${hole.state}`}>{holeStatus(hole)}</span></div>
 			<p class="hole-question">{hole.question}</p>
-			<p class="change-place"><PlaceLink place={{ name: hole.place, path: hole.path, line: hole.line }} /></p>
+			<p class="change-place"><PlaceLink place={{ name: hole.place, path: hole.path, line: hole.line }} note={`Hole ${hole.n} · ${hole.question}`} /></p>
 			{hole.facts && (hole.facts.function || hole.facts.threads.length > 0 || hole.facts.locks.length > 0 || (hole.facts.names?.length ?? 0) > 0) && (
 				<div class="order-note">
 					<span class="badge engine">Engine</span>
@@ -232,12 +230,12 @@ function HoleDetail({ step, hole }: { step: string; hole: HoleView }) {
 			{hole.pointer && (
 				<div class="order-note claude">
 					<span class="badge claude">Model</span>
-					<span>{hole.pointer.text} {hole.pointer.places.map((p) => <PlaceLink place={p} />)}</span>
+					<span>{hole.pointer.text} {hole.pointer.places.map((p) => <PlaceLink place={p} note={hole.pointer!.text} />)}</span>
 				</div>
 			)}
 			{hole.example && (
 				<>
-					<div class="order-note claude"><span class="badge claude">Model</span><span>{hole.example.text} <PlaceLink place={hole.example.place} /></span></div>
+					<div class="order-note claude"><span class="badge claude">Model</span><span>{hole.example.text} <PlaceLink place={hole.example.place} note={hole.example.text} /></span></div>
 					<div class="code small">{hole.example.code.split('\n').map((l) => <div class="code-line"><span class="tx">{l || ' '}</span></div>)}</div>
 				</>
 			)}
@@ -295,9 +293,7 @@ function CurrentStep({ step, request, maxNote }: { step: CurrentStepView; reques
 			<p class="muted">{step.writerText}</p>
 			<p class="places">
 				{step.places.map((p) => (p.isNew ? <span class="mono small">{p.name}</span> : (
-					<button type="button" class="link mono small" title="Open in the text editor" onClick={() => post({ type: 'openPlace', path: p.path, line: p.line })}>
-						{p.name}
-					</button>
+					<PlaceLink place={p} note={`Step ${step.n} of ${step.total} · ${step.title}`} />
 				)))}
 			</p>
 			{(step.writer === 'user' || step.state === 'todo') && (
@@ -349,7 +345,7 @@ function CalloutDetail({ step, callout }: { step: string; callout: CalloutView }
 		<div class={`callout-detail k-${callout.kind}`}>
 			<p class="change-place">
 				<span class={`kind-chip k-${callout.kind}`}>{KIND_TEXT[callout.kind]}</span>
-				<PlaceLink place={{ name: callout.place, path: callout.path, line: callout.line }} />
+				<PlaceLink place={{ name: callout.place, path: callout.path, line: callout.line }} editor />
 			</p>
 			<div class="order-note">
 				<span class="badge engine">Engine</span>
@@ -378,7 +374,7 @@ function AnswerRow({ answer }: { answer: LineAnswerView }) {
 		<li class={`answer-row${answer.resolved ? ' resolved' : ''}`}>
 			<div class="order-note user">
 				<span class="badge user">You</span>
-				<span>{answer.question} <PlaceLink place={{ name: answer.place, path: answer.path, line: answer.line }} /></span>
+				<span>{answer.question} <PlaceLink place={{ name: answer.place, path: answer.path, line: answer.line }} note={answer.question} /></span>
 			</div>
 			{answer.facts.length > 0 && (
 				<div class="order-note"><span class="badge engine">Engine</span><span>{answer.facts.map((f) => <span class="block">{f}</span>)}</span></div>

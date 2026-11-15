@@ -28,7 +28,7 @@ Shotgun is in development. The phases 1 to 9 of 10 are complete:
 - Phase 8: the callouts with the new facts of DataFlow on your lines, and the answers of Claude to your questions about a line.
 - Phase 9: the loose ends of the steps, the ledger of the task, and the check of your commit message by Claude.
 
-After phase 9, Shotgun got a sidebar in the activity bar, and each part of the brief became optional.
+After phase 9, Shotgun got a sidebar in the activity bar, and each part of the brief became optional. You can return a task to an earlier stage at any time, and a click on a hook or a place shows it in DataFlow.
 
 `implementation-plan.md` gives the phases, and `CHANGELOG.md` gives the content of each phase.
 
@@ -69,13 +69,24 @@ After phase 9, Shotgun got a sidebar in the activity bar, and each part of the b
 25. After the last step, select **The task is done**.
 26. Write the commit message in Source Control. Tell Claude "Check my commit message.". Then commit in Source Control.
 27. Follow the panel of Shotgun in the secondary side bar. It shows the next work and the requests for Claude Code.
+28. At any time, click an earlier stage in the stage bar of the panel or of the page to return the task to that stage. Or run **Shotgun: Return to a Stage...**.
+
+## Return to an earlier stage
+
+You can return the active task to an earlier stage at any time, also a done task. Click the stage in the stage bar of the panel or of the page, or run **Shotgun: Return to a Stage...**. Shotgun asks first, and the ledger records the return.
+
+- The work of the later stages stays: the survey, the order, the plan and the build. Pass the gates again to come back. Claude does a stage again only when you ask, for example "Survey my brief.".
+- A new survey of Claude starts a new order, because the old order was for the tasks of the old survey.
+- A new plan of Claude keeps the state of each step of the build with the same id and the same title. The other steps of the build start again.
+- An open step of the build goes back to todo. Its changes stay in the files. A step with a receipt or with the holes of a frame keeps its state.
+- In the stages 1 to 4, the guard denies each change of a file again.
 
 ## The sidebar
 
 The icon of Shotgun in the activity bar opens the sidebar of Shotgun, as DataFlow has its sidebar:
 
 - **New Task…** and the tasks of the project with their stages. A click on a task makes it the active task, and shows the panel.
-- **Show Page**, **Open Brief** and **Show the Ledger** for the active task.
+- **Show Page**, **Open Brief**, **Show the Ledger** and **Return to a Stage…** for the active task.
 - **Pause** or **Continue** for the guard.
 - **Show Panel** for the panel of Shotgun in the secondary side bar.
 - **Open Project Folder…** and **Recent Projects**: the last 10 folders with a task of Shotgun, from all windows. A click opens the folder in this window.
@@ -85,6 +96,7 @@ The icon of Shotgun in the activity bar opens the sidebar of Shotgun, as DataFlo
 | --- | --- |
 | Shotgun: New Task | Makes a task in stage 1 with `brief.md`. The new task becomes the active task. |
 | Shotgun: Open Task | Selects a different task of the folder. |
+| Shotgun: Return to a Stage... | Returns the active task to an earlier stage. The work of the later stages stays. |
 | Shotgun: Show Panel | Shows the panel of Shotgun in the secondary side bar. |
 | Shotgun: Open Project Folder... | Opens the folder of a project in this window. |
 | Shotgun: Open Recent Project... | Opens a recent project with a task of Shotgun in this window. |
@@ -143,6 +155,8 @@ The page of Shotgun shows the words of Claude with the badge **Model**. It shows
 Until the scan of the call graph is complete, the heat can change. The page then marks the heat with "*". At the end of the scan, Shotgun gets the facts again.
 
 In the stages 2 and 3, the text editor shows a line at the left side of each hook. The id and the title of the hook come after its first line. Move the pointer onto a hook to see its facts.
+
+A click on a hook on the page shows its code in the side view of DataFlow. The lines of the hook are highlighted, with the id and the title of the hook as the note. **Open in the text editor** opens the file at the hook. The same is true for the places of the steps on the plan page and in the panel, and for the changes of a receipt: a click shows the place in DataFlow, and the small pen button beside it opens the text editor. The side view of DataFlow shows only C and C++ files, so a different file opens in the text editor. The notes of Shotgun stay in 1 file: a place in a different file removes the notes of the last file.
 
 ## The order
 
@@ -311,7 +325,7 @@ The window uses the DataFlow extension of VS Code. To use DataFlow from its repo
 | Command | Tests |
 | --- | --- |
 | `npm test` | The unit tests in a test build of VS Code. The tests load DataFlow from `../DataFlow`, or from the folder of the environment variable `DATAFLOW_REPO`. If the environment variable `CLAUDE_EXE` gives the CLI of Claude Code, a test also checks the plugin with `claude plugin validate`. |
-| `node scripts/test-claude.mjs <run folder>` | The test with Claude Code. 2 tasks go from the brief to stage 2. The gate of the empty brief is on, and the sidebar shows the task. Task 1 has a brief in a file, and task 2 has a brief from the chat. The guard denies a change in stage 1. Then Claude makes the survey of task 1, and task 1 goes to stage 3. On the order page, the test changes the order. Claude surveys the changed tasks, and task 1 goes to stage 4. Then Claude makes the plan, the test changes the levels, and task 1 goes to stage 5. In the build, a run of Claude Code with no plugins stands in for the user and writes step 1. Claude does step 2 and gives a receipt. The test puts an issue on a change, Claude fixes it, and the test accepts the receipt. Then the test sets step 3 to level 4 and asks for a frame. Claude gives the frame, and the test fills the holes with Tab and the hints. In step 4, the test writes a line with a race. The race shows as a callout, and Claude explains it and answers a question about a line. Then the test ends step 4, hands a loose end to Claude, writes a commit message, and Claude checks the message. Use a new run folder outside of the repository. |
+| `node scripts/test-claude.mjs <run folder>` | The test with Claude Code. 2 tasks go from the brief to stage 2. The gate of the empty brief is on, and the sidebar shows the task. Task 1 has a brief in a file, and task 2 has a brief from the chat. The guard denies a change in stage 1. Then Claude makes the survey of task 1. A click on a hook shows it in DataFlow. Task 1 returns to stage 1 and comes back with the same survey, and then goes to stage 3. On the order page, the test changes the order. Claude surveys the changed tasks, and task 1 goes to stage 4. Then Claude makes the plan, the test changes the levels, and task 1 goes to stage 5. In the build, a run of Claude Code with no plugins stands in for the user and writes step 1. Claude does step 2 and gives a receipt. The test puts an issue on a change, Claude fixes it, and the test accepts the receipt. Then the test sets step 3 to level 4 and asks for a frame. Claude gives the frame, and the test fills the holes with Tab and the hints. In step 4, the test writes a line with a race. The race shows as a callout, and Claude explains it and answers a question about a line. Then the test ends step 4, hands a loose end to Claude, writes a commit message, and Claude checks the message. Use a new run folder outside of the repository. |
 
 NOTE: `scripts/test-claude.mjs` uses the Claude subscription of the user for 12 runs of Claude Code. It does not change the settings of the user.
 

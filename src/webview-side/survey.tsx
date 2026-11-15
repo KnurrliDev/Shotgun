@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import type { HookView, SurveyQuestionView, SurveyView, TaskView, ViewModel } from '../views/protocol';
-import { CommandButton, GateBlock, StageBar, TellClaude, timeText, WriterBadges } from './common';
+import { CommandButton, GateBlock, PlaceLink, StageBar, TellClaude, timeText, WriterBadges } from './common';
 import { post } from './vscode';
 
 // Stage 2: the survey of Claude. The page shows the full survey, and the panel shows a summary. The badge Model marks
@@ -35,6 +35,14 @@ function EngineBadge() {
 	return <span class="badge engine" title="The facts of DataFlow">Engine</span>;
 }
 
+// A click on a hook shows its code in the side view of DataFlow, with the lines highlighted and the hook as the note
+// (decision 26). A hook with lost code shows nothing in DataFlow
+function showHook(hook: HookView): void {
+	if (!hook.isLost) {
+		post({ type: 'showPlace', path: hook.path, lines: hook.lines, note: `${hook.id} · ${hook.title}` });
+	}
+}
+
 // The place of the selected hook: its code, read only, and the facts of DataFlow
 function HookPlace({ hook }: { hook: HookView }) {
 	const lines = hook.lines[0] === hook.lines[1] ? `line ${hook.lines[0]}` : `lines ${hook.lines[0]} to ${hook.lines[1]}`;
@@ -49,6 +57,7 @@ function HookPlace({ hook }: { hook: HookView }) {
 			</p>
 			{hook.isLost && <p class="notice">The code of the hook is not in the file now.</p>}
 			<div class="buttons">
+				<button type="button" class="btn primary small" disabled={hook.isLost} onClick={() => showHook(hook)}>Show in DataFlow</button>
 				<button type="button" class="btn secondary small" onClick={() => post({ type: 'openPlace', path: hook.path, line: hook.lines[0] })}>
 					Open in the text editor
 				</button>
@@ -137,7 +146,13 @@ export function SurveyPage({ task, model }: { task: TaskView; model: ViewModel }
 									</span>
 									<span class="chips">
 										{t.hooks.length === 0 ? <span class="muted small">new files, no hook</span> : t.hooks.map((h) => (
-											<button type="button" class={h === hook?.id ? 'chip on' : 'chip'} onClick={() => setSelected(h)}>{h}</button>
+											<button type="button" class={h === hook?.id ? 'chip on' : 'chip'} onClick={() => {
+												setSelected(h);
+												const x = survey.hooks.find((y) => y.id === h);
+												if (x) {
+													showHook(x);
+												}
+											}}>{h}</button>
 										))}
 									</span>
 								</li>
@@ -148,7 +163,10 @@ export function SurveyPage({ task, model }: { task: TaskView; model: ViewModel }
 						<div class="row-head"><span class="name">Hooks</span><ModelBadge /><span class="muted small">places</span><EngineBadge />
 							<span class="muted small">check and heat</span><span class="muted">{survey.hooks.length}</span></div>
 						{survey.hooks.length === 0 ? <p class="muted">No hooks.</p> : survey.hooks.map((h) => (
-							<button type="button" class={h.id === hook?.id ? 'row on' : 'row'} onClick={() => setSelected(h.id)}>
+							<button type="button" class={h.id === hook?.id ? 'row on' : 'row'} onClick={() => {
+								setSelected(h.id);
+								showHook(h);
+							}}>
 								<span class="id">{h.id}</span>
 								<span class="grow">
 									{h.title}
@@ -169,7 +187,7 @@ export function SurveyPage({ task, model }: { task: TaskView; model: ViewModel }
 										<span class="grow">
 											{f.text}
 											<span class="block">
-												<button type="button" class="link mono small" onClick={() => post({ type: 'openPlace', path: f.path, line: f.line })}>{f.place}</button>
+												<PlaceLink place={{ name: f.place, path: f.path, line: f.line }} note={f.text} />
 												{' '}<span class="chip tool">{f.tool}</span>
 											</span>
 										</span>

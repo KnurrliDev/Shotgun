@@ -24,7 +24,7 @@ function LooseEndCard({ end }: { end: LooseEndView }) {
 				<span class="change-title grow">{end.title}</span>
 				<span class="kind-chip k-info">{SOURCE_TEXT[end.source]}</span>
 			</div>
-			{end.place && end.path && end.line && <p class="change-place"><PlaceLink place={{ name: end.place, path: end.path, line: end.line }} /></p>}
+			{end.place && end.path && end.line && <p class="change-place"><PlaceLink place={{ name: end.place, path: end.path, line: end.line }} note={`${end.id} · ${end.title}`} /></p>}
 			<div class={`order-note${isClaude ? ' claude' : ''}`}>
 				<span class={`badge ${isClaude ? 'claude' : 'engine'}`}>{isClaude ? 'Model' : 'Engine'}</span>
 				<span>{end.proof.map((p) => <span class="block">{p}</span>)}</span>
@@ -123,7 +123,7 @@ export function MessageCheck({ message }: { message: MessageView }) {
 								<span class="point-glyph" title={POINT_TEXT[p.kind]}>{POINT_GLYPH[p.kind]}</span>
 								<span class="grow">
 									{p.text}
-									{p.place && p.path && p.line && <> <PlaceLink place={{ name: p.place, path: p.path, line: p.line }} /></>}
+									{p.place && p.path && p.line && <> <PlaceLink place={{ name: p.place, path: p.path, line: p.line }} note={p.text} /></>}
 								</span>
 							</li>
 						))}
@@ -204,7 +204,7 @@ export function LedgerPage({ title, ledger }: { title: string; ledger: LedgerVie
 								<tbody>
 									{ledger.rows.map((r) => (
 										<tr>
-											<td><PlaceLink place={{ name: r.file, path: r.path, line: 1 }} /></td>
+											<td><PlaceLink place={{ name: r.file, path: r.path, line: 1 }} editor /></td>
 											<td>{r.user}</td>
 											<td>{r.walked}</td>
 											<td class={r.notWalked > 0 ? 'warn' : ''}>{r.notWalked}</td>

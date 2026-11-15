@@ -15,6 +15,7 @@ The full names of the tools start with `mcp__plugin_dataflow_dataflow__shotgun_`
 - Give your results only with the tools of Shotgun. Do not change the files in the folder `.shotgun`.
 - The guard of Shotgun stops each change of a file in the stages 1 to 4. In stage 5, it lets you change only the files of the scope of your open step. If the guard stops a change, do not try a different way, for example a shell command. Tell the user the reason of the guard.
 - A gate is a decision of the user. Only the user selects a gate, with a button of Shotgun. Tell the user which gate comes next.
+- The user can return the task to an earlier stage at any time. Then the task is in that stage again, and the work of the later stages stays. Do a stage again only when the user asks, for example "Survey my brief.".
 - The tools of Shotgun check your data. If a tool gives problems, correct all of them, and call the tool again.
 
 ## The stages

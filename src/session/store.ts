@@ -19,7 +19,7 @@ import {
 import { applyEdit, Order, OrderEdit, OrderFile, orderOf, OrderTask, parseOrder, surveyIds, TaskSurvey } from './order';
 import { LevelsFile, MAX_LEVEL_NOTE, parseLevels, parsePlan, parseRisk, Plan, PlanFile, PlanStep, RiskFile, UserLevel } from './plan';
 import type { Level } from './risk';
-import { Gate, passGate, Stage, START } from './stages';
+import { Gate, passGate, returnTo, Stage, START } from './stages';
 import { Answer, AnswersFile, checkAnswer, EngineFile, parseAnswers, parseEngine, parseSurvey, Survey, SurveyFile, SurveyHook } from './survey';
 
 // The session of Shotgun in a workspace: the tasks, the active task and its decisions. The store keeps the state in
@@ -370,15 +370,28 @@ export class SessionStore {
 	}
 
 	// The plan of Claude for the active task in stage 4. A new plan replaces the old plan. The levels of the user stay
-	// with the ids of their steps
-	writePlan(plan: Plan): PlanFile {
+	// with the ids of their steps. After a return from the build (decision 24), the build keeps the state of each step
+	// with the same id and the same title in the new plan. The result: the plan, and the other steps of the build with
+	// their bases, so that the caller deletes the marks of the bases
+	writePlan(plan: Plan): { file: PlanFile; removed: { id: string; step: BuildStep }[] } {
 		const dir = this.requireDir();
 		const task = this.requireStage('plan', 'Claude gives the plan only in stage 4, the plan.');
+		const old = this.state.plan?.steps ?? [];
+		const isKept = (id: string) => {
+			const before = old.find((s) => s.id === id);
+			return !!before && plan.steps.some((s) => s.id === id && s.title === before.title);
+		};
+		const removed = Object.entries(this.state.build?.steps ?? {}).filter(([id]) => !isKept(id)).map(([id, step]) => ({ id, step }));
 		const file: PlanFile = { version: FILE_VERSION, time: this.time(), steps: plan.steps };
 		writeTextAtomic(path.join(dir, task.id, PLAN_FILE), jsonText(file));
+		if (removed.length > 0) {
+			const steps: Record<string, BuildStep> = { ...(this.state.build?.steps ?? {}) };
+			removed.forEach((r) => delete steps[r.id]);
+			writeTextAtomic(path.join(dir, task.id, BUILD_FILE), jsonText({ version: FILE_VERSION, steps } satisfies BuildFile));
+		}
 		this.append(task.id, { kind: 'plan', by: 'claude', steps: plan.steps.length });
 		this.load();
-		return file;
+		return { file, removed };
 	}
 
 	// The facts of DataFlow and the levels of the rules for the steps of the plan of the active task
@@ -795,6 +808,24 @@ export class SessionStore {
 		writeTextAtomic(path.join(dir, ACTIVE_FILE), jsonText({ version: FILE_VERSION, task: task.id, isPaused } satisfies ActiveFile));
 		this.append(task.id, { kind: isPaused ? 'pause' : 'continue', by: 'user' });
 		this.load();
+	}
+
+	// The user returns the active task to an earlier stage, also a done task (decision 24). The work of the later stages
+	// stays. An open step of the build goes back to todo, and its changes stay in the files (decision 25). The result: the
+	// task, and the removed step with its base, so that the extension deletes the mark of the base
+	returnToStage(stage: Stage): { task: TaskFile; removed?: { id: string; step: BuildStep } } {
+		const dir = this.requireDir();
+		const task = this.requireTask();
+		const progress = returnTo(task, stage);
+		const open = Object.entries(this.state.build?.steps ?? {}).find(([, s]) => s.state === 'open');
+		if (open) {
+			this.removeStep(task.id, open[0]);
+		}
+		const next: TaskFile = { ...task, ...progress, returned: this.time() };
+		writeTextAtomic(path.join(dir, task.id, TASK_FILE), jsonText(next));
+		this.append(task.id, { kind: 'return', by: 'user', from: task.stage, to: stage, ...(open ? { step: open[0] } : {}) });
+		this.load();
+		return { task: next, ...(open ? { removed: { id: open[0], step: open[1] } } : {}) };
 	}
 
 	// Records a gate of the user: the active task goes to the next stage, or it is done after the last gate

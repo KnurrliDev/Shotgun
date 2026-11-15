@@ -8,8 +8,9 @@
 // 3. The test passes the gate of task 1. Then the user gives a brief in the chat, and Claude gives it to Shotgun with
 //    shotgun_submit_brief. Shotgun makes task 2, and the test passes its gate (the condition of phase 2).
 // 4. The test opens task 1 again. "Survey my brief." loads the skill shotgun-survey, and Claude gives the survey with
-//    shotgun_submit_survey. Shotgun adds the facts of DataFlow to each hook. The test answers the questions of the
-//    survey, and passes the gate "Order the tasks" (the condition of phase 3).
+//    shotgun_submit_survey. Shotgun adds the facts of DataFlow to each hook. A click on a hook shows it in DataFlow with
+//    a highlight. The test returns task 1 to stage 1 and passes the gate of the brief again, and the survey stays. The test
+//    answers the questions of the survey, and passes the gate "Order the tasks" (the condition of phase 3).
 // 5. On the order page, the test changes the text of a task, adds a task and moves it. "Survey my changed tasks."
 //    loads the skill shotgun-survey, and Claude surveys the 2 tasks with shotgun_submit_task_survey. Then the test
 //    passes the gate "Accept the order" on the page (the condition of phase 4).
@@ -891,7 +892,8 @@ async function main() {
 			check('The page saves an answer of the user', first?.text === 'The test answers on the page.', readJson(taskFile(TASK_1, 'answers.json')));
 		}
 
-		// the page opens the place of a hook in the text editor, and the text editor shows the hook
+		// a click on a hook shows it in the side view of DataFlow, with its lines highlighted and the hook as the note
+		// (decision 26). Then the page opens the place of the hook in the text editor, and the text editor shows the hook
 		const hook = cppHooks[0] ?? survey?.hooks?.[0];
 		if (hook) {
 			await inWebview('.page', `() => {
@@ -899,6 +901,12 @@ async function main() {
 				row?.click();
 				return !!row;
 			}`);
+			const shownNote = await poll(() => (shotgunLog().includes(`DataFlow shows 1 note of Shotgun in ${path.basename(hook.file)}, lines ${hook.lines[0]} to ${hook.lines[1]}: ${hook.id} · `)
+				? true : undefined), 15);
+			const sideView = await poll(() => inWebview('.lensgroup', '() => true'), 15);
+			check('A click on a hook shows it in the side view of DataFlow, with its lines highlighted and the hook as the note', !!shownNote && !!sideView,
+				{ shownNote, sideView, log: shotgunLog().slice(-600) });
+			await wb.shot('dataflow-hook.png');
 			await sleep(500);
 			await inWebview('.page', `() => {
 				const b = [...d.querySelectorAll('button')].find((x) => x.textContent.includes('Open in the text editor'));
@@ -924,6 +932,27 @@ async function main() {
 			check('The text editor shows the hook with its id and its title', !!label, label);
 			await wb.shot('editor-hook.png');
 		}
+
+		// a click on the stage chip "1 Brief" returns task 1 to stage 1 after a question. The survey stays, and the gate of the
+		// brief takes the task to stage 2 again (decision 24)
+		const surveyText = fs.readFileSync(taskFile(TASK_1, 'survey.json'), 'utf8');
+		await inWebview('.panel', `() => {
+			const b = [...d.querySelectorAll('.stage-btn')].find((x) => x.textContent.includes('1 Brief'));
+			b?.click();
+			return !!b;
+		}`);
+		const askedReturn = await poll(() => clickDialog(wb, 'Return'), 10);
+		const returned = await poll(() => (readJson(taskFile(TASK_1, 'task.json'))?.stage === 'brief' ? readJson(taskFile(TASK_1, 'task.json')) : undefined), 15);
+		check('A click on the stage "1 Brief" returns task 1 to stage 1 after a question, and the ledger records the return', !!askedReturn && !!returned
+			&& returned.gates.length === 0 && ledgerOf(TASK_1).some((d) => d.kind === 'return' && d.from === 'survey' && d.to === 'brief'),
+			{ askedReturn, task: readJson(taskFile(TASK_1, 'task.json')), ledger: ledgerOf(TASK_1).slice(-2) });
+		// the CSS of the panel shows the names of the sections in capitals, so the check ignores the case
+		text = await poll(async () => /parts of the brief/i.test((await panelText()) ?? '') || undefined, 15);
+		await wb.shot('panel-returned.png');
+		await command(wb, 'Shotgun: Pass the Gate');
+		const surveyAgain = await poll(() => (readJson(taskFile(TASK_1, 'task.json'))?.stage === 'survey' ? readJson(taskFile(TASK_1, 'task.json')) : undefined), 15);
+		check('The gate "The brief is ready" takes task 1 to stage 2 again, and the survey stays', !!text && !!surveyAgain
+			&& fs.readFileSync(taskFile(TASK_1, 'survey.json'), 'utf8') === surveyText, { text: !!text, task: readJson(taskFile(TASK_1, 'task.json')) });
 
 		// the other answers with the Command Palette, and the gate
 		for (let i = 1; i < questions.length; i++) {
@@ -1267,9 +1296,10 @@ async function main() {
 			return t?.includes('Accept the receipt') && t.includes(receipt?.changes?.[0]?.title ?? '?') ? t : undefined;
 		}, 15);
 		check('The panel shows the receipt with the gate "Accept the receipt"', !!text, await panelText());
-		// the place of the first change opens in the text editor, with a mark in the gutter for each line of Claude
+		// the editor button of the place of the first change opens the text editor, with a mark in the gutter for each line
+		// of Claude. The link itself shows the place in DataFlow (decision 26)
 		await inWebview('.panel', `() => {
-			const b = d.querySelector('.change .change-place .link');
+			const b = d.querySelector('.change .change-place .editor-link');
 			b?.click();
 			return !!b;
 		}`);
@@ -1432,7 +1462,7 @@ async function main() {
 		const selection = () => wb.evaluate(`[...document.querySelectorAll('.statusbar-item')].map((e) => e.textContent).find((x) => /Ln \\d+, Col \\d+/.test(x)) ?? ''`);
 		const toFill = holes3.length > 1 ? holes3.slice(0, -1) : holes3;
 		await inWebview('.panel', `() => {
-			const b = d.querySelector('.hole-detail .change-place .link');
+			const b = d.querySelector('.hole-detail .change-place .editor-link');
 			b?.click();
 			return !!b;
 		}`);
@@ -1505,7 +1535,9 @@ async function main() {
 		check('lines.json records the lines of the user in the holes', !!userRuns3, runsOfStep3());
 		results.frame.lines = runsOfStep3();
 		const kinds3 = ledgerOf(TASK_1).map((d) => d.kind);
-		check('The ledger records the frame request, the frame, the hints and the gate of step 3', ['frame-request', 'frame', 'hint'].every((k) => kinds3.includes(k))
+		// a frame with only 1 hole gets no hints: the test types the code of its hole
+		check('The ledger records the frame request, the frame, the hints and the gate of step 3',
+			['frame-request', 'frame', ...(holes3.length > 1 ? ['hint'] : [])].every((k) => kinds3.includes(k))
 			&& kinds3.filter((k) => k === 'step-gate').length === 3, kinds3);
 		await wb.shot('panel-build-step-4.png');
 

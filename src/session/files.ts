@@ -51,6 +51,7 @@ export interface TaskFile {
 	readonly stage: Stage;
 	readonly isDone: boolean;
 	readonly gates: readonly GateRecord[];
+	readonly returned?: string; // ISO 8601: the last return of the user to an earlier stage (decision 24). The stage starts then
 }
 
 // A question of Claude about the brief. The user answers in the brief, and then closes the question
@@ -95,6 +96,8 @@ export interface QuestionsFile {
 export type Decision =
 	| { readonly version: 1; readonly time: string; readonly kind: 'task'; readonly by: 'user' | 'claude'; readonly title: string }
 	| { readonly version: 1; readonly time: string; readonly kind: 'gate'; readonly by: 'user'; readonly gate: Gate; readonly stage: Stage }
+	// a return of the user to an earlier stage (decision 24). step: a step of the build that was open, and went back to todo
+	| { readonly version: 1; readonly time: string; readonly kind: 'return'; readonly by: 'user'; readonly from: Stage; readonly to: Stage; readonly step?: string }
 	| { readonly version: 1; readonly time: string; readonly kind: 'pause' | 'continue'; readonly by: 'user' }
 	| { readonly version: 1; readonly time: string; readonly kind: 'deny'; readonly by: 'guard'; readonly tool: string; readonly file: string; readonly reason: string }
 	| { readonly version: 1; readonly time: string; readonly kind: 'brief'; readonly by: 'claude'; readonly lines: number }
@@ -239,7 +242,7 @@ export function parseTask(text: string, id: string): TaskFile {
 	}
 	return {
 		version: FILE_VERSION, id, title: value.title, created: value.created, stage: value.stage, isDone: value.isDone,
-		gates: gates as GateRecord[],
+		gates: gates as GateRecord[], ...(isText(value.returned) ? { returned: value.returned } : {}),
 	};
 }
 
@@ -255,6 +258,10 @@ function parseDecision(value: unknown): Decision | undefined {
 		case 'gate':
 			return value.by === 'user' && isGate(value.gate) && isStage(value.stage)
 				? { version: FILE_VERSION, time, kind: 'gate', by: 'user', gate: value.gate, stage: value.stage } : undefined;
+		case 'return':
+			return value.by === 'user' && isStage(value.from) && isStage(value.to) && (value.step === undefined || isText(value.step))
+				? { version: FILE_VERSION, time, kind: 'return', by: 'user', from: value.from, to: value.to, ...(isText(value.step) ? { step: value.step } : {}) }
+				: undefined;
 		case 'pause':
 		case 'continue':
 			return value.by === 'user' ? { version: FILE_VERSION, time, kind: value.kind, by: 'user' } : undefined;

@@ -2,6 +2,7 @@ import { randomBytes } from 'crypto';
 import * as vscode from 'vscode';
 import { isChangeMark } from '../session/build';
 import { isVoice } from '../session/callouts';
+import { isStage } from '../session/stages';
 import type { FromView, ToView, ViewCommand, ViewModel } from './protocol';
 
 // The 2 webviews of Shotgun: the panel beside the text editor (a webview view in the secondary side bar) and the page
@@ -37,6 +38,11 @@ export function isFromView(value: unknown): value is FromView {
 			return true;
 		case 'openPlace':
 			return typeof m.path === 'string' && Number.isInteger(m.line) && (m.line as number) > 0;
+		case 'showPlace':
+			return typeof m.path === 'string' && Array.isArray(m.lines) && m.lines.length === 2 && m.lines.every((l) => Number.isInteger(l) && l > 0)
+				&& (m.lines[0] as number) <= (m.lines[1] as number) && typeof m.note === 'string' && m.note.length <= 2000;
+		case 'returnToStage':
+			return isStage(m.stage);
 		case 'saveAnswer':
 			return typeof m.id === 'string' && typeof m.text === 'string' && m.text.length <= 4000;
 		case 'editOrder':

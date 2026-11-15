@@ -23,7 +23,7 @@ import { orderWarnings } from './session/order';
 import { absolutePath, IS_CASE_SENSITIVE, isCppFile, isInside, projectPath } from './session/paths';
 import { levelOf, PlanPlace } from './session/plan';
 import { Level, LEVEL_INFO, LEVELS } from './session/risk';
-import { GATE_LABEL, STAGE_INFO, stageText } from './session/stages';
+import { GATE_LABEL, isStage, returnStages, STAGE_INFO, stageText } from './session/stages';
 import { messageOf, SessionStore, Snapshot } from './session/store';
 import { findHook, MAX_ANSWER, movedHook } from './session/survey';
 import { BaseApi, markScope } from './tools/build';
@@ -71,6 +71,10 @@ const COMMIT_POLL_MS = 2000;
 // its state
 const SCAN_WAIT_MS = 30000;
 const SCAN_POLL_MS = 250;
+// The maximum length of a note of Shotgun in the side view of DataFlow
+const MAX_NOTE = 300;
+// The button of the modal message before a return to an earlier stage (decision 24)
+const RETURN = 'Return';
 const ACCEPT_RECEIPT = 'Accept the Receipt';
 const FILL_HOLE = 'Fill the Hole';
 
@@ -89,6 +93,8 @@ class Shotgun implements vscode.Disposable {
 	private readonly views: Views;
 	// the sidebar in the activity bar (decision 23)
 	private readonly home = new HomeView();
+	// the file with the notes of Shotgun in the side view of DataFlow (decision 26)
+	private highlighted: string | undefined;
 	// the last prompts of the user, only in memory, for the check of a brief from the chat (decision 12)
 	private readonly prompts = new PromptLog();
 	// the hooks of the survey in the text editor, in the stages 2 and 3, and the steps of the plan in the stages 4 and 5
@@ -410,6 +416,28 @@ class Shotgun implements vscode.Disposable {
 		if (reason !== undefined) {
 			this.store.closeCallout(stepId, id, reason);
 		}
+	}
+
+	// Shows a place of a hook or of a step in the side view of DataFlow, with its lines highlighted and a note, after a click
+	// of the user (decision 26). The side view shows only C and C++ files, so a different file, or no link to DataFlow, opens
+	// the text editor. The notes of Shotgun stay in 1 file: a place in a different file removes the notes of the last file
+	private async showPlace(file: string, lines: readonly [number, number], note: string): Promise<void> {
+		if (!path.isAbsolute(file) || !this.folders().some((f) => isInside(file, f))) {
+			throw new Error(`Shotgun shows only places in the workspace folders: ${file}`);
+		}
+		const api = this.api;
+		if (!api || !isCppFile(file) || !fs.existsSync(file)) {
+			await this.openPlace(file, lines[0]);
+			return;
+		}
+		const text = note.trim().replace(/\s+/g, ' ');
+		const last = this.highlighted;
+		if (last && !isSamePath(last, file)) {
+			await api.clear({ file: last }).catch((error: unknown) => this.log.warn(`DataFlow did not remove the notes of Shotgun in ${last}: ${messageOf(error)}`));
+		}
+		const result = await api.highlight({ file, ranges: [{ lines: [lines[0], lines[1]], kind: 'info', note: text.length > MAX_NOTE ? `${text.slice(0, MAX_NOTE - 1)}…` : text }] });
+		this.highlighted = file;
+		this.log.info(`DataFlow shows ${result.shown === 1 ? '1 note' : `${result.shown} notes`} of Shotgun in ${path.basename(file)}, lines ${lines[0]} to ${lines[1]}: ${text}`);
 	}
 
 	// Shows the line in the side view of DataFlow with the lens of the fact, after a click of the user
@@ -806,6 +834,7 @@ class Shotgun implements vscode.Disposable {
 		return [
 			vscode.commands.registerCommand('shotgun.newTask', run(() => this.newTask())),
 			vscode.commands.registerCommand('shotgun.openTask', run((id?: unknown) => this.openTask(id))),
+			vscode.commands.registerCommand('shotgun.returnToStage', run((stage?: unknown) => this.returnToStage(stage))),
 			vscode.commands.registerCommand('shotgun.showPanel', run(() => vscode.commands.executeCommand(`${PANEL_ID}.focus`))),
 			vscode.commands.registerCommand('shotgun.showLog', run(() => this.log.show())),
 			vscode.commands.registerCommand('shotgun.openProjectFolder', run(() => this.openProjectFolder())),
@@ -889,6 +918,42 @@ class Shotgun implements vscode.Disposable {
 		}
 	}
 
+	// The user returns the active task to an earlier stage, also a done task (decision 24). With no stage, the user selects
+	// it. The work of the later stages stays, and an open step of the build goes back to todo (decision 25)
+	private async returnToStage(stageArg?: unknown): Promise<void> {
+		const { task, build, plan } = this.store.snapshot;
+		if (!task) {
+			throw new Error('No task is active. Select a task with "Shotgun: Open Task".');
+		}
+		const stages = returnStages(task);
+		if (stages.length === 0) {
+			void vscode.window.showInformationMessage(`Shotgun: the task "${task.title}" is in stage 1, the brief. It has no earlier stage.`);
+			return;
+		}
+		let stage = isStage(stageArg) ? stageArg : undefined;
+		if (stage === undefined) {
+			const pick = await vscode.window.showQuickPick([...stages].reverse().map((s) => ({ label: `${STAGE_INFO[s].number} ${STAGE_INFO[s].name}`, stage: s })), {
+				title: 'Shotgun: Return to a Stage', placeHolder: task.isDone ? `The task "${task.title}" is done` : `The task "${task.title}" is in ${stageText(task.stage)}`,
+			});
+			if (!pick) {
+				return;
+			}
+			stage = pick.stage;
+		}
+		const open = Object.entries(build?.steps ?? {}).find(([, s]) => s.state === 'open')?.[0];
+		const n = open ? (plan?.steps.findIndex((s) => s.id === open) ?? -1) + 1 : 0;
+		const detail = ['The work of the later stages stays. To come back, pass the gates again.',
+			...(open ? [`Step ${n > 0 ? n : open} is open. It goes back to todo, and its changes stay in the files.`] : [])].join(' ');
+		const choice = await vscode.window.showWarningMessage(`Return the task "${task.title}" to ${stageText(stage)}?`, { modal: true, detail }, RETURN);
+		if (choice !== RETURN) {
+			return;
+		}
+		const { removed } = this.store.returnToStage(stage);
+		await this.deleteBase(removed?.step.base);
+		this.log.info(`The task ${task.id} returned to ${stageText(stage)}.${removed ? ` Step ${removed.id} went back to todo.` : ''}`);
+		await this.openUserStep();
+	}
+
 	// Opens the folder of a project in this window, as "File: Open Folder" does
 	private async openProjectFolder(): Promise<void> {
 		const pick = await vscode.window.showOpenDialog({
@@ -953,6 +1018,7 @@ class Shotgun implements vscode.Disposable {
 				stageText: t.isDone ? 'done' : stageText(t.stage),
 			})),
 			hasLedger: !!task && (task.isDone || task.stage === 'build'),
+			canReturn: !!task && returnStages(task).length > 0,
 			isPaused: snapshot.isPaused,
 			claude: claudeText(claude, snapshot.tasks.length > 0),
 			recent: this.recentProjects(),
@@ -1597,6 +1663,12 @@ class Shotgun implements vscode.Disposable {
 					break;
 				case 'openPlace':
 					await this.openPlace(message.path, message.line);
+					break;
+				case 'showPlace':
+					await this.showPlace(message.path, message.lines, message.note);
+					break;
+				case 'returnToStage':
+					await this.returnToStage(message.stage);
 					break;
 				case 'saveAnswer':
 					this.store.setAnswer(message.id, message.text);

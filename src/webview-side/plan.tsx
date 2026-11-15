@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { BuildView, PlanHeatView, PlanStepView, PlanView, TaskView, ToView, ViewModel } from '../views/protocol';
 import { StateChip } from './build';
-import { CommandButton, GateBlock, StageBar, TellClaude, timeText, WriterBadges } from './common';
+import { CommandButton, GateBlock, linesOf, PlaceLink, StageBar, TellClaude, timeText, WriterBadges } from './common';
 import { post } from './vscode';
 
 // Stage 4: the plan of Claude with a risk level for each step (decisions 4, 8, 9 and 14). The badge Model marks the
@@ -131,9 +131,7 @@ function StepDetail({ step, view, build }: { step: PlanStepView; view: PlanView;
 			<p class="muted small">For task {step.task}: {step.taskText}</p>
 			<p class="places">
 				{step.places.map((p) => (p.isNew ? <span class="mono small">{p.name}</span> : (
-					<button type="button" class="link mono small" title="Open in the text editor" onClick={() => post({ type: 'openPlace', path: p.path, line: p.line })}>
-						{p.name}
-					</button>
+					<PlaceLink place={p} note={`Step ${step.n} · ${step.title}`} />
 				)))}
 				{step.hooks.map((h) => <span class="chip tool">{h}</span>)}
 			</p>
@@ -183,6 +181,10 @@ function PlaceCard({ step }: { step: PlanStepView }) {
 					{place.isMoved && <p class="muted small">The code moved after the plan.</p>}
 					{place.isLost && <p class="notice">The code of the place is not in the file now.</p>}
 					<div class="buttons">
+						<button type="button" class="btn primary small" disabled={place.isLost}
+							onClick={() => post({ type: 'showPlace', path: place.path, lines: linesOf(place.name, place.line), note: `Step ${step.n} · ${step.title}` })}>
+							Show in DataFlow
+						</button>
 						<button type="button" class="btn secondary small" onClick={() => post({ type: 'openPlace', path: place.path, line: place.line })}>
 							Open in the text editor
 						</button>

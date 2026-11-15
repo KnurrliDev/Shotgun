@@ -41,12 +41,13 @@ export interface HomeState {
 	readonly project?: Project; // the first folder of the workspace
 	readonly tasks: readonly HomeTask[];
 	readonly hasLedger: boolean; // the active task is in stage 5, or it is done
+	readonly canReturn: boolean; // the active task can return to an earlier stage (decision 24)
 	readonly isPaused: boolean;
 	readonly claude: string; // the state of the connection to Claude Code, for example "connected"
 	readonly recent: readonly Project[]; // the last projects with tasks of Shotgun, the last first
 }
 
-export const EMPTY_HOME: HomeState = { tasks: [], hasLedger: false, isPaused: false, claude: '', recent: [] };
+export const EMPTY_HOME: HomeState = { tasks: [], hasLedger: false, canReturn: false, isPaused: false, claude: '', recent: [] };
 
 export function homeItems(state: HomeState): HomeItem[] {
 	const { project } = state;
@@ -70,6 +71,10 @@ export function homeItems(state: HomeState): HomeItem[] {
 			{ id: 'showPage', label: 'Show Page', icon: 'open-preview', command: 'shotgun.showPage', tooltip: 'Open the page of the active task beside the text editor' },
 			{ id: 'openBrief', label: 'Open Brief', icon: 'note', command: 'shotgun.openBrief', description: active.title },
 			...(state.hasLedger ? [{ id: 'showLedger', label: 'Show the Ledger', icon: 'checklist', command: 'shotgun.showLedger' }] : []),
+			...(state.canReturn ? [{
+				id: 'returnToStage', label: 'Return to a Stage…', icon: 'arrow-left', command: 'shotgun.returnToStage', description: `from ${active.stage}`,
+				tooltip: 'Return the active task to an earlier stage. The work of the later stages stays',
+			}] : []),
 			state.isPaused
 				? { id: 'continue', label: 'Continue', icon: 'debug-continue', command: 'shotgun.continue', description: 'the guard is off' }
 				: { id: 'pause', label: 'Pause', icon: 'debug-pause', command: 'shotgun.pause', description: 'the guard is on' },

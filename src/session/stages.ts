@@ -104,6 +104,25 @@ export function stageText(stage: Stage): string {
 	return `stage ${info.number} of ${STAGES.length}, the ${info.name.toLowerCase()}`;
 }
 
+// The stages that the user can return to (decision 24): each stage before the current stage, and also the current stage of
+// a done task
+export function returnStages(progress: Progress): Stage[] {
+	const index = STAGES.indexOf(progress.stage);
+	return STAGES.filter((_, i) => i < index || (progress.isDone && i === index));
+}
+
+// The state after a return of the user to an earlier stage (decision 24). The task is in that stage again, and it is not
+// done. The progress keeps only the gates before that stage. The ledger keeps all gates and the return
+export function returnTo(progress: Progress, stage: Stage): Progress {
+	if (!returnStages(progress).includes(stage)) {
+		throw new Error(progress.isDone || STAGES.indexOf(stage) < STAGES.indexOf(progress.stage)
+			? `The task cannot return to ${stageText(stage)}.`
+			: `The task is in ${stageText(progress.stage)}. It can return only to an earlier stage.`);
+	}
+	const index = STAGES.indexOf(stage);
+	return { stage, isDone: false, gates: progress.gates.filter((g) => STAGES.indexOf(g.stage) < index) };
+}
+
 // The state after a gate. The gate must be the gate of the current stage, and the task must not be done
 export function passGate(progress: Progress, gate: Gate, time: string): Progress {
 	if (progress.isDone) {

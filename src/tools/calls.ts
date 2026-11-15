@@ -28,9 +28,10 @@ export class ToolCallLog {
 	}
 }
 
-// The start of the current stage of a task: the time of its last gate, else the time of the task
-export function stageStart(task: Pick<TaskFile, 'created' | 'gates'>): number {
+// The start of the current stage of a task: the time of its last gate or of its last return to an earlier stage, else the
+// time of the task
+export function stageStart(task: Pick<TaskFile, 'created' | 'gates' | 'returned'>): number {
 	const last = task.gates[task.gates.length - 1];
-	const time = Date.parse(last ? last.time : task.created);
-	return Number.isFinite(time) ? time : 0;
+	const times = [last ? last.time : task.created, ...(task.returned ? [task.returned] : [])].map((t) => Date.parse(t)).filter(Number.isFinite);
+	return times.length > 0 ? Math.max(...times) : 0;
 }

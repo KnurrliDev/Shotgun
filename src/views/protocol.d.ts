@@ -11,6 +11,7 @@ export interface StageView {
 	name: string;
 	writer: WriterName;
 	state: 'done' | 'current' | 'todo';
+	canReturn: boolean; // the user can return the active task to this stage (decision 24)
 }
 
 export interface TaskView {
@@ -497,6 +498,10 @@ export type FromView =
 	| { type: 'closeQuestion'; id: string }
 	| { type: 'gate' }
 	| { type: 'openPlace'; path: string; line: number }
+	// a click on a hook or on a place of a step: the side view of DataFlow with the lines highlighted and a note (decision 26)
+	| { type: 'showPlace'; path: string; lines: [number, number]; note: string }
+	// a click on a stage chip: the user returns the active task to that stage (decision 24)
+	| { type: 'returnToStage'; stage: StageName }
 	| { type: 'saveAnswer'; id: string; text: string }
 	| { type: 'checkHooks' }
 	| { type: 'editOrder'; edit: OrderEditView }
