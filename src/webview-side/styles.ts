@@ -35,6 +35,7 @@ h1, h2 { margin: 0; font-weight: 600; }
   color: var(--vscode-descriptionForeground); cursor: pointer; }
 .editor-link:hover { color: var(--vscode-foreground); background: var(--vscode-list-hoverBackground, transparent); }
 .editor-link:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
+.editor-place svg { margin-right: 3px; vertical-align: -1px; }
 .large .stage { gap: 6px; padding: 2px 9px; font-size: 12px; }
 .dots { display: inline-flex; }
 .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; }

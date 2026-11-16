@@ -902,6 +902,18 @@ async function main() {
 		// (decision 26). Then the page opens the place of the hook in the text editor, and the text editor shows the hook
 		const hook = cppHooks[0] ?? survey?.hooks?.[0];
 		if (hook) {
+			// a C++ text editor of a different file is on the screen beside the page. Before DataFlow 0.6.2, a click then also
+			// opened the file of the hook in that text editor (decision 34)
+			const otherFile = /battery\.cpp$/.test(hook.file) ? 'include/battery/types.hpp' : 'src/battery.cpp';
+			await command(wb, 'Go to File');
+			await quickInput(wb, otherFile);
+			await sleep(1500);
+			await command(wb, 'View: Split Editor Right');
+			await sleep(1000);
+			await command(wb, 'Shotgun: Show Page');
+			await poll(async () => (await pageText())?.includes(hook.id) && true, 15);
+			const tabLabels = (selector) => wb.evaluate(`[...document.querySelectorAll(${JSON.stringify(`.part.editor ${selector} .label-name`)})].map((e) => e.textContent.trim())`);
+			const visibleBefore = await tabLabels('.tab.active');
 			await inWebview('.page', `() => {
 				const row = [...d.querySelectorAll('.hooks .row')].find((r) => r.querySelector('.id')?.textContent === ${JSON.stringify(hook.id)});
 				row?.click();
@@ -912,6 +924,11 @@ async function main() {
 			const sideView = await poll(() => inWebview('.lensgroup', '() => true'), 15);
 			check('A click on a hook shows it in the side view of DataFlow, with its lines highlighted and the hook as the note', !!shownNote && !!sideView,
 				{ shownNote, sideView, log: shotgunLog().slice(-600) });
+			await sleep(1000);
+			const visibleAfter = await tabLabels('.tab.active');
+			const dataflowTabs = (await tabLabels('.tab')).filter((l) => l.startsWith('DataFlow'));
+			check('The click opens no text editor, and only 1 DataFlow window shows the hook', visibleBefore.includes(path.basename(otherFile))
+				&& !visibleAfter.includes(path.basename(hook.file)) && dataflowTabs.length === 1, { visibleBefore, visibleAfter, dataflowTabs });
 			await wb.shot('dataflow-hook.png');
 			await sleep(500);
 			await inWebview('.page', `() => {
@@ -1554,7 +1571,7 @@ async function main() {
 		const selection = () => wb.evaluate(`[...document.querySelectorAll('.statusbar-item')].map((e) => e.textContent).find((x) => /Ln \\d+, Col \\d+/.test(x)) ?? ''`);
 		const toFill = holes3.length > 1 ? holes3.slice(0, -1) : holes3;
 		await inWebview('.panel', `() => {
-			const b = d.querySelector('.hole-detail .change-place .editor-link');
+			const b = d.querySelector('.hole-detail .change-place .editor-place');
 			b?.click();
 			return !!b;
 		}`);

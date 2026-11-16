@@ -204,14 +204,16 @@ export function LedgerPage({ title, ledger }: { title: string; ledger: LedgerVie
 								<tbody>
 									{ledger.rows.map((r) => (
 										<tr>
-											<td><PlaceLink place={{ name: r.file, path: r.path, line: 1 }} editor /></td>
+											{/* the user reads the file here, so it shows in DataFlow (decision 34) */}
+											<td><PlaceLink place={{ name: r.file, path: r.path, line: r.firstNotWalked ?? 1 }}
+												note={`${r.file}: ${r.user} lines of yours, ${r.walked + r.notWalked} lines of Claude`} /></td>
 											<td>{r.user}</td>
 											<td>{r.walked}</td>
 											<td class={r.notWalked > 0 ? 'warn' : ''}>{r.notWalked}</td>
 											<td>
-												{r.firstNotWalked !== undefined && (
-													<button type="button" class="btn secondary small" title="Open the first line of Claude that you did not walk"
-														onClick={() => post({ type: 'openPlace', path: r.path, line: r.firstNotWalked! })}>
+												{r.firstNotWalkedLines && (
+													<button type="button" class="btn secondary small" title="Show the first lines of Claude that you did not walk in DataFlow"
+														onClick={() => post({ type: 'showPlace', path: r.path, lines: r.firstNotWalkedLines!, note: 'Lines of Claude that you did not walk' })}>
 														Walk
 													</button>
 												)}

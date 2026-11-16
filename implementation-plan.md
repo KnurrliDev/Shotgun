@@ -73,8 +73,9 @@ These items are not in the scope of version 1:
 31. The plan names the open decisions of each step. An open decision is a choice that the brief, the answers of the user and the order do not settle. A step with no open decision gets at most level 2, so Claude writes it, and the user walks the receipt. A step with an open decision keeps the level of the heat. This changes decision 8.
 32. Each open decision of a step becomes 1 hole of its frame, as a whole block, for example a condition with its branch. The user can answer a decision in words on the plan page. Then the decision is no hole, and Claude writes its code. Shotgun refuses a hole that is only a type, a name or a literal.
 33. A step of level 5 stays a step of the user, also with no open decision. The user writes the code with the most risk.
+34. A link to a place shows the place only in the 1 side view of DataFlow. No text editor opens, also when a C or C++ file is on the screen. With no side view, DataFlow opens 1 new side view. A place where the user writes opens the text editor. These places are a hole, the places of a step of the user, and the places of a frame while the user fills its holes. DataFlow 0.6.2 gives `reveal: "side"` for this, and Shotgun needs DataFlow 0.6.2. This changes the decisions 20 and 26.
 
-The user gave decision 10 on 13 November 2026, and the decisions 11 to 23 on 14 November 2026. The user gave the decisions 24 to 26 on 15 November 2026, and the decisions 27 to 33 on 16 November 2026. The decisions 31 to 33 come from 13 frames of the runs of `scripts/test-claude.mjs`. Each of their 27 holes was 1 obvious line, and the text of the step gave most of the answers. Decision 10 changes the buttons of the canvas that started Claude. Section 12 lists these changes.
+The user gave decision 10 on 13 November 2026, and the decisions 11 to 23 on 14 November 2026. The user gave the decisions 24 to 26 on 15 November 2026, and the decisions 27 to 34 on 16 November 2026. The decisions 31 to 33 come from 13 frames of the runs of `scripts/test-claude.mjs`. Each of their 27 holes was 1 obvious line, and the text of the step gave most of the answers. Decision 10 changes the buttons of the canvas that started Claude. Section 12 lists these changes.
 
 ## 3. Proposals of this plan
 
@@ -326,12 +327,13 @@ The guard helps the user, but it is not a security boundary:
 | The loose ends | `getOutline` for the new members, `getMemberSites`, and `getRipple` with the base of the step |
 | The callouts | `getThreads`, `getLogic`, `getHidden` and `getPlace` after `onDidParse` |
 | The state of the engine | `engineState`, `engineError`, `onDidChangeEngineState` |
-| The proof of a callout, after a click of the user | `showLine`, `setLens` |
+| A place, after a click of the user | `highlight` with `reveal: "side"`, and `clear` for the notes in the last file (decision 34) |
+| The proof of a callout, after a click of the user | `showLine` with `reveal: "side"`, `setLens` |
 | The review of stage 6 | `getDiff` with the commit of the gate **Accept the plan** and `allFiles`, and `getRipple` with the same base |
 | The walk of the review | `showDiffWalk` with an id, `reviewStep`, `closeGuide`, and `onDidChangeGuide` for the marks and the notes of the user |
 | The findings in the side view | `highlight` with `actions`, and `onDidInvokeAction` for the buttons **Fix** and **Not a problem** |
 
-Shotgun needs DataFlow 0.6.1, the release with the fixes of the 2 gap lists (decision 20). At the start, Shotgun reads `packageJSON.version` of DataFlow. With an older version, Shotgun shows the reason and stops.
+Shotgun needs DataFlow 0.6.2. DataFlow 0.6.1 has the fixes of the 2 gap lists (decision 20), and DataFlow 0.6.2 adds `reveal: "side"` (decision 34). At the start, Shotgun reads `packageJSON.version` of DataFlow. With an older version, Shotgun shows the reason and stops.
 
 ### 6.9 The writer of each line
 

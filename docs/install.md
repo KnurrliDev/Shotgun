@@ -17,7 +17,7 @@ Shotgun is not in the Visual Studio Marketplace. Shotgun needs DataFlow, and Dat
 
 - Windows 64-bit. Shotgun needs DataFlow, and DataFlow works only on Windows 64-bit.
 - VS Code 1.143 or later.
-- DataFlow 0.6.1 or later. [Install DataFlow](https://github.com/KnurrliDev/DataFlow/blob/master/docs/install.md) tells how to install it.
+- DataFlow 0.6.2 or later. [Install DataFlow](https://github.com/KnurrliDev/DataFlow/blob/master/docs/install.md) tells how to install it.
 - Claude Code 2.1.323 or later, in its extension for VS Code or in a terminal.
 - A C or C++ project with a compile database, as DataFlow needs. A task can also change the other text files of the project, but DataFlow gives no facts for them.
 
@@ -36,7 +36,7 @@ Shotgun is not in the Visual Studio Marketplace. Shotgun needs DataFlow, and Dat
 
 To update Shotgun, install the VSIX of the new release. VS Code replaces the old version.
 
-If DataFlow is older than 0.6.1, the panel of Shotgun tells it, and Claude Code gets no tools of Shotgun. Install a new release of DataFlow.
+If DataFlow is older than 0.6.2, the panel of Shotgun tells it, and Claude Code gets no tools of Shotgun. Install a new release of DataFlow.
 
 ## Connect to Claude Code
 
@@ -66,7 +66,7 @@ Use this method to change Shotgun, or to use code that is not in a release.
 - VS Code 1.143 or later
 - Node.js 22.12 or later, with npm
 - git
-- DataFlow 0.6.1 or later, from a VSIX or from its repository
+- DataFlow 0.6.2 or later, from a VSIX or from its repository
 
 ### Get the source code
 

@@ -20,7 +20,7 @@ Shotgun adds its tools to the MCP server of DataFlow with the API of DataFlow. D
 
 The plugin of Shotgun is in the folder `.shotgun\claude` in your home folder. Claude Code loads it from this local marketplace, so the plugin needs no install. The plugin is on only in the workspace folders with a task of Shotgun.
 
-At each start, the log of Shotgun names the tools, for example "DataFlow 0.6.1 has the tools of Shotgun: shotgun_get_session, …". Run **Shotgun: Show Log** to see the log.
+At each start, the log of Shotgun names the tools, for example "DataFlow 0.6.2 has the tools of Shotgun: shotgun_get_session, …". Run **Shotgun: Show Log** to see the log.
 
 ## The requests for Claude
 

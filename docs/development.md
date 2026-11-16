@@ -42,7 +42,7 @@ This document tells how to change, run, test and release the code of Shotgun. [I
 
 ## Run the extension
 
-1. Install DataFlow 0.6.1 or later in VS Code, or get the repository of DataFlow.
+1. Install DataFlow 0.6.2 or later in VS Code, or get the repository of DataFlow.
 2. Type `npm run compile`.
 3. Open the root folder of the repository in VS Code.
 4. Push F5. The configuration "Run Extension" opens a second window with Shotgun. The title of the second window starts with "[Extension Development Host]".

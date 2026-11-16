@@ -32,7 +32,7 @@ suite('View model', () => {
 			['claude-dataflow', false, 'connectDataFlow'],
 			['claude-shotgun', false, 'connectClaude'],
 		]);
-		assert.match(m.setup[1].text, /DataFlow 0\.5\.0 is too old\. Install DataFlow 0\.6\.1/);
+		assert.match(m.setup[1].text, /DataFlow 0\.5\.0 is too old\. Install DataFlow 0\.6\.2/);
 		assert.strictEqual(m.isReady, false);
 		assert.strictEqual(model(snapshot()).isReady, true);
 		assert.strictEqual(model(snapshot({ root: undefined })).setup[0].isOk, false);

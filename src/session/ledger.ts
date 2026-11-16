@@ -43,6 +43,7 @@ export interface LedgerRow {
 	readonly walked: number;
 	readonly notWalked: number;
 	readonly firstNotWalked?: number; // the first line of Claude that the user did not walk
+	readonly firstNotWalkedLines?: [number, number]; // the lines of the first run of Claude that the user did not walk
 }
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -67,12 +68,13 @@ export function ledgerRows(files: readonly { readonly file: string; readonly run
 	const rows = files.map(({ file, runs }) => {
 		const size = (r: LineRun) => r.lines[1] - r.lines[0] + 1;
 		const notWalkedRuns = runs.filter((r) => r.writer === 'claude' && !isWalked(r, build));
+		const first = [...notWalkedRuns].sort((a, b) => a.lines[0] - b.lines[0])[0];
 		return {
 			file,
 			user: runs.filter((r) => r.writer === 'user').reduce((n, r) => n + size(r), 0),
 			walked: runs.filter((r) => r.writer === 'claude' && isWalked(r, build)).reduce((n, r) => n + size(r), 0),
 			notWalked: notWalkedRuns.reduce((n, r) => n + size(r), 0),
-			...(notWalkedRuns.length > 0 ? { firstNotWalked: Math.min(...notWalkedRuns.map((r) => r.lines[0])) } : {}),
+			...(first ? { firstNotWalked: first.lines[0], firstNotWalkedLines: [first.lines[0], first.lines[1]] as [number, number] } : {}),
 		};
 	}).filter((r) => r.user + r.walked + r.notWalked > 0);
 	return rows.sort((a, b) => b.notWalked - a.notWalked || a.file.localeCompare(b.file));

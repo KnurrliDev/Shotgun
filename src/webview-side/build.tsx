@@ -206,7 +206,8 @@ function HoleDetail({ step, hole }: { step: string; hole: HoleView }) {
 		<div class="hole-detail">
 			<div class="row-head"><span class="name">Hole {hole.n}</span><span class={`hole-state h-${hole.state}`}>{holeStatus(hole)}</span></div>
 			<p class="hole-question">{hole.question}</p>
-			<p class="change-place"><PlaceLink place={{ name: hole.place, path: hole.path, line: hole.line }} note={`Hole ${hole.n} · ${hole.question}`} /></p>
+			{/* the user writes the code of the hole, so its place opens the text editor (decision 34) */}
+			<p class="change-place"><PlaceLink place={{ name: hole.place, path: hole.path, line: hole.line }} editor /></p>
 			{hole.facts && (hole.facts.function || hole.facts.threads.length > 0 || hole.facts.locks.length > 0 || (hole.facts.names?.length ?? 0) > 0) && (
 				<div class="order-note">
 					<span class="badge engine">Engine</span>
@@ -331,8 +332,10 @@ function CurrentStep({ step, request, maxNote }: { step: CurrentStepView; reques
 			<p class="title">{step.title}</p>
 			<p class="muted">{step.writerText}</p>
 			<p class="places">
+				{/* in a step of the user and in the holes of a frame, the user writes, so the places open the text editor (decision 34) */}
 				{step.places.map((p) => (p.isNew ? <span class="mono small">{p.name}</span> : (
-					<PlaceLink place={p} note={`Step ${step.n} of ${step.total} · ${step.title}`} />
+					<PlaceLink place={p} note={`Step ${step.n} of ${step.total} · ${step.title}`}
+						editor={step.writer === 'user' || (step.writer === 'frame' && step.state === 'holes')} />
 				)))}
 			</p>
 			{(step.writer === 'user' || step.state === 'todo') && (

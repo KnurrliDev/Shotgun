@@ -426,6 +426,7 @@ export interface LedgerRowView {
 	walked: number;
 	notWalked: number;
 	firstNotWalked?: number;
+	firstNotWalkedLines?: [number, number]; // the first run of Claude that the user did not walk
 }
 
 // The ledger of the task (phase 9): the decisions, the lines of each writer, and the commit message

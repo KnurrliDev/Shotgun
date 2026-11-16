@@ -416,7 +416,7 @@ suite('Loose ends and ledger', () => {
 			{ file: 'src/c.cpp', runs: [] },
 		];
 		const rows = ledgerRows(files, build);
-		assert.deepStrictEqual(rows, [{ file: 'src/a.cpp', user: 1, walked: 2, notWalked: 3, firstNotWalked: 5 }, { file: 'src/b.cpp', user: 0, walked: 5, notWalked: 0 }]);
+		assert.deepStrictEqual(rows, [{ file: 'src/a.cpp', user: 1, walked: 2, notWalked: 3, firstNotWalked: 5, firstNotWalkedLines: [5, 7] }, { file: 'src/b.cpp', user: 0, walked: 5, notWalked: 0 }]);
 		const markdown = ledgerMarkdown('A cycle limit', ['You passed the gate "The brief is ready" of stage 1.'], rows);
 		assert.match(markdown, /^## A cycle limit\n\n### Decisions of the user\n\n- You passed the gate "The brief is ready" of stage 1\.\n/);
 		assert.match(markdown, /The user wrote 1 line\. Claude wrote 10 lines, and the user walked 7 of them\./);

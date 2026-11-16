@@ -81,6 +81,18 @@ The icon of Shotgun in the activity bar opens the sidebar of Shotgun, as DataFlo
 - **Open Project Folder…** and **Recent Projects**: the last 10 folders with a task of Shotgun, from all windows. A click opens the folder in this window.
 - **Claude Code**, with the state of the connection: a click connects Shotgun to Claude Code. And **Show Log**.
 
+### Links to the code
+
+A link to a place in the code shows the place in the side view of DataFlow, with its lines highlighted and a note. Shotgun uses only 1 side view:
+
+- If the side view is open, it shows the place.
+- If no side view is open, DataFlow opens 1 new side view beside the text editor.
+- No text editor opens, also when a C or C++ file is open in the text editor.
+
+The small pen button beside a link opens the place in the text editor. A place where you write opens in the text editor at once, and a pen icon comes before its name. These places are the places of a step of yours, and the holes and the places of a frame while you fill its holes.
+
+The side view of DataFlow shows only C and C++ files, so a place in a different file opens in the text editor. The notes of Shotgun stay in 1 file: a place in a different file removes the notes of the last file.
+
 ## The brief
 
 In stage 1, you write the brief in `brief.md` of the task. The brief has 5 parts, and each part is optional:
@@ -120,7 +132,7 @@ Until the scan of the call graph is complete, the heat can change. The page then
 
 In the stages 2 and 3, the text editor shows a line at the left side of each hook. The id and the title of the hook come after its first line. Move the pointer onto a hook to see its facts.
 
-A click on a hook on the page shows its code in the side view of DataFlow. The lines of the hook are highlighted, with the id and the title of the hook as the note. **Open in the text editor** opens the file at the hook. The places of the steps and the changes of a receipt work in the same way. A click shows the place in DataFlow, and the small pen button beside the place opens the text editor. The side view of DataFlow shows only C and C++ files, so a different file opens in the text editor. The notes of Shotgun stay in 1 file: a place in a different file removes the notes of the last file.
+A click on a hook on the page shows its code in the side view of DataFlow. The lines of the hook are highlighted, with the id and the title of the hook as the note. The small pen button beside the hook opens the file at the hook in the text editor. The places of the steps and the changes of a receipt work in the same way. [Links to the code](#links-to-the-code) tells more.
 
 ## The order
 
@@ -264,7 +276,7 @@ The tab **Loose ends** of the panel shows them. **Hand to Claude** makes a mecha
 
 ## The ledger and the commit message
 
-The ledger page shows your decisions and the lines of each file. It shows your lines, the lines of Claude that you walked, and the lines of Claude that you did not walk. **Walk** opens the first line of Claude that you did not walk. **Copy for the pull request** puts your decisions and the lines of each writer into the clipboard as Markdown.
+The ledger page shows your decisions and the lines of each file. It shows your lines, the lines of Claude that you walked, and the lines of Claude that you did not walk. A click on a file shows the file in the side view of DataFlow. **Walk** highlights the first lines of Claude that you did not walk in DataFlow. **Copy for the pull request** puts your decisions and the lines of each writer into the clipboard as Markdown.
 
 You write the commit message in the input box of Source Control. The tab **Ledger** of the panel shows the same text. Tell Claude "Check my commit message.". Claude compares the message with the diff. It gives its points with the badge **Model**: what agrees, what is missing, what is wrong, and its questions. If you change the message after the check, the panel tells you that the check is old.
 

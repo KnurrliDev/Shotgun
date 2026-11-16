@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### After phase 11: 1 side view of DataFlow
+
+- A link to a place shows the place only in the 1 side view of DataFlow (decision 34). No text editor opens, also when a C or C++ file is open in the text editor. With no side view, DataFlow opens 1 new side view. Before, a click with a C or C++ file on the screen also opened the place in the text editor.
+- Shotgun needs DataFlow 0.6.2. Shotgun gives `reveal: "side"` to `highlight` and `showLine` of the API of DataFlow.
+- A place where the user writes opens in the text editor, and a pen icon comes before its name. These places are a hole, the places of a step of the user, and the places of a frame while the user fills its holes.
+- On the ledger page, a click on a file shows the file in DataFlow. **Walk** highlights the first lines of Claude that the user did not walk in DataFlow. Before, both opened the text editor.
+- Tests: `scripts/test-claude.mjs` opens a second C++ file in a split text editor before the click on a hook. It checks that the click opens no text editor, and that only 1 side view of DataFlow shows the hook.
+
 ### Phase 11: levels and holes
 
 The 13 frames of the earlier runs of `scripts/test-claude.mjs` had 27 holes, and each hole was 1 obvious line. The survey answers of the user and the text of the step had settled each decision already. Now the heat and the open decisions give the writer of a step, and each hole is an open decision (decisions 31 to 33).

@@ -419,8 +419,10 @@ class Shotgun implements vscode.Disposable {
 	}
 
 	// Shows a place of a hook or of a step in the side view of DataFlow, with its lines highlighted and a note, after a click
-	// of the user (decision 26). The side view shows only C and C++ files, so a different file, or no link to DataFlow, opens
-	// the text editor. The notes of Shotgun stay in 1 file: a place in a different file removes the notes of the last file
+	// of the user (decision 26). Only the 1 side view shows the place, and no text editor opens, also with a C++ text editor
+	// on the screen (decision 34). With no side view, DataFlow opens 1 new side view. The side view shows only C and C++
+	// files, so a different file, or no link to DataFlow, opens the text editor. The notes of Shotgun stay in 1 file: a
+	// place in a different file removes the notes of the last file
 	private async showPlace(file: string, lines: readonly [number, number], note: string): Promise<void> {
 		if (!path.isAbsolute(file) || !this.folders().some((f) => isInside(file, f))) {
 			throw new Error(`Shotgun shows only places in the workspace folders: ${file}`);
@@ -435,12 +437,15 @@ class Shotgun implements vscode.Disposable {
 		if (last && !isSamePath(last, file)) {
 			await api.clear({ file: last }).catch((error: unknown) => this.log.warn(`DataFlow did not remove the notes of Shotgun in ${last}: ${messageOf(error)}`));
 		}
-		const result = await api.highlight({ file, ranges: [{ lines: [lines[0], lines[1]], kind: 'info', note: text.length > MAX_NOTE ? `${text.slice(0, MAX_NOTE - 1)}…` : text }] });
+		const result = await api.highlight({
+			file, ranges: [{ lines: [lines[0], lines[1]], kind: 'info', note: text.length > MAX_NOTE ? `${text.slice(0, MAX_NOTE - 1)}…` : text }], reveal: 'side',
+		});
 		this.highlighted = file;
 		this.log.info(`DataFlow shows ${result.shown === 1 ? '1 note' : `${result.shown} notes`} of Shotgun in ${path.basename(file)}, lines ${lines[0]} to ${lines[1]}: ${text}`);
 	}
 
-	// Shows the line in the side view of DataFlow with the lens of the fact, after a click of the user
+	// Shows the line in the side view of DataFlow with the lens of the fact, after a click of the user. Only the side view
+	// shows the line, and no text editor opens (decision 34)
 	private async showInDataFlow(fileArg: unknown, lineArg: unknown, sourceArg: unknown): Promise<void> {
 		const api = this.api;
 		if (!api) {
@@ -451,7 +456,7 @@ class Shotgun implements vscode.Disposable {
 		if (!path.isAbsolute(file) || !this.folders().some((f) => isInside(file, f)) || line < 1) {
 			throw new Error('Shotgun shows only a line of a file in the workspace folders.');
 		}
-		await api.showLine({ file, line });
+		await api.showLine({ file, line, reveal: 'side' });
 		if (sourceArg === 'threads' || sourceArg === 'logic' || sourceArg === 'hidden') {
 			await api.setLens({ lens: LENS_OF[sourceArg], on: true });
 		}

@@ -29,11 +29,11 @@ The plan names the open decisions of each step: the choices that your brief and 
 
 The guard of Shotgun stops each file change of Claude in the stages 1 to 4. In the build, it lets Claude change only the files of its open step. While you write, Shotgun shows the new facts of DataFlow on your lines as callouts, for example a race. The ledger keeps your decisions and the writer of each changed line.
 
-Shotgun needs DataFlow 0.6.1 or later, VS Code 1.143 or later, and Claude Code 2.1.323 or later. DataFlow works only on Windows 64-bit, so Shotgun works only there too.
+Shotgun needs DataFlow 0.6.2 or later, VS Code 1.143 or later, and Claude Code 2.1.323 or later. DataFlow works only on Windows 64-bit, so Shotgun works only there too.
 
 ## Quickstart
 
-1. Install DataFlow 0.6.1 or later. [Install DataFlow](https://github.com/KnurrliDev/DataFlow/blob/master/docs/install.md) tells how.
+1. Install DataFlow 0.6.2 or later. [Install DataFlow](https://github.com/KnurrliDev/DataFlow/blob/master/docs/install.md) tells how.
 2. Download the VSIX file of the [latest release](https://github.com/KnurrliDev/Shotgun/releases/latest) of Shotgun. In VS Code, install it with **Extensions: Install from VSIX…**.
 3. Open the folder of a C or C++ project with a compile database.
 4. Open a C++ file. DataFlow asks if it can connect to Claude Code. Click **Connect**. If DataFlow does not ask, run **DataFlow: Connect to Claude Code**.

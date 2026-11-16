@@ -86,14 +86,16 @@ function breakable(text: string) {
 	return text.split('/').map((part, i, parts) => (i < parts.length - 1 ? <>{part}/<wbr /></> : part));
 }
 
-// A place in the project as a link (decision 26): a click shows the place in the side view of DataFlow, with its lines
-// highlighted and the note. A file that is not C or C++ opens in the text editor. The small button beside it opens the
-// text editor. editor: the link opens the text editor, for example for a whole file
+// A place in the project as a link (decision 26): a click shows the place only in the side view of DataFlow, with its
+// lines highlighted and the note (decision 34). A file that is not C or C++ opens in the text editor. The small button
+// beside it opens the text editor. editor: a place where the user writes, for example a hole or a step of the user. The
+// link opens the text editor, and the pen shows it
 export function PlaceLink({ place, note, editor }: { place: { name: string; path: string; line: number }; note?: string; editor?: boolean }) {
 	if (editor) {
 		return (
-			<button type="button" class="link mono small" title="Open in the text editor" onClick={() => post({ type: 'openPlace', path: place.path, line: place.line })}>
-				{breakable(place.name)}
+			<button type="button" class="link mono small editor-place" title="Open in the text editor: you write here"
+				onClick={() => post({ type: 'openPlace', path: place.path, line: place.line })}>
+				<EditorIcon />{breakable(place.name)}
 			</button>
 		);
 	}
