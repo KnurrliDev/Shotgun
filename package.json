@@ -2,7 +2,7 @@
 	"name": "shotgun",
 	"displayName": "Shotgun",
 	"description": "Pair programming with Claude Code in 5 stages: brief, survey, order, plan and build. You make the decisions, and you write the steps with the most risk.",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"publisher": "KnurrliDev",
 	"license": "MIT",
 	"private": true,

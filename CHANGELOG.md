@@ -1,6 +1,17 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
+
+Shotgun 0.2.0 needs DataFlow 0.6.2 or later. The open decisions of the plan now select the writer of each step, and each hole of a frame is an open decision. A link shows a place only in the 1 side view of DataFlow.
+
+- The plan names the open decisions of each step: the choices that the brief, the answers and the order do not settle. A step with no open decision gets at most level 2, so Claude writes it. A step of level 5 stays a step of the user.
+- Each open decision is 1 hole of the frame. Shotgun refuses a hole that is only a type, a name, a literal or a list of parameters.
+- On the plan page, the user can answer a decision or add a decision. In a step of level 1 or 2, the receipt shows the choice of Claude for each open decision.
+- A link to a place shows the place only in the side view of DataFlow, and no text editor opens. A place where the user writes opens the text editor.
+- A plan of Shotgun 0.1.0 has no open decisions, and its steps keep the level of the heat.
+- After the update, start a new session of Claude Code, so that it loads the new skills of Shotgun.
+
+The sections below give the changes of phase 11, and the changes after it.
 
 ### After phase 11: 1 side view of DataFlow
 

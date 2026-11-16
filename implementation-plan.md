@@ -418,7 +418,7 @@ Each phase ends with its tests, its documents and an item of the changelog. The 
 | 10 Release | Documents, VSIX package, a full test with Claude Code | Small | Phases 1 to 9, D3 |
 | 11 Levels and holes | The level from the heat and the open decisions, `insert` for a new data member, and holes for the open decisions | Medium | Phase 10, decisions 31 to 33 |
 | 12 Review | Stage 6: the review of Claude with `get_review` and `submit_review`, the walk in DataFlow, the decisions about the findings, and the gate | Large | Phase 10, decisions 27 to 30 |
-| 13 Fixes | The fix steps in stage 6, the next rounds of the review, the commit message in stage 6, a full test, and release 0.2.0 | Medium | Phase 12 |
+| 13 Fixes | The fix steps in stage 6, the next rounds of the review, the commit message in stage 6, a full test, and release 0.3.0 | Medium | Phase 12 |
 
 ### Phase 0: spikes
 
@@ -761,6 +761,14 @@ The work of this phase:
 
 Open item: only the unit tests checked the choices of Claude in a receipt. In this run, step 2 had no open decision, and the test does not build step 5.
 
+**Release 0.2.0, 16 November 2026:** Shotgun 0.2.0 has phase 11 and decision 34, and needs DataFlow 0.6.2. The user selected the version 0.2.0, so the release of stage 6 becomes 0.3.0 (phase 13).
+
+- Tests: `scripts/test-claude.mjs` passed all 157 checks with DataFlow 0.6.2, and 136 unit tests passed. A click on a hook opened no text editor, also with a split text editor of a different C++ file on the screen. Only 1 side view of DataFlow showed the hook.
+- 2 checks of phase 11 did not run, because of the plan of Claude in this run. No step after step 5 had an open decision. At the gate, no step of Claude had an open decision, so the gate did not ask first.
+- Package: `npm run package` makes `shotgun-0.2.0.vsix`: 60 files and 254 KB.
+- A check of the package: a script installed the VSIX packages of DataFlow 0.6.2 and Shotgun 0.2.0 into a test build of VS Code 1.146.0. All 15 checks passed. DataFlow got the 19 tools of Shotgun, and the connection wrote the plugin of version 0.2.0. The data of Claude Code of the user did not change.
+- Full test: as for release 0.1.0, the user does the full test in a real project with the VSIX before the push of the release.
+
 ### Phase 12: review
 
 - **Stages:** `STAGES` gets `review`. The gate of stage 5 becomes **The build is done**, and stage 6 has the gate **The task is done** (P16). A done task of version 0.1.0 stays done (P25). The stage bar, the sidebar, the status bar and the context of Claude show 6 stages.
@@ -780,7 +788,7 @@ Open item: only the unit tests checked the choices of Claude in a receipt. In th
 - **Rounds:** "Review the fixes." reviews only the new and the changed hunks, and checks each fixed finding (P23). The diff walk of the new round replaces the old walk.
 - **Commit message and ledger:** the check of the commit message works in stage 6. **Copy for the pull request** adds the review (P24).
 - **Full test:** `scripts/test-claude.mjs` adds stage 6. Claude reviews the fixture task. The test walks the steps, and makes a fix step of a finding. Claude does the fix, and "Review the fixes." checks it. Then the test ends the task, and Claude checks the commit message.
-- **Release:** the documents and the skills name 6 stages, and the changelog gives version 0.2.0.
+- **Release:** the documents and the skills name 6 stages, and the changelog gives version 0.3.0.
 - **Done when:** a fix of Claude and a fix of the user go through stage 6 with a receipt and with callouts. The second round shows the fixed finding as fixed.
 
 ## 9. Tests
