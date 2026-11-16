@@ -140,10 +140,10 @@ suite('Callouts', () => {
 			await call('submit_plan', {
 				steps: [{
 					id: 'S1', title: 'The limit in the loop', task: 'T1', hooks: ['H1'], text: 'Stop the loop at the limit.', checks: ['The project builds.'],
-					places: [{ file: 'src/solver.cpp', lines: [5, 7], code: 'for (int i = 0; i < plan.steps; ++i)' }],
+					places: [{ file: 'src/solver.cpp', lines: [5, 7], code: 'for (int i = 0; i < plan.steps; ++i)' }], decisions: [],
 				}, {
 					id: 'S2', title: 'The note', task: 'T2', hooks: ['H2'], text: 'Write the limit.', checks: ['The README tells the limit.'],
-					places: [{ file: 'README.md', lines: [3, 3], code: 'It has no limit.' }],
+					places: [{ file: 'README.md', lines: [3, 3], code: 'It has no limit.' }], decisions: [],
 				}],
 			});
 			store.setLevel('S1', 5);

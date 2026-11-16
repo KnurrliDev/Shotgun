@@ -21,7 +21,7 @@ import { LINES_FILE, LineStore } from './session/lines';
 import { claudeEnds, LooseFind } from './session/loose';
 import { orderWarnings } from './session/order';
 import { absolutePath, IS_CASE_SENSITIVE, isCppFile, isInside, projectPath } from './session/paths';
-import { levelOf, PlanPlace } from './session/plan';
+import { levelOf, openDecisions, PlanPlace, writerOf } from './session/plan';
 import { Level, LEVEL_INFO, LEVELS } from './session/risk';
 import { GATE_LABEL, isStage, returnStages, STAGE_INFO, stageText } from './session/stages';
 import { messageOf, SessionStore, Snapshot } from './session/store';
@@ -1101,7 +1101,7 @@ class Shotgun implements vscode.Disposable {
 		const isEditable = (id: string) => task.stage === 'plan' || stateOf(build, id) === 'todo'
 			|| (stateOf(build, id) === 'open' && build?.steps[id]?.writer === 'user');
 		const items = plan.steps.map((s, i) => {
-			const l = levelOf(s.id, risk, levels);
+			const l = levelOf(s, risk, levels);
 			return {
 				label: `${i + 1}. ${s.title}`,
 				description: l.level ? `level ${l.level}${l.user ? `, the rules gave ${l.rule ?? 'no level'}` : ''}` : 'no level yet',
@@ -1132,6 +1132,20 @@ class Shotgun implements vscode.Disposable {
 		this.isOpeningStep = true;
 		try {
 			const removed = this.store.setLevel(id, level);
+			await this.deleteBase(removed?.base);
+		} finally {
+			this.isOpeningStep = isBlocked;
+		}
+		await this.openUserStep();
+	}
+
+	// A change of the decisions of a step (P29). An answer can change the writer of the step (decision 31). In stage 5, a step
+	// with a new writer starts again, as after a new level
+	private async changeDecision(change: () => { readonly base?: string } | undefined): Promise<void> {
+		const isBlocked = this.isOpeningStep;
+		this.isOpeningStep = true;
+		try {
+			const removed = change();
 			await this.deleteBase(removed?.base);
 		} finally {
 			this.isOpeningStep = isBlocked;
@@ -1568,15 +1582,28 @@ class Shotgun implements vscode.Disposable {
 		this.log.info(`The task ${task.id} passed the gate "${GATE_LABEL['accept-order']}" with ${plan.length} tasks in the plan.`);
 	}
 
-	// The gate of stage 4, "Accept the plan". Each step needs a level: the level of the rules, or a level of the user
-	private passPlanGate(task: NonNullable<Snapshot['task']>): void {
+	// The gate of stage 4, "Accept the plan". Each step needs a level: the level of the rules, or a level of the user. An open
+	// decision in a step of Claude is a decision of Claude in its errand, so a modal message names these decisions first (P31)
+	private async passPlanGate(task: NonNullable<Snapshot['task']>): Promise<void> {
 		const { plan, risk, levels } = this.store.snapshot;
 		if (!plan) {
 			throw new Error('The active task has no plan. Ask Claude for the plan first, for example with "Make the plan."');
 		}
-		const waiting = plan.steps.filter((s) => levelOf(s.id, risk, levels).level === null).map((s) => s.id);
+		const waiting = plan.steps.filter((s) => levelOf(s, risk, levels).level === null).map((s) => s.id);
 		if (waiting.length > 0) {
 			throw new Error(`The steps ${waiting.join(', ')} have no level yet. Wait for the end of the scan of the call graph, or set their levels.`);
+		}
+		const ofClaude = plan.steps.flatMap((s, i) => (writerOf(levelOf(s, risk, levels).level) === 'claude'
+			? openDecisions(s, levels).map((d) => `Step ${i + 1}, ${s.title}: ${d.question}`) : []));
+		if (ofClaude.length > 0) {
+			const count = ofClaude.length === 1 ? '1 open decision is' : `${ofClaude.length} open decisions are`;
+			const pick = await vscode.window.showWarningMessage(
+				`${count} in steps of Claude. Claude decides ${ofClaude.length === 1 ? 'it' : 'them'} in its errands. Do you want to pass the gate "${GATE_LABEL['accept-plan']}"?`,
+				{ modal: true, detail: `${ofClaude.join('\n')}\n\nYou can answer a decision on the plan page first, or raise the level of its step. The receipt shows each choice of Claude.` },
+				PASS_GATE);
+			if (pick !== PASS_GATE) {
+				return;
+			}
 		}
 		this.store.acceptPlan();
 		this.log.info(`The task ${task.id} passed the gate "${GATE_LABEL['accept-plan']}" with ${plan.steps.length} steps.`);
@@ -1685,6 +1712,15 @@ class Shotgun implements vscode.Disposable {
 					break;
 				case 'setLevelNote':
 					this.store.setLevelNote(message.step, message.note);
+					break;
+				case 'answerDecision':
+					await this.changeDecision(() => this.store.answerDecision(message.step, message.decision, message.text));
+					break;
+				case 'addDecision':
+					await this.changeDecision(() => this.store.addDecision(message.step, message.question));
+					break;
+				case 'removeDecision':
+					await this.changeDecision(() => this.store.removeDecision(message.step, message.decision));
 					break;
 				case 'checkLevels':
 					await this.checkRisk(true);

@@ -14,9 +14,11 @@
 // 5. On the order page, the test changes the text of a task, adds a task and moves it. "Survey my changed tasks."
 //    loads the skill shotgun-survey, and Claude surveys the 2 tasks with shotgun_submit_task_survey. Then the test
 //    passes the gate "Accept the order" on the page (the condition of phase 4).
-// 6. "Make the plan." loads the skill shotgun-plan, and Claude gives the steps with shotgun_submit_plan. The rules give
-//    each step a level from the facts of DataFlow. The test changes a level and writes a note on the page, and passes
-//    the gate "Accept the plan" (the condition of phase 5). It sets step 1 to level 4, and steps 2 and 5 to level 2 first.
+// 6. "Make the plan." loads the skill shotgun-plan, and Claude gives the steps with their open decisions with
+//    shotgun_submit_plan. The rules give each step a level from the facts of DataFlow and from its open decisions, and a
+//    step that adds a data member gets level 2 (phase 11). The test changes a level and writes a note on the page. It adds
+//    a decision to step 3, and answers a decision of a later step. It sets step 1 to level 4, and steps 2 and 5 to level 2.
+//    Then it passes the gate "Accept the plan" (the condition of phase 5).
 // 7. In stage 5, Shotgun opens step 1 for the user. A run of Claude Code with no plugins stands in for the user and
 //    does the step, because step 2 can need its work. The test passes "The step is done". Then "Do step 2." loads the
 //    skill shotgun-errand: Claude opens the step, changes its scope, and gives the receipt. The test puts the marks and
@@ -24,9 +26,10 @@
 // 8. "Fix the issues of step 2." opens the step again, and Claude gives a new receipt. The test marks each change OK,
 //    and passes "Accept the receipt" (the condition of phase 6).
 // 9. In stage 5, the test sets step 3 to level 4, and selects "I want a frame". "Give me a frame for step 3." loads the
-//    skill shotgun-frame, and Claude gives the frame with shotgun_submit_frame. The test goes to the holes with Tab and
-//    types their code. The last hole gets the nudge and then the answer of Claude. The gate "The step is done" ends the
-//    step (the condition of phase 7).
+//    skill shotgun-frame, and Claude gives the frame with shotgun_submit_frame: 1 hole for each open decision of the step,
+//    and no hole that is only a type, a name or a literal (phase 11). The test goes to the holes with Tab and types their
+//    code. The last hole gets the nudge and then the answer of Claude. The gate "The step is done" ends the step (the
+//    condition of phase 7).
 // 10. The test sets step 4 to level 4, and writes a line in process() that makes a race with the worker thread. At the
 //    pause, the race shows as a problem callout (the condition of phase 8). "Explain the callout ..." and a question
 //    about a line load the skill shotgun-explain. The test closes the callout with "Not a problem" and a reason.
@@ -97,6 +100,9 @@ const CHAT_PROMPT = 'Here is my brief for a new Shotgun task, a log line for the
 	+ 'Not in scope: A new log file. Done when: A test reads the log line. Give this brief to Shotgun.';
 // The parser of the brief of Shotgun, from the build. The test runs after "npm run compile"
 const { foreignLines, parseBrief } = createRequire(import.meta.url)(path.join(repo, 'out', 'session', 'brief.js'));
+// The rules of the levels with the open decisions, and the check of an obvious hole (phase 11)
+const { levelOf, openDecisions } = createRequire(import.meta.url)(path.join(repo, 'out', 'session', 'plan.js'));
+const { isObviousAnswer } = createRequire(import.meta.url)(path.join(repo, 'out', 'session', 'frame.js'));
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const newest = (dir, prefix) => fs.readdirSync(dir).filter((d) => d.startsWith(prefix))
@@ -1101,13 +1107,23 @@ async function main() {
 			return r && steps.every((s) => r.steps?.[s.id]?.level) ? r : undefined;
 		}, 60);
 		check('The rules give each step a level from the facts of DataFlow', !!risk, readJson(taskFile(TASK_1, 'risk.json')));
+		// the open decisions of each step (decision 31), and a step that adds a data member next to the other members (P26)
+		const levelsNow = () => readJson(taskFile(TASK_1, 'levels.json'));
+		check('Each step of the plan gives its open decisions', steps.every((s) => Array.isArray(s.decisions)), steps.map((s) => [s.id, s.decisions]));
+		const memberSteps = steps.filter((s) => s.places.length > 0 && s.places.every((pl) => pl.lines && /types\.hpp$/.test(pl.file)));
+		check('A step that adds a data member has a place with insert, and gets level 2', memberSteps.length > 0
+			&& memberSteps.every((s) => s.places.every((pl) => pl.insert === true) && (risk?.steps?.[s.id]?.level ?? 9) <= 2),
+			memberSteps.map((s) => ({ id: s.id, places: s.places, level: risk?.steps?.[s.id]?.level, reasons: risk?.steps?.[s.id]?.reasons })));
 		results.plan = {
-			steps: steps.map((s) => ({
-				id: s.id, task: s.task, title: s.title, places: s.places.map((p) => (p.lines ? `${p.file}:${p.lines[0]}-${p.lines[1]}` : `${p.file} (new)`)),
-				level: risk?.steps?.[s.id]?.level ?? null, reasons: risk?.steps?.[s.id]?.reasons ?? [],
-			})),
+			steps: steps.map((s) => {
+				const l = risk ? levelOf(s, risk, levelsNow()) : undefined;
+				return {
+					id: s.id, task: s.task, title: s.title, places: s.places.map((p) => (p.lines ? `${p.file}:${p.lines[0]}-${p.lines[1]}${p.insert ? ' (insert)' : ''}` : `${p.file} (new)`)),
+					heat: l?.heat ?? null, level: l?.rule ?? null, decisions: (s.decisions ?? []).map((d) => d.question), reasons: risk?.steps?.[s.id]?.reasons ?? [],
+				};
+			}),
 		};
-		console.log(`INFO The plan: ${JSON.stringify(results.plan.steps.map((s) => `${s.id} ${s.task} ${s.level} ${s.places.join(' ')}`))}`);
+		console.log(`INFO The plan: ${JSON.stringify(results.plan.steps.map((s) => `${s.id} ${s.task} heat ${s.heat} level ${s.level} decisions ${s.decisions.length} ${s.places.join(' ')}`))}`);
 		const planFiles = execFileSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: p.project, encoding: 'utf8', windowsHide: true })
 			.split('\n').filter((l) => l.trim() && !l.includes('.shotgun/'));
 		check('Claude changed no file of the project in stage 4', planFiles.length === 0, planFiles);
@@ -1144,7 +1160,8 @@ async function main() {
 		// the user changes the level of step 1 and writes a note on the page
 		await command(wb, 'Shotgun: Show Page');
 		await poll(async () => (await pageText())?.includes('Accept the plan') && true, 15);
-		const rule1 = risk?.steps?.[steps[0]?.id]?.level ?? 0;
+		// the level of the rules on the page: with no open decision, it is at most 2 (decision 31)
+		const rule1 = (steps[0] && risk ? levelOf(steps[0], risk, levelsNow()).rule : 0) ?? 0;
 		const button = rule1 >= 5 ? 'Lower' : 'Raise';
 		await inWebview('.page', `() => {
 			d.querySelectorAll('.step-row')[0].click();
@@ -1178,6 +1195,57 @@ async function main() {
 			ledgerOf(TASK_1).filter((d) => d.kind === 'level' || d.kind === 'level-note'));
 		await wb.shot('page-plan-level.png');
 
+		// the open decisions on the page (P29). The user adds a decision to step 3, so its frame has a hole for it. The user
+		// answers a decision of Claude in a step after step 5, which the test does not build
+		const typeOnPage = async (text) => {
+			await sleep(500);
+			await inWebview('.page', `() => {
+				const input = d.querySelector('.decision-entry input');
+				input.value = ${JSON.stringify(text)};
+				input.dispatchEvent(new d.defaultView.Event('input', { bubbles: true }));
+				return true;
+			}`);
+			await sleep(400);
+			await inWebview('.page', `() => {
+				d.querySelector('.decision-entry input').dispatchEvent(new d.defaultView.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+				return true;
+			}`);
+		};
+		const clickOnPage = (selector, label) => inWebview('.page', `() => {
+			const b = [...d.querySelectorAll(${JSON.stringify(selector)})].find((x) => x.textContent.trim() === ${JSON.stringify(label)});
+			b?.click();
+			return !!b;
+		}`);
+		const added3 = 'Which cycles of the wait count, and when does the count start again?';
+		await inWebview('.page', `() => {
+			d.querySelectorAll('.step-row')[2].click();
+			return true;
+		}`);
+		await sleep(500);
+		await clickOnPage('.pill', 'Add a decision');
+		await typeOnPage(added3);
+		const withAdded = await poll(() => (levelsNow()?.levels?.[steps[2]?.id]?.added ?? []).find((x) => x.question === added3), 15);
+		check('The page adds a decision of the user to step 3, and the ledger records it', !!withAdded
+			&& ledgerOf(TASK_1).some((x) => x.kind === 'decision' && x.action === 'add' && x.step === steps[2]?.id), levelsNow());
+		await wb.shot('page-plan-decisions.png');
+		const later = steps.slice(5).find((s) => (s.decisions ?? []).length > 0);
+		if (later) {
+			const answerText = 'The test answers this decision.';
+			await inWebview('.page', `() => {
+				d.querySelectorAll('.step-row')[${steps.indexOf(later)}].click();
+				return true;
+			}`);
+			await sleep(500);
+			await clickOnPage('.decision .pill', 'Answer');
+			await typeOnPage(answerText);
+			const answered = await poll(() => Object.values(levelsNow()?.levels?.[later.id]?.answers ?? {})[0], 15);
+			check('The page keeps the answer of the user to a decision of Claude, and the ledger records it', answered?.text === answerText
+				&& ledgerOf(TASK_1).some((x) => x.kind === 'decision' && x.action === 'answer' && x.step === later.id), levelsNow());
+		} else {
+			results.notes = [...(results.notes ?? []), 'No step after step 5 has an open decision of Claude, so the test answers no decision.'];
+			console.log('NOTE No step after step 5 has an open decision of Claude, so the test answers no decision.');
+		}
+
 		// for the build: the user writes step 1 (level 4), and Claude writes step 2 (level 2). "Shotgun: Set Risk Level" sets them.
 		// Step 5 also gets level 2: then no step of the user is open after step 4, and a loose end that the user hands to
 		// Claude is the next step after step 4 (decision 21)
@@ -1196,12 +1264,21 @@ async function main() {
 		await command(wb, 'Shotgun: Show Page');
 		await poll(async () => (await pageText())?.includes('Accept the plan') && true, 15);
 
-		// the gate "Accept the plan" on the page
+		// the gate "Accept the plan" on the page. An open decision in a step of Claude is a decision of Claude in its errand, so
+		// a modal message names these decisions first (P31)
+		const decidedByClaude = steps.filter((s) => {
+			const l = risk ? levelOf(s, risk, levelsNow()).level : null;
+			return l !== null && l <= 2 && openDecisions(s, levelsNow()).length > 0;
+		});
 		await inWebview('.page', `() => {
 			const b = [...d.querySelectorAll('.gate button')].find((x) => x.textContent.includes('Accept the plan'));
 			b?.click();
 			return !!b;
 		}`);
+		if (decidedByClaude.length > 0) {
+			const asked = await poll(() => clickDialog(wb, 'Pass the Gate'), 10);
+			check('The gate "Accept the plan" asks first, because steps of Claude have open decisions', !!asked, decidedByClaude.map((s) => s.id));
+		}
 		const built = await poll(() => (readJson(taskFile(TASK_1, 'task.json'))?.stage === 'build' ? readJson(taskFile(TASK_1, 'task.json')) : undefined), 20);
 		check('The gate "Accept the plan" of the page takes task 1 to stage 5', built?.gates?.[3]?.gate === 'accept-plan', readJson(taskFile(TASK_1, 'task.json')));
 		// the CSS of the panel shows the name of the step in capitals, so the checks of the panel text ignore the case
@@ -1286,6 +1363,13 @@ async function main() {
 		const scope2 = new Set((step2?.scope ?? []).map((f) => f.toLowerCase()));
 		const changed2 = [...fileHashes()].filter(([f, h]) => before2.get(f) !== h).map(([f]) => f);
 		check('Claude changed only the files of the scope of step 2', changed2.length > 0 && changed2.every((f) => scope2.has(f.toLowerCase())), { changed2, scope: step2?.scope });
+		// the open decisions of step 2 are decisions of Claude, and the receipt names each choice (P31)
+		const open2 = openDecisions(s2, levelsNow());
+		if (open2.length > 0) {
+			check('The receipt of step 2 has a choice of Claude for each open decision', (step2?.receipt?.choices ?? []).length === open2.length,
+				{ open: open2, choices: step2?.receipt?.choices });
+			results.choices = step2?.receipt?.choices;
+		}
 		const claudeLines = Object.entries(readJson(taskFile(TASK_1, 'lines.json'))?.files ?? {})
 			.flatMap(([f, x]) => x.runs.filter((r) => r.writer === 'claude' && r.step === s2.id).map((r) => `${f}:${r.lines[0]}-${r.lines[1]} ${r.change}`));
 		check('lines.json records the lines of Claude in step 2', claudeLines.length > 0, readJson(taskFile(TASK_1, 'lines.json')));
@@ -1435,6 +1519,13 @@ async function main() {
 			&& h.hints?.nudge && h.hints?.pointer?.text && h.hints?.pointer?.places?.length > 0 && h.hints?.example?.code && h.hints?.answer), step3);
 		const hasMarker = (h) => new RegExp(`/\\*[ \\t]*@hole[ \\t]+${h.n}\\b`).test(fs.readFileSync(path.join(p.project, h.file), 'utf8'));
 		check('Each hole has its marker in its file', holes3.length > 0 && holes3.every(hasMarker), holes3.map((h) => [h.n, h.file, h.line]));
+		// each open decision of step 3 is 1 hole, and no hole is only a type, a name or a literal (decision 32)
+		const open3 = openDecisions(s3, levelsNow());
+		check('Each open decision of step 3 has exactly 1 hole, also the decision of the user', open3.length > 0 && holes3.length === open3.length
+			&& open3.every((d) => holes3.filter((h) => h.decision === d.id).length === 1) && open3.some((d) => d.by === 'user'),
+			{ open: open3, holes: holes3.map((h) => [h.n, h.decision, h.question]) });
+		check('No hole is only a type, a name, a literal or a list of parameters', holes3.every((h) => !isObviousAnswer(h.hints.answer)),
+			holes3.map((h) => h.hints.answer));
 		const scope3 = new Set((step3?.scope ?? []).map((f) => f.toLowerCase()));
 		const changed3 = [...fileHashes()].filter(([f, h]) => before3.get(f) !== h).map(([f]) => f);
 		check('Claude changed only the files of the scope of step 3', changed3.length > 0 && changed3.every((f) => scope3.has(f.toLowerCase())), { changed3, scope: step3?.scope });
@@ -1443,10 +1534,11 @@ async function main() {
 		check('lines.json records the frame lines of Claude', runsOfStep3().some((r) => r.writer === 'claude' && r.change === 'frame'), runsOfStep3());
 		results.frame = {
 			step: s3.id, note: step3?.frameNote, frameLines: runsOfStep3(),
-			holes: holes3.map((h) => ({ n: h.n, question: h.question, place: `${h.file}:${h.line}`, nudge: h.hints.nudge, pointer: h.hints.pointer.text,
-				example: `${h.hints.example.file}:${h.hints.example.lines.join('-')} ${h.hints.example.code}`, answer: h.hints.answer, facts: h.facts })),
+			holes: holes3.map((h) => ({ n: h.n, decision: h.decision, question: h.question, place: `${h.file}:${h.line}`, nudge: h.hints.nudge,
+				pointer: h.hints.pointer.text, example: `${h.hints.example.file}:${h.hints.example.lines.join('-')} ${h.hints.example.code}`, answer: h.hints.answer,
+				answerLines: h.hints.answer.split('\n').length, facts: h.facts })),
 		};
-		console.log(`INFO The frame of step 3: ${JSON.stringify(results.frame.holes.map((h) => `${h.n} ${h.place} ${h.question} = ${h.answer}`))}`);
+		console.log(`INFO The frame of step 3: ${JSON.stringify(results.frame.holes.map((h) => `${h.n} ${h.decision} ${h.place} ${h.question} = ${h.answer}`))}`);
 		text = await poll(async () => {
 			const t = await panelText();
 			return t && /your decisions/i.test(t) && t.includes(holes3[0]?.question ?? '?') ? t : undefined;

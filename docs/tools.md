@@ -45,9 +45,9 @@ You type each request in Claude Code. After each gate, the panel of Shotgun show
 | --- | --- |
 | `shotgun` | The contract of Shotgun: the active task, the 5 stages, the guard and the gates. Also a brief from the chat, and the questions about the brief. |
 | `shotgun-survey` | The survey of the brief in stage 2: the tasks, the hooks, the facts and the questions. Also the survey of the changed tasks in stage 3. |
-| `shotgun-plan` | The steps of the plan in stage 4, in the sequence of your order. |
-| `shotgun-errand` | A step of Claude in stage 5: Claude opens the step, changes only the files of its scope, and gives the receipt. Also the fixes after a receipt, and the loose ends that you hand to Claude. |
-| `shotgun-frame` | The frame of a step in stage 5: the lines with no decision, and a hole with 4 hints for each decision of yours. |
+| `shotgun-plan` | The steps of the plan in stage 4, in the sequence of your order, with the open decisions of each step. |
+| `shotgun-errand` | A step of Claude in stage 5: Claude opens the step, changes only the files of its scope, and gives the receipt. The receipt has its choice for each open decision. Also the fixes after a receipt, and the loose ends that you hand to Claude. |
+| `shotgun-frame` | The frame of a step in stage 5: all lines of the step, and a hole with 4 hints for each open decision. |
 | `shotgun-explain` | The words of Claude for a callout, and the answer to your question about a line. Claude changes no code. |
 | `shotgun-commit` | The check of your commit message against the diff. Claude changes no message, and makes no commit. |
 
@@ -83,9 +83,9 @@ The tools change no line of your code. They write only the files in the folder `
 | [`submit_survey`](#submit_survey) | 2 | Write | The survey: the tasks, the hooks, the facts and the questions |
 | [`get_order`](#get_order) | 3 and later | Read | Your order of the tasks |
 | [`submit_task_survey`](#submit_task_survey) | 3 | Write | The survey of 1 changed task |
-| [`get_plan`](#get_plan) | 4 and later | Read | The steps and their risk levels |
+| [`get_plan`](#get_plan) | 4 and later | Read | The steps, their open decisions and their risk levels |
 | [`submit_plan`](#submit_plan) | 4 | Write | The plan |
-| [`get_step`](#get_step) | 5 | Read | A step, its scope, and its receipt with your marks |
+| [`get_step`](#get_step) | 5 | Read | A step, its decisions, its scope, and its receipt with your marks |
 | [`start_step`](#start_step) | 5 | Write | Opens a step for an errand or a frame |
 | [`submit_errand`](#submit_errand) | 5 | Write | Closes the step with the receipt |
 | [`submit_frame`](#submit_frame) | 5 | Write | Closes the step with the holes of the frame |
@@ -158,23 +158,25 @@ Gives the survey of 1 task of your order, in stage 3: its hooks and the tasks th
 
 ### get_plan
 
-Gives the plan of the active task, in stage 4 and later. It gives the steps in sequence with their places, texts and checks, and the risk level of each step.
+Gives the plan of the active task, in stage 4 and later. It gives the steps in sequence with their places, texts, checks and open decisions, and the risk level of each step. A decision has your answer, or the state `open`.
 
 This tool has no parameters.
 
 ### submit_plan
 
-Gives the plan, in stage 4: the steps in the sequence of your order. Each task of the plan needs 1 step or more. Shotgun gives each step a risk level from the facts of DataFlow. A new plan replaces the old plan. It keeps the state of each step of the build with the same id and the same title.
+Gives the plan, in stage 4: the steps in the sequence of your order. Each task of the plan needs 1 step or more. Shotgun gives each step a risk level from the facts of DataFlow and from its open decisions. A step with no open decision gets at most level 2. A new plan replaces the old plan. It keeps the state of each step of the build with the same id and the same title.
 
 | Parameter | Type | Function |
 | --- | --- | --- |
-| `steps` | array | The steps. Each step has `id` (for example `S1`), `title`, `task`, `places`, `text` and `checks`. `task` is the id of the task of the order. `text` tells what the step does, in 1 to 3 sentences. `checks` are 1 to 5 checks for you. Optionally, a step has `hooks` (the ids of the hooks of the survey) and `note`. |
+| `steps` | array | The steps. Each step has `id` (for example `S1`), `title`, `task`, `places`, `text`, `checks` and `decisions`. `task` is the id of the task of the order. `text` gives the goal and the result of the step, in 1 to 3 sentences, but no answer to an open decision. `checks` are 1 to 5 checks for you. Optionally, a step has `hooks` (the ids of the hooks of the survey) and `note`. |
 
-A step has 1 to 8 places. A place has `file`. For a file that is there, it also has `lines` and `code`. For a new file, it has `new: true`, and no lines and no code.
+A step has 1 to 8 places. A place has `file`. For a file that is there, it also has `lines` and `code`. It has `insert: true` if the new lines go next to these lines, and these lines do not change. An example is a new data member next to the other members. For a new file, a place has `new: true`, and no lines and no code.
+
+`decisions` gives the open decisions of the step, 0 to 3. Each decision has `question`, and optionally `options`: up to 4 options that Claude sees, with no choice. Shotgun gives them the ids `D1` to `D3`. An empty list is a step with no open decision. [Open decisions](usage.md#open-decisions) tells their rules.
 
 ### get_step
 
-Gives a step of the build, in stage 5. It gives the text, the places, the checks, the level, the writer, the state and the scope of the step. It also gives the receipt of the step with your marks and notes: the issues and the questions.
+Gives a step of the build, in stage 5. It gives the text, the places, the checks, the decisions, the level, the writer, the state and the scope of the step. It also gives the receipt of the step with your marks and notes: the issues and the questions.
 
 | Parameter | Type | Function |
 | --- | --- | --- |
@@ -198,15 +200,16 @@ Closes the open step after the changes of Claude, in stage 5. Shotgun gets the d
 | `step` | string | The open step. |
 | `changes` | array | The changes since the base. Each change has `file`, `lines` (in the text now), `title` (what the change does) and `check` (what you check). Optionally, it has `note`: a change that you did not ask for, a risk, or an answer to your question. |
 | `looseEnds` | array | Optional. The places outside of the scope that the step can also need. Each loose end has `text`, and optionally `file` and `lines`. You decide about them. |
+| `choices` | array | The choice of Claude for each open decision of the step. Each choice has `decision` (for example `D1`) and `choice`: the choice and its reason, in 1 or 2 sentences. Shotgun refuses a receipt with no choice for an open decision. |
 
 ### submit_frame
 
-Closes the open frame step after Claude wrote the frame, in stage 5. The frame has the lines with no decision, and a marker `/*@hole N: question */` in the place of each decision of yours. Shotgun checks each marker and each place. Claude does not give the answers in the chat.
+Closes the open frame step after Claude wrote the frame, in stage 5. Each open decision of the step is exactly 1 hole: a marker `/*@hole N: question */` in the place of the whole code of the decision. The frame has all other lines. Shotgun checks each marker, each place and each decision. Claude does not give the answers in the chat.
 
 | Parameter | Type | Function |
 | --- | --- | --- |
 | `step` | string | The open step. |
-| `holes` | array | The holes. Each hole has `n` (the number of its marker) and `question` (the same text as in the marker). It also has the 4 hints `nudge`, `pointer`, `example` and `answer`. |
+| `holes` | array | The holes. Each hole has `n` (the number of its marker), `decision` and `question` (the same text as in the marker). `decision` is the id of its open decision, for example `D1`. A hole also has the 4 hints `nudge`, `pointer`, `example` and `answer`. |
 | `note` | string | Optional. A short note for you: what the frame has, and the decisions that are holes. |
 
 | Hint | Content |
@@ -214,7 +217,9 @@ Closes the open frame step after Claude wrote the frame, in stage 5. The frame h
 | `nudge` | Hint 1: a question that shows the way, with no code. |
 | `pointer` | Hint 2: where the facts for the decision are. It has `text` and `places`. Each place has `file` and `lines`. |
 | `example` | Hint 3: code of the project that is a good example. It has `text` (why it is a good example), `file`, `lines` and `code`. |
-| `answer` | Hint 4: the code in the place of the marker. |
+| `answer` | Hint 4: 1 possible code in the place of the marker. You can write a different answer. |
+
+Shotgun refuses a hole whose answer is only a type, a name, a literal or a list of parameters. It also refuses a hole whose answer is in the text of the step. With no open decision, a step gets no frame.
 
 ### get_callouts
 

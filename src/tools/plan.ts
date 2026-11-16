@@ -1,6 +1,6 @@
 import type { HeatFacts } from '../dataflow/dataflow-api';
 import { absolutePath, IS_CASE_SENSITIVE, isCppFile } from '../session/paths';
-import { checkPlan, levelOf, Plan, PlanPlace, placeName, RiskFile, StepRisk } from '../session/plan';
+import { checkPlan, decisionsOf, levelOf, levelReasons, LevelsFile, Plan, PlanPlace, PlanStep, placeName, RiskFile, StepRisk } from '../session/plan';
 import { LEVEL_INFO, mainLoopAt, PlaceHeat, placeLevel, PlaceRisk, ScanState, stepLevel } from '../session/risk';
 import { STAGE_INFO, stageText } from '../session/stages';
 import type { Snapshot } from '../session/store';
@@ -65,8 +65,9 @@ export async function placeRisk(engine: EngineApi | undefined, root: string, pla
 	}
 	const type = heat?.types?.[0];
 	if (type) {
-		// the data members in the lines, and the hottest function that uses them
-		const changed = type.members.filter((m) => m.line >= range[0] && m.line <= range[1]);
+		// the data members in the lines, and the hottest function that uses them. With insert, the new lines go next to the
+		// lines, so the step changes no member (P26)
+		const changed = place.insert ? [] : type.members.filter((m) => m.line >= range[0] && m.line <= range[1]);
 		const users = new Map<string, { name: string; file: string }>();
 		changed.flatMap((m) => m.users ?? []).forEach((u) => users.set(`${u.file}#${u.function}`, { name: u.function, file: u.file }));
 		let hottestUser: { function: string; score: number; band: PlaceHeat['band'] } | undefined;
@@ -81,7 +82,7 @@ export async function placeRisk(engine: EngineApi | undefined, root: string, pla
 		return {
 			kind: 'type',
 			type: {
-				name: type.name, isHot: type.members.some((m) => !!m.framePath || !!m.shared), changed: changed.map((m) => m.name),
+				name: type.name, isHot: type.members.some((m) => !!m.framePath || !!m.shared), ...(place.insert ? { isNew: true } : {}), changed: changed.map((m) => m.name),
 				...(hottestUser ? { hottestUser } : {}),
 			},
 		};
@@ -130,30 +131,40 @@ export async function planRisk(engine: EngineApi | undefined, root: string, plan
 	return { scan, steps };
 }
 
+// The decisions of a step for the result of a tool: the open decisions, and the answers of the user (P29)
+export function decisionsData(step: PlanStep, levels: LevelsFile | undefined): Record<string, unknown>[] | undefined {
+	return decisionsOf(step, levels)?.map((d) => ({
+		id: d.id, question: d.question, ...(d.options ? { options: d.options } : {}), by: d.by,
+		...(d.answer !== undefined ? { answer: d.answer } : { state: 'open' }),
+	}));
+}
+
 // The steps of a plan with their levels, for the result of a tool
 function stepsData(snapshot: Snapshot): Record<string, unknown>[] {
 	const { plan, risk, levels } = snapshot;
 	return (plan?.steps ?? []).map((s, i) => {
-		const l = levelOf(s.id, risk, levels);
+		const l = levelOf(s, risk, levels);
 		const note = levels?.levels[s.id]?.note;
+		const decisions = decisionsData(s, levels);
 		return {
 			n: i + 1,
 			id: s.id,
 			title: s.title,
 			task: s.task,
-			places: s.places.map(placeName),
+			places: s.places.map((p) => (p.insert ? `${placeName(p)} (insert)` : placeName(p))),
 			level: l.level,
 			rule: l.rule,
 			...(l.user ? { user: l.user } : {}),
 			writer: l.level ? LEVEL_INFO[l.level].writer : null,
-			reasons: risk?.steps[s.id]?.reasons ?? [],
+			reasons: levelReasons(s, risk, levels),
+			...(decisions ? { decisions } : {}),
 			...(note ? { userNote: note } : {}),
 		};
 	});
 }
 
 const waitingOf = (snapshot: Snapshot): string[] => (snapshot.plan?.steps ?? [])
-	.filter((s) => levelOf(s.id, snapshot.risk, snapshot.levels).level === null).map((s) => s.id);
+	.filter((s) => levelOf(s, snapshot.risk, snapshot.levels).level === null).map((s) => s.id);
 
 // The result of get_plan: the steps of the plan with their texts, checks and levels
 export function planData(snapshot: Snapshot): Record<string, unknown> {
@@ -171,7 +182,7 @@ export function planData(snapshot: Snapshot): Record<string, unknown> {
 		next = 'The task has no plan. Make the plan with submit_plan.';
 	} else if (task.stage === 'plan') {
 		next = waiting.length > 0 ? `The steps ${waiting.join(', ')} have no level until the end of the scan of the call graph.`
-			: 'The user examines the levels, and selects "Accept the plan".';
+			: 'The user examines the levels and the open decisions, and selects "Accept the plan". The user can answer a decision, or add a decision.';
 	} else {
 		next = 'The user accepted the plan. The level of each step selects its writer.';
 	}
@@ -213,6 +224,7 @@ export async function submitPlan(deps: SurveyDeps, args: Record<string, unknown>
 		scan: risk.scan,
 		next: waiting.length > 0
 			? `The steps ${waiting.join(', ')} have no level yet. The scan of the call graph is not complete, and Shotgun gives their levels at its end. Tell the user.`
-			: 'The plan page of Shotgun shows the steps with their risk levels. Tell the user. The user can change each level, and then selects "Accept the plan".',
+			: 'The plan page of Shotgun shows the steps with their risk levels and their open decisions. Tell the user. A step with no open decision gets '
+				+ 'at most level 2. The user can answer a decision in words, add a decision, or change a level, and then selects "Accept the plan".',
 	};
 }

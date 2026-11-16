@@ -147,6 +147,15 @@ function Receipt({ step, receipt, maxNote }: { step: CurrentStepView; receipt: R
 				</p>
 			)}
 			{receipt.deleted.length > 0 && <p class="notice">These files of the scope are not there now: <span class="mono">{receipt.deleted.join(', ')}</span>.</p>}
+			{receipt.choices.length > 0 && (
+				<>
+					<div class="row-head"><span class="name">Choices of Claude</span><span class="badge claude">Model</span></div>
+					<ul class="list decisions">
+						{receipt.choices.map((c) => <li><span class="grow"><span class="decision-question">{c.question}</span> {c.choice}</span></li>)}
+					</ul>
+					<p class="muted small">Claude decided the open decisions of this step. Check each choice. For a different choice, put an issue on its change.</p>
+				</>
+			)}
 			{receipt.total === 0 ? <p>The receipt has no change. Claude changed no file of the scope.</p> : (
 				<>
 					<progress class="walk-track" value={receipt.walked} max={receipt.total} aria-label={receipt.walkText} />
@@ -281,6 +290,36 @@ function Frame({ step }: { step: CurrentStepView }) {
 	);
 }
 
+// The decisions of the current step (decision 31): the open decisions are the choices of the writer, and the answers of
+// the user go into the code
+function StepDecisions({ step }: { step: CurrentStepView }) {
+	const decisions = step.decisions ?? [];
+	let text: string;
+	if (step.writer === 'user') {
+		text = 'You make the open decisions in your code.';
+	} else if (step.writer === 'frame') {
+		text = 'Each open decision is a hole of the frame.';
+	} else {
+		text = 'Claude decides the open decisions, and the receipt shows each choice.';
+	}
+	return (
+		<>
+			<div class="row-head"><span class="name">Decisions</span></div>
+			<ul class="list decisions">
+				{decisions.map((d) => (
+					<li>
+						<span class="grow">
+							<span class="decision-question">{d.question}</span>
+							{d.answer !== undefined ? <> <span class="badge user">You</span> {d.answer}</> : <span class="hint"> open</span>}
+						</span>
+					</li>
+				))}
+			</ul>
+			<p class="muted small">{text} An answer is in words on the plan page, and the writer puts it into the code.</p>
+		</>
+	);
+}
+
 function CurrentStep({ step, request, maxNote }: { step: CurrentStepView; request?: string; maxNote: number }) {
 	return (
 		<section class={`current-step lv-${step.level ?? 0}`} aria-label={`Step ${step.n} of ${step.total}`}>
@@ -302,6 +341,7 @@ function CurrentStep({ step, request, maxNote }: { step: CurrentStepView; reques
 					<ul class="checks">{step.checks.map((c) => <li><span aria-hidden="true">☐</span> {c}</li>)}</ul>
 				</>
 			)}
+			{step.decisions && step.decisions.length > 0 && (step.writer === 'user' || step.state === 'todo') && <StepDecisions step={step} />}
 			{step.writer !== 'user' && step.state === 'todo' && request && (
 				<>
 					<p class="muted">In Claude Code:</p>

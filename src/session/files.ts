@@ -93,6 +93,10 @@ export interface QuestionsFile {
 // - callout-close: the user closed a callout with "Not a problem" and a reason. callout-open: the user opened it again
 // - explanation: Claude explained a callout
 // - line-answer: Claude answered a question of the user about a line. line-resolve: the user resolved the question
+// - decision: the user answered an open decision of a step, opened it again, added a decision or removed it (P29)
+export const DECISION_ACTIONS = ['answer', 'open', 'add', 'remove'] as const;
+export type DecisionAction = (typeof DECISION_ACTIONS)[number];
+
 export type Decision =
 	| { readonly version: 1; readonly time: string; readonly kind: 'task'; readonly by: 'user' | 'claude'; readonly title: string }
 	| { readonly version: 1; readonly time: string; readonly kind: 'gate'; readonly by: 'user'; readonly gate: Gate; readonly stage: Stage }
@@ -122,6 +126,11 @@ export type Decision =
 		readonly rule: number | null;
 	}
 	| { readonly version: 1; readonly time: string; readonly kind: 'level-note'; readonly by: 'user'; readonly step: string; readonly text: string }
+	// a decision of a step (P29): the user answers it, opens it again, adds it or removes it
+	| {
+		readonly version: 1; readonly time: string; readonly kind: 'decision'; readonly by: 'user'; readonly step: string; readonly decision: string;
+		readonly action: DecisionAction; readonly question: string; readonly text?: string;
+	}
 	| { readonly version: 1; readonly time: string; readonly kind: 'step'; readonly by: 'claude'; readonly step: string; readonly round: number }
 	| {
 		readonly version: 1; readonly time: string; readonly kind: 'errand'; readonly by: 'claude'; readonly step: string; readonly round: number;
@@ -312,6 +321,13 @@ function parseDecision(value: unknown): Decision | undefined {
 		case 'level-note':
 			return value.by === 'user' && isText(value.step) && typeof value.text === 'string'
 				? { version: FILE_VERSION, time, kind: 'level-note', by: 'user', step: value.step, text: value.text } : undefined;
+		case 'decision':
+			return value.by === 'user' && isText(value.step) && isText(value.decision) && isText(value.question)
+				&& (DECISION_ACTIONS as readonly unknown[]).includes(value.action) && (value.text === undefined || typeof value.text === 'string')
+				? {
+					version: FILE_VERSION, time, kind: 'decision', by: 'user', step: value.step, decision: value.decision, action: value.action as DecisionAction,
+					question: value.question, ...(typeof value.text === 'string' ? { text: value.text } : {}),
+				} : undefined;
 		case 'step':
 			return value.by === 'claude' && isText(value.step) && typeof value.round === 'number'
 				? { version: FILE_VERSION, time, kind: 'step', by: 'claude', step: value.step, round: value.round } : undefined;

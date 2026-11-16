@@ -1,16 +1,16 @@
 import type { DiffFacts } from '../dataflow/dataflow-api';
 import {
-	addedLines, buildNext, buildWriterOf, checkErrand, CurrentStep, FileHunk, findStep, hunkKey, keepMarks, markName, Receipt, receiptChanges, receiptCounts, scopeOf,
-	stateOf, walkText,
+	addedLines, buildNext, buildWriterOf, checkChoices, checkErrand, CurrentStep, FileHunk, findStep, hunkKey, keepMarks, markName, Receipt, receiptChanges,
+	receiptCounts, scopeOf, stateOf, walkText,
 } from '../session/build';
 import { checkFrame, findMarkers, Hole, holeNow } from '../session/frame';
 import type { LineStore } from '../session/lines';
 import { hashLines } from '../session/lines';
 import { absolutePath, IS_CASE_SENSITIVE, isCppFile, isInside, projectPath } from '../session/paths';
-import { levelOf, placeName, PlanStep } from '../session/plan';
+import { decisionsOf, levelOf, LevelsFile, openDecisions, placeName, PlanStep } from '../session/plan';
 import { STAGE_INFO, stageText } from '../session/stages';
 import type { Snapshot } from '../session/store';
-import { placeNow } from './plan';
+import { decisionsData, placeNow } from './plan';
 import type { SurveyDeps } from './survey';
 
 // The tools of stage 5. start_step opens the current step for an errand or a frame of Claude: Shotgun saves the files of
@@ -94,12 +94,13 @@ export function stepData(snapshot: Snapshot, ref: { step: PlanStep; n: number },
 	const { plan, risk, levels, build, root } = snapshot;
 	const { step, n } = ref;
 	const b = build?.steps[step.id];
-	const level = b?.level ?? levelOf(step.id, risk, levels).level;
+	const level = b?.level ?? levelOf(step, risk, levels).level;
 	const writer = b?.writer ?? buildWriterOf(level);
 	const receipt = b?.receipt;
 	const marked = (mark: string) => (receipt?.changes ?? []).filter((c) => c.mark === mark).map((c) => ({
 		change: c.id, title: c.title, place: placeName({ file: c.file, lines: c.lines }), ...(c.userNote ? { userNote: c.userNote } : {}),
 	}));
+	const decisions = decisionsData(step, levels);
 	return {
 		n,
 		total: plan?.steps.length ?? 0,
@@ -108,6 +109,9 @@ export function stepData(snapshot: Snapshot, ref: { step: PlanStep; n: number },
 		task: step.task,
 		text: step.text,
 		checks: step.checks,
+		// the open decisions are the holes of a frame, or the choices of an errand. A decision with an answer of the user is
+		// no hole: write the code of the answer (decisions 31 and 32)
+		...(decisions ? { decisions } : {}),
 		places: step.places.map((p) => placeName(root ? placeNow(p, root, readLines) : p)),
 		scope: b?.scope ?? scopeOf(step),
 		level,
@@ -126,6 +130,7 @@ export function stepData(snapshot: Snapshot, ref: { step: PlanStep; n: number },
 				})),
 				issues: marked('issue'),
 				questions: marked('question'),
+				...(receipt.choices && receipt.choices.length > 0 ? { choices: receipt.choices } : {}),
 				...(receipt.looseEnds.length > 0 ? { looseEnds: receipt.looseEnds } : {}),
 				...(receipt.denies.length > 0 ? { denies: receipt.denies } : {}),
 				...(receipt.outside.length > 0 ? { outside: receipt.outside } : {}),
@@ -184,6 +189,13 @@ export async function startStep(deps: BuildDeps, args: Record<string, unknown>):
 			? `Step ${current.n} is a frame: write only the lines with no decision, and a hole for each decision of the user. Give "kind": "frame".`
 			: `Step ${current.n} has risk level ${current.level ?? '?'}, so it is an errand with no holes. Give "kind": "errand".`);
 	}
+	// each open decision is a hole of the frame (decision 32), so a frame needs an open decision
+	const levels = store.snapshot.levels;
+	const open = openDecisions(found.step, levels);
+	if (isFrame && decisionsOf(found.step, levels) && open.length === 0) {
+		throw new Error(`Step ${current.n} has no open decision, so a frame has no hole. Do not change its files. Tell the user: the user can add a `
+			+ 'decision on the plan page, or change the level of the step.');
+	}
 	const submitTool = isFrame ? SUBMIT_FRAME_TOOL : SUBMIT_ERRAND_TOOL;
 	const readLines = (file: string) => deps.readText(file)?.split(/\r?\n/);
 	if (current.state === 'open') {
@@ -219,22 +231,34 @@ export async function startStep(deps: BuildDeps, args: Record<string, unknown>):
 	const again = store.current?.build?.receipt;
 	if (isFrame) {
 		const isAgain = !!store.current?.build?.holes;
+		const holes = open.length > 0
+			? `Each open decision of the step is exactly 1 hole: ${open.map((d) => `${d.id} "${d.question}"`).join(', ')}. The hole holds the whole code of `
+				+ 'its decision, for example a condition with its branch. Write all other lines, also the code of each decision with an answer of the user. '
+			: 'Write only the lines with no decision. ';
 		return {
 			...stepData(store.snapshot, found, store.current, readLines),
 			next: `The step is open${isAgain ? ' again for a different frame' : ''}. Change only the files of its scope, with the file tools, not with Bash. `
-				+ 'Write only the lines with no decision. In the place of each decision of the user, write a marker /*@hole N: question */. Then call '
-				+ `${SUBMIT_FRAME_TOOL} with the 4 hints of each hole: the nudge, the pointer, the example and the answer.`,
+				+ `${holes}In the place of each hole, write a marker /*@hole N: question */. Then call ${SUBMIT_FRAME_TOOL} with the decision and the 4 hints `
+				+ 'of each hole: the nudge, the pointer, the example and 1 possible answer.',
 		};
 	}
+	const choices = open.length > 0
+		? ` The step has open decisions: ${open.map((d) => `${d.id} "${d.question}"`).join(', ')}. Decide each one, and give your choice in "choices". `
+			+ 'The user checks each choice in the receipt.'
+		: '';
 	return {
 		...stepData(store.snapshot, found, store.current, readLines),
-		next: again
+		next: (again
 			? `The step is open again. Fix the issues and answer the questions of the user in the notes of the changes. Change only the files of the scope. `
 				+ `Then call ${SUBMIT_ERRAND_TOOL} with a change for each change since the first start of the step.`
 			: `The step is open. Change only the files of its scope, with the file tools, not with Bash. Then call ${SUBMIT_ERRAND_TOOL} with a change for each `
-				+ 'change: its file, its lines in the text now, a title, a check for the user, and a note for a change that the user did not ask for.',
+				+ 'change: its file, its lines in the text now, a title, a check for the user, and a note for a change that the user did not ask for.') + choices,
 	};
 }
+
+// The text of a step for the check of the answers of its holes: its text, its checks and the answers of the user (P32)
+const stepTextOf = (step: PlanStep, levels: LevelsFile | undefined): string => [step.text, ...step.checks,
+	...(decisionsOf(step, levels) ?? []).flatMap((d) => (d.answer ? [d.answer] : []))].join('\n');
 
 // The base of a step: a mark of DataFlow with the files of its scope. DataFlow keeps a file that is not there as a file
 // with no text, so the diff since the base gives a new file of the step with its functions and its heat. A step with no
@@ -312,7 +336,12 @@ export async function submitFrame(deps: BuildDeps, args: Record<string, unknown>
 	}
 	const step = current.build;
 	const readLines = (file: string) => deps.readText(file)?.split(/\r?\n/);
-	const checked = checkFrame(args, { root, scope: step.scope, folders: deps.folders(), isCaseSensitive: IS_CASE_SENSITIVE, readLines });
+	const levels = store.snapshot.levels;
+	const decisions = decisionsOf(found.step, levels) ? openDecisions(found.step, levels).map((d) => ({ id: d.id, question: d.question })) : undefined;
+	const checked = checkFrame(args, {
+		root, scope: step.scope, folders: deps.folders(), isCaseSensitive: IS_CASE_SENSITIVE, readLines,
+		...(decisions ? { decisions } : {}), stepText: stepTextOf(found.step, levels),
+	});
 	const { hunks } = await hunksOf(deps, root, step);
 	const problems = [...checked.problems];
 	if (hunks.length === 0) {
@@ -373,6 +402,8 @@ export async function submitErrand(deps: BuildDeps, args: Record<string, unknown
 	const { hunks, deleted, notice } = await hunksOf(deps, root, step);
 	const matched = receiptChanges(checked.changes, hunks);
 	const problems = [...checked.problems, ...matched.problems];
+	// the choices of Claude for the open decisions of the step (P31)
+	const choices = checkChoices(args.choices, openDecisions(found.step, store.snapshot.levels), problems);
 	if (problems.length > 0) {
 		throw new Error(`Shotgun did not take the receipt. Correct these problems, and call the tool again:\n${problems.map((p) => `- ${p}`).join('\n')}`);
 	}
@@ -396,6 +427,7 @@ export async function submitErrand(deps: BuildDeps, args: Record<string, unknown
 		deleted,
 		looseEnds: checked.looseEnds,
 		...(notice ? { notice } : {}),
+		...(choices.length > 0 ? { choices } : {}),
 	};
 	store.writeReceipt(found.step.id, receipt);
 	// the added lines of the receipt are lines of Claude

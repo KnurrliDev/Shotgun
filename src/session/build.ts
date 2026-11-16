@@ -92,6 +92,47 @@ export interface Receipt {
 	readonly deleted: readonly string[]; // the files of the scope that are not there now
 	readonly looseEnds: readonly LooseEnd[];
 	readonly notice?: string; // a note of DataFlow, for example why the hunks have no heat
+	readonly choices?: readonly DecisionChoice[]; // the choices of Claude for the open decisions of a step of level 1 or 2 (P31)
+}
+
+// The choice of Claude for an open decision of its step (P31). The receipt shows it with the badge Model
+export interface DecisionChoice {
+	readonly decision: string; // for example D1
+	readonly question: string;
+	readonly choice: string;
+}
+
+export const MAX_CHOICE = 300;
+
+// The choices of Claude in submit_errand: 1 choice for each open decision of the step (P31). The result has all problems
+// in the list of the caller
+export function checkChoices(raw: unknown, open: readonly { readonly id: string; readonly question: string }[], problems: string[]): DecisionChoice[] {
+	const items = Array.isArray(raw) ? raw : [];
+	if (open.length === 0) {
+		if (items.length > 0) {
+			problems.push('The step has no open decision, so give no "choices".');
+		}
+		return [];
+	}
+	const choices: DecisionChoice[] = [];
+	items.forEach((c, i) => {
+		const item = (typeof c === 'object' && c !== null && !Array.isArray(c) ? c : {}) as Record<string, unknown>;
+		const id = typeof item.decision === 'string' ? item.decision.trim() : '';
+		const choice = typeof item.choice === 'string' ? item.choice.trim().replace(/\s+/g, ' ') : '';
+		const decision = open.find((d) => d.id === id);
+		if (!decision) {
+			problems.push(`Choice ${i + 1}: "${id}" is not an open decision of the step. The open decisions are ${open.map((d) => d.id).join(', ')}.`);
+		} else if (!choice || choice.length > MAX_CHOICE) {
+			problems.push(`Choice ${i + 1}: give a "choice" of 1 to ${MAX_CHOICE} characters for ${id}.`);
+		} else if (choices.some((x) => x.decision === id)) {
+			problems.push(`Choice ${i + 1}: the decision ${id} has a choice already.`);
+		} else {
+			choices.push({ decision: id, question: decision.question, choice });
+		}
+	});
+	open.filter((d) => !choices.some((c) => c.decision === d.id) && !items.some((c) => isObject(c) && c.decision === d.id))
+		.forEach((d) => problems.push(`Give your choice for the open decision ${d.id} "${d.question}" in "choices". The user checks it in the receipt.`));
+	return choices;
 }
 
 export interface BuildStep {
@@ -138,7 +179,7 @@ export function currentStep(plan: Plan | undefined, risk: RiskFile | undefined, 
 	}
 	const step = steps[n];
 	const b = build?.steps[step.id];
-	const level = b?.level ?? levelOf(step.id, risk, levels).level;
+	const level = b?.level ?? levelOf(step, risk, levels).level;
 	return { step, n: n + 1, total: steps.length, level, writer: b?.writer ?? buildWriterOf(level), state: b?.state ?? 'todo', ...(b ? { build: b } : {}) };
 }
 

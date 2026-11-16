@@ -219,6 +219,18 @@ body.vscode-light { --sg-l1: #56606e; --sg-l2: #66707d; --sg-l3: #9a5b16; --sg-l
   border: 1px solid var(--vscode-input-border, var(--sg-border)); border-radius: 2px; background: var(--vscode-input-background);
   color: var(--vscode-input-foreground); font: inherit; }
 .note-field input:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+.decisions { margin: 4px 0 6px; padding: 0; list-style: none; }
+.decision { margin: 0 0 6px; padding: 4px 6px; border-left: 2px solid var(--sg-border); border-radius: 2px; }
+.decision.open { border-left-color: var(--sg-you); background: color-mix(in srgb, var(--sg-you) 6%, transparent); }
+.decision-head { display: flex; align-items: baseline; gap: 6px; }
+.decision-question { min-width: 0; overflow-wrap: anywhere; font-weight: 600; }
+.decision-head .hint { margin-left: auto; }
+.decision-answer { margin: 3px 0 0; overflow-wrap: anywhere; }
+.decision .buttons { margin-top: 4px; }
+.decision-entry { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }
+.decision-entry input { flex: 1 1 200px; min-width: 0; height: 24px; padding: 0 6px; border: 1px solid var(--vscode-input-border, var(--sg-border));
+  border-radius: 2px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); font: inherit; }
+.decision-entry input:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
 .step-row:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
 
 /* stage 5: the build. The steps in sequence, the current step with the color of its level, and the receipt of Claude

@@ -79,7 +79,7 @@ export class StepDecorations implements vscode.Disposable {
 			.filter((p) => p.lines && isSamePath(absolutePath(p.file, root), doc.uri.fsPath))
 			.flatMap((p) => {
 				const lines = p.code ? findHook(text, { lines: p.lines!, code: p.code, codeLine: p.codeLine }) : p.lines;
-				return lines ? [{ step, n, total, level: levelOf(step.id, s.risk, s.levels).level, lines }] : [];
+				return lines ? [{ step, n, total, level: levelOf(step, s.risk, s.levels).level, lines }] : [];
 			}));
 	}
 

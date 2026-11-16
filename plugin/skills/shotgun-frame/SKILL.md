@@ -1,13 +1,13 @@
 ---
 name: shotgun-frame
-description: 'Write the frame of a step of the build of the active Shotgun task in stage 5. A frame has the lines of the step with no decision, and a hole for each decision of the user, with 4 hints. Use this skill when the user asks for a frame, for example "Give me a frame for step 4". Also use it for a different frame, for example "Give me a different frame for step 4".'
+description: 'Write the frame of a step of the build of the active Shotgun task in stage 5. A frame has all lines of the step, and a hole for each open decision of the step, with 4 hints. Use this skill when the user asks for a frame, for example "Give me a frame for step 4". Also use it for a different frame, for example "Give me a different frame for step 4".'
 ---
 
 # A frame of Shotgun
 
 The build is stage 5 of a Shotgun task. A step of risk level 3 gets a frame. A step of level 4 gets a frame only after the user selects "I want a frame" in the panel of Shotgun.
 
-In a frame, you write the lines of the step that have no decision. Each decision of the user is a hole. The user fills each hole, and owns the decisions of the step. The hints of each hole come with the frame, so the user can get help with no request to you.
+The plan names the open decisions of each step. In a frame, each open decision is exactly 1 hole, and you write all other lines of the step. The user fills each hole, and owns the decisions of the step. The hints of each hole come with the frame, so the user can get help with no request to you.
 
 ## The tools
 
@@ -28,21 +28,22 @@ Load all these tools with 1 call of `ToolSearch`, with `select:` and the full na
 2. Call `shotgun_get_step` with the step of the request, for example `"step": "4"`.
 3. If the writer of the step is the user, stop. For a frame at level 4, the user selects "I want a frame" in the panel first. Tell the user.
 4. If the step is not the current step, stop. The steps go in sequence. Tell the user the current step.
-5. Call `shotgun_start_step` with the step and `"kind": "frame"`.
+5. Call `shotgun_start_step` with the step and `"kind": "frame"`. If the step has no open decision, Shotgun refuses the frame. Then tell the user: the user can add a decision on the plan page.
 6. Read the code of the places with the tool Read and with the read tools of DataFlow.
-7. Find the decisions of the step. A decision is a choice that the user must own. Examples are a condition, a limit, an order of the statements, or what happens in an error case. The text and the checks of the step tell you more.
+7. Read the `decisions` of the step in `shotgun_get_step`. Each decision with the state `open` is 1 hole. A decision with an `answer` is a choice of the user: write its code as the user said, in the frame.
 8. Write the frame with the file tools Edit and Write. Change only the files of the scope. Do not change a file with Bash.
-9. Call `shotgun_submit_frame` with the hints of each hole. The sections below give the rules.
+9. Call `shotgun_submit_frame` with the decision and the hints of each hole. The sections below give the rules.
 10. If Shotgun gives problems, correct all of them. Then call the tool again.
 11. Tell the user that the panel of Shotgun shows the holes. Do not give the answers in the chat.
 
 ## The frame
 
-- Write only the lines that have no decision, for example a branch, a call that the plan names, or a log line.
-- In the place of each decision, write a marker in a comment: `/*@hole N: question */`. N is the number of the hole, from 1. The question is short, and it names the decision, for example `/*@hole 1: When is the plan too late? */`.
-- A marker can be in an expression, for example `if (/*@hole 1: When is the plan too late? */) {`. A marker can also be alone on its line for 1 statement or more.
+- Write all lines of the step that are not the code of an open decision. These lines are the declarations, the data members, the signatures, the calls that the plan names, and the log lines. Also write the code of each decision with an answer of the user.
+- In the place of the code of each open decision, write a marker in a comment: `/*@hole N: question */`. N is the number of the hole, from 1. The question names the decision, for example `/*@hole 1: What happens to the solve that still runs at the limit? */`.
+- A hole holds the whole code of its decision: for example the condition with its branch, the change of the state, and the error path. Put the marker alone on its line in the place of these statements. A marker in an expression is only for a decision that is exactly 1 expression.
+- A hole is never only a type, a name, a literal or a list of parameters. A hole is also never code that the text of the step gives. Such code has no decision, so it is a line of the frame. Shotgun refuses such a hole.
+- Give each open decision exactly 1 hole, and give no other holes.
 - Do not write the answer of a hole into the file, also not in a comment.
-- Give a frame 1 to 5 holes. Too many holes make the frame a test, and too few holes make it your code.
 
 ## The hints
 
@@ -51,11 +52,11 @@ Each hole has 4 hints. Each hint gives more help than the hint before it.
 - `nudge`: a question that shows the way, with no code. For example: "Compare the counter of step 2 with the limit of step 1."
 - `pointer`: where the facts for the decision are, with 1 to 4 places of the project: the file and the lines of each fact.
 - `example`: a similar code in the project. Give its file, its lines, and its code, copied exactly from these lines. Also give why it is a good example.
-- `answer`: the code in the place of the marker, exactly as it goes there. For a marker in an expression, give only the expression.
+- `answer`: 1 possible answer: the code in the place of the marker, exactly as it goes there. For a marker in an expression, give only the expression. The user can write a different answer.
 
-Give each hole its `n` and its `question`, the same text as in its marker. Each marker needs a hole, and each hole needs its marker.
+Give each hole its `n`, its `decision` and its `question`. The decision is the id of its open decision, for example `D1`. The question is the same text as in its marker. Each marker needs a hole, and each hole needs its marker.
 
-Give a short `note` for the user: what the frame has, and which decisions are holes.
+Give a short `note` for the user: what the frame has, and which open decisions are holes.
 
 ## The guard
 

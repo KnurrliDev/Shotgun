@@ -29,8 +29,8 @@ Load all these tools with 1 call of `ToolSearch`, with `select:` and the full na
 3. If the writer of the step is the user, stop. Tell the user that the user writes this step. You can answer questions in the chat. If the writer is a frame, use the skill `shotgun-frame`.
 4. If the step is not the current step, stop. The steps go in sequence. Tell the user the current step.
 5. Call `shotgun_start_step` with the step. Shotgun saves the files of the scope and keeps their text as the base of the step.
-6. Read the code of the places with the tool Read and with the read tools of DataFlow.
-7. Make the change of the step with the file tools Edit and Write. Change only the files of the scope. Do not change a file with Bash.
+6. Read the code of the places with the tool Read and with the read tools of DataFlow. Read the `decisions` of the step in `shotgun_get_step`. A decision with an `answer` is a choice of the user. A decision with the state `open` is your choice in this step.
+7. Make the change of the step with the file tools Edit and Write. Write the code of each answer of the user as the user said. Change only the files of the scope. Do not change a file with Bash.
 8. Find the lines of each change in the text now, with the tool Read.
 9. Call `shotgun_submit_errand` with a change for each change since the base of the step. The section below gives the rules.
 10. If Shotgun gives problems, correct all of them. Then call the tool again.
@@ -47,6 +47,8 @@ Shotgun gets the diff since the base of the step from DataFlow. Each part of the
 - `note`: optional. Give a note for a change that the user did not ask for, a risk, or an answer to a question of the user.
 
 Give the places outside of the scope that the step can also need in `looseEnds`. An example is a function that does not name a new data member. Do not change them. The user decides about them.
+
+If the step has open decisions, decide each one. Give each choice in `choices`, with the id of the decision, for example `D1`. Write your choice and its reason in 1 or 2 sentences. Shotgun refuses a receipt with no choice for an open decision. The receipt shows the choices to the user, and the user checks each one.
 
 ## The guard
 

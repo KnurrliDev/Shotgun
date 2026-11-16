@@ -17,7 +17,10 @@ import {
 	addLooseEnds, EMPTY_LOOSE, LOOSE_FILE, LooseEndItem, LooseFile, LooseFind, looseIndex, looseStep, MAX_LOOSE_REASON, nextLooseStepId, parseLoose,
 } from './loose';
 import { applyEdit, Order, OrderEdit, OrderFile, orderOf, OrderTask, parseOrder, surveyIds, TaskSurvey } from './order';
-import { LevelsFile, MAX_LEVEL_NOTE, parseLevels, parsePlan, parseRisk, Plan, PlanFile, PlanStep, RiskFile, UserLevel } from './plan';
+import {
+	decisionsOf, levelOf, LevelsFile, MAX_DECISION_ANSWER, MAX_DECISION_QUESTION, MAX_LEVEL_NOTE, MAX_USER_DECISIONS, openDecisions, parseLevels, parsePlan,
+	parseRisk, Plan, PlanFile, PlanStep, RiskFile, UserLevel, writerOf,
+} from './plan';
 import type { Level } from './risk';
 import { Gate, passGate, returnTo, Stage, START } from './stages';
 import { Answer, AnswersFile, checkAnswer, EngineFile, parseAnswers, parseEngine, parseSurvey, Survey, SurveyFile, SurveyHook } from './survey';
@@ -413,11 +416,99 @@ export class SessionStore {
 			return undefined;
 		}
 		const removed = task.stage === 'build' ? this.state.build?.steps[step] : undefined;
+		const rule = levelOf(this.requireStep(step), this.state.risk, this.state.levels).rule;
 		this.writeLevel(task.id, step, level, old?.note);
 		if (removed) {
 			this.removeStep(task.id, step);
 		}
-		this.append(task.id, { kind: 'level', by: 'user', step, level: level ?? null, rule: this.state.risk?.steps[step]?.level ?? null });
+		this.append(task.id, { kind: 'level', by: 'user', step, level: level ?? null, rule });
+		this.load();
+		return removed;
+	}
+
+	// The answer of the user to a decision of a step (P29). An empty text opens the decision again. With no open decision,
+	// the level of the rules is at most 2 (decision 31), so an answer can change the writer. In stage 5, the user answers
+	// only for a step that Claude did not start, and a new writer starts the step again (decision 17). The result: the old
+	// state of the step in the build, or undefined
+	answerDecision(step: string, decision: string, text: string): BuildStep | undefined {
+		const task = this.requireLevelStage(step);
+		const planStep = this.requireStep(step);
+		const found = decisionsOf(planStep, this.state.levels)?.find((d) => d.id === decision);
+		if (!found) {
+			throw new Error(`Step ${step} has no decision ${decision}.`);
+		}
+		const answer = text.trim().replace(/\s+/g, ' ');
+		if (answer.length > MAX_DECISION_ANSWER) {
+			throw new Error(`An answer has a maximum of ${MAX_DECISION_ANSWER} characters.`);
+		}
+		if ((found.answer ?? '') === answer) {
+			return undefined;
+		}
+		const old = this.state.levels?.levels[step];
+		const answers = { ...(old?.answers ?? {}) };
+		if (answer) {
+			answers[decision] = { question: found.question, text: answer, time: this.time() };
+		} else {
+			delete answers[decision];
+		}
+		return this.changeDecisions(task, planStep, { ...old, answers }, {
+			kind: 'decision', by: 'user', step, decision, action: answer ? 'answer' : 'open', question: found.question, ...(answer ? { text: answer } : {}),
+		});
+	}
+
+	// A decision that the user adds to a step (P29). It is open, so the step keeps the level of the heat
+	addDecision(step: string, question: string): BuildStep | undefined {
+		const task = this.requireLevelStage(step);
+		const planStep = this.requireStep(step);
+		if (!planStep.decisions) {
+			throw new Error(`Step ${step} comes from a plan with no decisions. Ask Claude for a new plan first.`);
+		}
+		const text = question.trim().replace(/\s+/g, ' ');
+		if (!text || text.length > MAX_DECISION_QUESTION) {
+			throw new Error(`A decision needs a question of 1 to ${MAX_DECISION_QUESTION} characters.`);
+		}
+		const old = this.state.levels?.levels[step];
+		const added = old?.added ?? [];
+		if (added.length >= MAX_USER_DECISIONS) {
+			throw new Error(`A step has a maximum of ${MAX_USER_DECISIONS} decisions of yours.`);
+		}
+		if ((decisionsOf(planStep, this.state.levels) ?? []).some((d) => d.question.toLowerCase() === text.toLowerCase())) {
+			throw new Error(`Step ${step} has the decision "${text}" already.`);
+		}
+		const id = `U${Math.max(0, ...added.map((d) => Number.parseInt(d.id.slice(1), 10) || 0)) + 1}`;
+		return this.changeDecisions(task, planStep, { ...old, added: [...added, { id, question: text, time: this.time() }] }, {
+			kind: 'decision', by: 'user', step, decision: id, action: 'add', question: text,
+		});
+	}
+
+	// Removes a decision that the user added, with its answer
+	removeDecision(step: string, decision: string): BuildStep | undefined {
+		const task = this.requireLevelStage(step);
+		const planStep = this.requireStep(step);
+		const old = this.state.levels?.levels[step];
+		const found = old?.added?.find((d) => d.id === decision);
+		if (!found) {
+			throw new Error(`Step ${step} has no decision ${decision} of yours. Only a decision that you added can go.`);
+		}
+		const answers = { ...(old?.answers ?? {}) };
+		delete answers[decision];
+		return this.changeDecisions(task, planStep, { ...old, answers, added: old!.added!.filter((d) => d.id !== decision) }, {
+			kind: 'decision', by: 'user', step, decision, action: 'remove', question: found.question,
+		});
+	}
+
+	// Writes the decisions of the user for a step, and records the change. In stage 5, a step with a new writer starts again
+	private changeDecisions(task: TaskFile, step: PlanStep, value: Partial<UserLevel>, decision: DecisionInput): BuildStep | undefined {
+		const before = writerOf(levelOf(step, this.state.risk, this.state.levels).level);
+		const next = this.userLevel(step.id, value);
+		const levels: LevelsFile = { version: FILE_VERSION, levels: next };
+		const after = writerOf(levelOf(step, this.state.risk, levels).level);
+		const removed = task.stage === 'build' && before !== after ? this.state.build?.steps[step.id] : undefined;
+		writeTextAtomic(path.join(this.requireDir(), task.id, LEVELS_FILE), jsonText(levels));
+		if (removed) {
+			this.removeStep(task.id, step.id);
+		}
+		this.append(task.id, decision);
 		this.load();
 		return removed;
 	}
@@ -523,6 +614,10 @@ export class SessionStore {
 		}
 		if (current.writer !== 'user' || (current.state !== 'todo' && current.state !== 'open')) {
 			throw new Error(`Step ${current.n} is not a step of the user that Claude can frame now.`);
+		}
+		// each open decision is a hole of the frame (decision 32)
+		if (decisionsOf(current.step, this.state.levels) && openDecisions(current.step, this.state.levels).length === 0) {
+			throw new Error(`Step ${current.n} has no open decision, so a frame has no hole. Add a decision on the plan page first.`);
 		}
 		const old = current.build;
 		this.writeStep(task.id, id, { state: 'todo', writer: 'frame', level: current.level, scope: [...(old?.scope ?? scopeOf(current.step))], round: 0, isFrameRequested: true });
@@ -891,10 +986,12 @@ export class SessionStore {
 		return task;
 	}
 
-	private requireStep(step: string): void {
-		if (!this.state.plan?.steps.some((s) => s.id === step)) {
+	private requireStep(step: string): PlanStep {
+		const found = this.state.plan?.steps.find((s) => s.id === step);
+		if (!found) {
 			throw new Error(`The plan has no step ${step}.`);
 		}
+		return found;
 	}
 
 	// The active task in a stage where the user changes the level of the step: stage 4, or stage 5 for a step that Claude
@@ -989,14 +1086,27 @@ export class SessionStore {
 		writeTextAtomic(path.join(this.requireDir(), id, BUILD_FILE), jsonText({ version: FILE_VERSION, steps } satisfies BuildFile));
 	}
 
+	// The level and the note of the user for a step. The answers and the decisions of the user for the step stay
 	private writeLevel(id: string, step: string, level: Level | undefined, note: string | undefined): void {
+		const levels = this.userLevel(step, { ...this.state.levels?.levels[step], level, note });
+		writeTextAtomic(path.join(this.requireDir(), id, LEVELS_FILE), jsonText({ version: FILE_VERSION, levels } satisfies LevelsFile));
+	}
+
+	// The levels of the user with a new value for a step. A step with no level, no note, no answer and no decision of the
+	// user has no entry
+	private userLevel(step: string, value: Partial<UserLevel>): Record<string, UserLevel> {
 		const levels: Record<string, UserLevel> = { ...(this.state.levels?.levels ?? {}) };
-		if (level === undefined && note === undefined) {
+		const answers = value.answers && Object.keys(value.answers).length > 0 ? value.answers : undefined;
+		const added = value.added && value.added.length > 0 ? value.added : undefined;
+		if (!value.level && !value.note && !answers && !added) {
 			delete levels[step];
 		} else {
-			levels[step] = { ...(level ? { level } : {}), ...(note ? { note } : {}), time: this.time() };
+			levels[step] = {
+				...(value.level ? { level: value.level } : {}), ...(value.note ? { note: value.note } : {}), time: this.time(),
+				...(answers ? { answers } : {}), ...(added ? { added } : {}),
+			};
 		}
-		writeTextAtomic(path.join(this.requireDir(), id, LEVELS_FILE), jsonText({ version: FILE_VERSION, levels } satisfies LevelsFile));
+		return levels;
 	}
 
 	private writeOrder(id: string, order: Order): void {

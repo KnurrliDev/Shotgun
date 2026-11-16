@@ -1,11 +1,11 @@
 import * as assert from 'assert';
-import { readFileSync, rmSync, writeFileSync } from 'fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import * as path from 'path';
 import type { ClaudeState } from '../../claude/connection';
 import type { DiffFacts } from '../../dataflow/dataflow-api';
 import { buildGuard, buildNext, buildWriterOf } from '../../session/build';
 import { readText } from '../../session/files';
-import { anchorOf, answerText, checkFrame, findMarkers, holeNow } from '../../session/frame';
+import { anchorOf, answerText, checkFrame, findMarkers, holeNow, isObviousAnswer } from '../../session/frame';
 import { LineStore } from '../../session/lines';
 import { SessionStore } from '../../session/store';
 import type { BaseApi } from '../../tools/build';
@@ -15,20 +15,22 @@ import { buildModel, decisionText } from '../../views/model';
 import { isFromView } from '../../views/views';
 import { fakeEngine, makeProject, SURVEY } from './fixture';
 
-// The plan of the fixture: S1 changes the loop of solve() with a frame, S2 is a new test file, and S3 is the README
+// The plan of the fixture: S1 changes the loop of solve() with a frame and 2 open decisions, S2 is a new test file with 1
+// open decision, and S3 is the README
 const PLAN = {
 	steps: [
 		{
 			id: 'S1', title: 'Stop the loop at the limit', task: 'T1', hooks: ['H1'], text: 'Stop the loop at the limit.', checks: ['The project builds.'],
 			places: [{ file: 'src/solver.cpp', lines: [5, 7], code: 'for (int i = 0; i < plan.steps; ++i)' }],
+			decisions: [{ question: 'When does the loop stop?' }, { question: 'What happens at the limit?' }],
 		},
 		{
 			id: 'S2', title: 'A test of the limit', task: 'T1', hooks: [], text: 'A test for the limit.', checks: ['The test passes.'],
-			places: [{ file: 'tests/limit_test.cpp', new: true }],
+			places: [{ file: 'tests/limit_test.cpp', new: true }], decisions: [{ question: 'Which limit does the test use?' }],
 		},
 		{
 			id: 'S3', title: 'The note in the README', task: 'T2', hooks: ['H2'], text: 'Write the limit in the README.', checks: ['The README tells the limit.'],
-			places: [{ file: 'README.md', lines: [3, 3], code: 'It has no limit.' }],
+			places: [{ file: 'README.md', lines: [3, 3], code: 'It has no limit.' }], decisions: [],
 		},
 	],
 };
@@ -49,8 +51,9 @@ const FRAME = [
 	'}',
 ];
 
+// the hints of hole n, for the open decision Dn of the step
 const HINTS = (n: number, question: string, answer: string) => ({
-	n, question, nudge: 'Compare the counter with the limit.',
+	n, decision: `D${n}`, question, nudge: 'Compare the counter with the limit.',
 	pointer: { text: 'The loop counts in i, and plan.steps is the limit of the loop.', places: [{ file: 'src/solver.cpp', lines: [5, 5] }] },
 	example: { text: 'The loop has the same form.', file: 'src/solver.cpp', lines: [5, 5], code: 'i < plan.steps' },
 	answer,
@@ -99,7 +102,7 @@ suite('Frames', () => {
 		const checked = checkFrame({
 			holes: [
 				HINTS(1, 'When does the loop stop?', 'i >= plan.limit'),
-				{ ...HINTS(3, 'Where?', 'x'), example: { text: 'An example.', file: 'src/solver.cpp', lines: [5, 5], code: 'no such code' } },
+				{ ...HINTS(3, 'Where?', 'stop();'), example: { text: 'An example.', file: 'src/solver.cpp', lines: [5, 5], code: 'no such code' } },
 			],
 			note: 'The frame has the branch.',
 		}, ctx);
@@ -113,6 +116,47 @@ suite('Frames', () => {
 		assert.deepStrictEqual(ok.holes.map((h) => [h.n, h.question, h.file, h.line]), [
 			[1, 'When does the loop stop?', 'src/solver.cpp', 6], [2, 'What happens at the limit?', 'src/solver.cpp', 7],
 		]);
+	});
+
+	test('An answer that is only a type, a name, a literal or a list of parameters is an obvious hole (P32)', () => {
+		const obvious = ['int', 'std::optional<double>', 'const std::string&', 'limit', 'settings.cycle_limit', 'ctl->state', '8', '"x"', 'true', 'std::nullopt',
+			'int limit, bool force = false', '(int limit, std::atomic<bool>& stop)', '()', 'charge, settings', 'int cycle_limit = 8;', 'unsigned int'];
+		const decisions = ['counter = 0;', 'return std::nullopt;', 'break;', 'i >= plan.limit', '!stop.load()', 'std::clamp(limit, 1, 100)', 'a == b',
+			'if (a) {\n    b = 0;\n}', 'int limit = std::clamp(v, 1, 100)', '++count;', 'x + y, z', 'log("limit"); // the end'];
+		assert.deepStrictEqual(obvious.filter((a) => !isObviousAnswer(a)), []);
+		assert.deepStrictEqual(decisions.filter((a) => isObviousAnswer(a)), []);
+	});
+
+	test('With the open decisions of the step, each open decision needs exactly 1 hole, and a hole needs code with a decision (decision 32)', () => {
+		const root = path.resolve('/p');
+		const files: Record<string, string[]> = { [path.join(root, 'src', 'solver.cpp')]: FRAME };
+		const decisions = [{ id: 'D1', question: 'When does the loop stop?' }, { id: 'D2', question: 'What happens at the limit?' }];
+		const ctx = {
+			root, scope: ['src/solver.cpp'], folders: [root], isCaseSensitive: true, readLines: (f: string) => files[f], decisions,
+			stepText: 'Stop the loop at the limit. Call plan.finish(i) at the limit.',
+		};
+		const checked = checkFrame({
+			holes: [{ ...HINTS(1, 'When does the loop stop?', 'plan.done'), decision: 'D7' }, { ...HINTS(2, 'What happens at the limit?', 'plan.finish(i);'), decision: undefined }],
+		}, ctx);
+		assert.deepStrictEqual(checked.problems, [
+			'Hole 1: the answer "plan.done" is only a type, a name, a literal or a list of parameters. Such code is no decision: write it in the frame. '
+				+ 'A hole holds the whole code of its decision, for example a condition with its branch.',
+			'Hole 1: D7 is not an open decision of the step. The open decisions are D1, D2. A decision with an answer of the user is no hole: write the code '
+				+ 'of the answer in the frame.',
+			'Hole 2: the text of the step already gives the answer "plan.finish(i);", so the hole is no open decision. Write it in the frame.',
+			'Hole 2: give "decision": the id of the open decision of the step that the hole decides (D1, D2).',
+			'The open decision D1 "When does the loop stop?" has no hole. Give each open decision of the step 1 hole with the whole code of the decision.',
+			'The open decision D2 "What happens at the limit?" has no hole. Give each open decision of the step 1 hole with the whole code of the decision.',
+		]);
+		const twice = checkFrame({ holes: [HINTS(1, 'When does the loop stop?', 'i >= plan.limit'), { ...HINTS(2, 'What happens at the limit?', 'break;'), decision: 'D1' }] }, ctx);
+		assert.deepStrictEqual(twice.problems, [
+			'Hole 2: the decision D1 has a hole already. Give each open decision exactly 1 hole.',
+			'The open decision D2 "What happens at the limit?" has no hole. Give each open decision of the step 1 hole with the whole code of the decision.',
+		]);
+		const ok = checkFrame({ holes: [HINTS(1, 'When does the loop stop?', 'i >= plan.limit'), HINTS(2, 'What happens at the limit?', 'break;')] }, ctx);
+		assert.deepStrictEqual([ok.problems, ok.holes.map((h) => h.decision)], [[], ['D1', 'D2']]);
+		assert.deepStrictEqual(checkFrame({ holes: [HINTS(1, 'When does the loop stop?', 'i >= plan.limit')] }, { ...ctx, decisions: [] }).problems[0],
+			'The step has no open decision, so a frame has no hole. The user can add a decision on the plan page.');
 	});
 
 	test('The writer: level 3 gets a frame, and level 4 gets a frame only after the button of the user', () => {
@@ -170,7 +214,14 @@ suite('Frames', () => {
 			assert.strictEqual(buildNext(current).request, 'Give me a frame for step 1.');
 			assert.match(buildGuard(current, 'start').closed, /a frame of Claude\. Open it with start and the kind frame first/);
 			await assert.rejects(call('start_step', { step: 'S1', kind: 'errand' }), /Step 1 is a frame: write only the lines with no decision/);
-			await call('start_step', { step: 'S1', kind: 'frame' });
+			// a frame needs an open decision (decision 32): with each decision answered, Claude cannot open the frame
+			store.answerDecision('S1', 'D1', 'At the limit of the plan.');
+			store.answerDecision('S1', 'D2', 'Stop with the partial result.');
+			await assert.rejects(call('start_step', { step: 'S1', kind: 'frame' }), /Step 1 has no open decision, so a frame has no hole/);
+			store.answerDecision('S1', 'D1', '');
+			store.answerDecision('S1', 'D2', '');
+			const opened = await call('start_step', { step: 'S1', kind: 'frame' });
+			assert.match(String(opened.next), /Each open decision of the step is exactly 1 hole: D1 "When does the loop stop\?", D2 "What happens at the limit\?"/);
 			assert.deepStrictEqual(guard(solver()), {});
 			// Claude writes the frame
 			setText(FRAME);
@@ -233,6 +284,11 @@ suite('Frames', () => {
 			store.startStep('S2', { writer: 'user', level: 4, scope: ['tests/limit_test.cpp'], base: 'sg.base.S2' });
 			assert.strictEqual(model().task?.build?.current?.canRequestFrame, true);
 			await assert.rejects(call('start_step', { step: 'S2', kind: 'frame' }), /For a frame of Claude, the user selects "I want a frame" in the panel of Shotgun first/);
+			// "I want a frame" needs an open decision (decision 32)
+			store.answerDecision('S2', 'D1', 'The limit 3.');
+			assert.strictEqual(model().task?.build?.current?.canRequestFrame, false);
+			assert.throws(() => store.requestFrame('S2'), /Step 2 has no open decision, so a frame has no hole\. Add a decision on the plan page first\./);
+			store.answerDecision('S2', 'D1', '');
 			const old = store.requestFrame('S2');
 			assert.strictEqual(old?.base, 'sg.base.S2');
 			const current = store.current!;
@@ -255,6 +311,30 @@ suite('Frames', () => {
 			assert.deepStrictEqual(store.snapshot.decisions.filter((d) => d.kind === 'frame-request' || (d.kind === 'level' && d.step === 'S2')).map((d) => d.kind),
 				['level', 'frame-request', 'level']);
 			assert.match(readFileSync(path.join(root, '.shotgun', 'a-cycle-limit-for-the-solver', 'decisions.jsonl'), 'utf8'), /"kind":"frame-request"/);
+		});
+
+		test('An errand with an open decision: Claude gives its choice, and the receipt shows it (P31)', async () => {
+			store.startStep('S1', { writer: 'frame', level: 3, scope: ['src/solver.cpp'] });
+			store.writeFrame('S1', [], undefined);
+			store.finishStep('S1', 'step-done');
+			store.setLevel('S2', 2);
+			const start = await call('start_step', { step: 'S2' });
+			assert.match(String(start.next), /The step has open decisions: D1 "Which limit does the test use\?"\. Decide each one, and give your choice in "choices"\./);
+			mkdirSync(path.join(root, 'tests'));
+			writeFileSync(path.join(root, 'tests', 'limit_test.cpp'), 'int limit = 3;');
+			next = {
+				root, base: 'mark:x', suggestedSteps: [],
+				files: [{ file: 'tests/limit_test.cpp', lines: 1, isNew: true, hunks: [{ id: 'h1', lines: [1, 1], added: 1, removed: 0, diff: '+    1 | int limit = 3;' }] }],
+			};
+			const changes = [{ file: 'tests/limit_test.cpp', lines: [1, 1], title: 'The limit of the test', check: 'Is 3 the correct limit?' }];
+			await assert.rejects(call('submit_errand', { step: 'S2', changes }), /Give your choice for the open decision D1 "Which limit does the test use\?" in "choices"\./);
+			await assert.rejects(call('submit_errand', { step: 'S2', changes, choices: [{ decision: 'D7', choice: 'x' }] }),
+				/Choice 1: "D7" is not an open decision of the step\./);
+			await call('submit_errand', { step: 'S2', changes, choices: [{ decision: 'D1', choice: 'The limit 3: the smallest limit of the brief.' }] });
+			const choice = { decision: 'D1', question: 'Which limit does the test use?', choice: 'The limit 3: the smallest limit of the brief.' };
+			assert.deepStrictEqual(store.snapshot.build!.steps.S2.receipt?.choices, [choice]);
+			assert.deepStrictEqual(model().task?.build?.current?.receipt?.choices, [choice]);
+			assert.deepStrictEqual(model().task?.build?.current?.decisions, [{ id: 'D1', question: 'Which limit does the test use?', options: [], by: 'claude' }]);
 		});
 	});
 });

@@ -8,6 +8,7 @@ This document tells how to do a task with Shotgun and Claude Code. [Install Shot
 - [The survey](#the-survey)
 - [The order](#the-order)
 - [The plan and the risk levels](#the-plan-and-the-risk-levels)
+- [Open decisions](#open-decisions)
 - [The build](#the-build)
 - [Frames](#frames)
 - [Callouts](#callouts)
@@ -33,15 +34,15 @@ This document tells how to do a task with Shotgun and Claude Code. [Install Shot
 10. On the order page, put the tasks in sequence. You can change the text of a task, add a task, and keep a task for later.
 11. Tell Claude "Survey my changed tasks." Claude gives the hooks and the needs of each task with a new text, and of each new task.
 12. When the order is correct, select **Accept the order**.
-13. Tell Claude "Make the plan." Claude makes the steps in your sequence, and Shotgun gives each step a risk level.
-14. Check the levels on the plan page. To change a level, select **Lower**, **Raise** or **Shotgun: Set Risk Level**. Write your reason in the note of the step.
+13. Tell Claude "Make the plan." Claude makes the steps in your sequence, and names the open decisions of each step. Shotgun gives each step a risk level.
+14. Check the open decisions and the levels on the plan page. Answer a decision in words, or add a decision of yours. To change a level, select **Lower**, **Raise** or **Shotgun: Set Risk Level**. Write your reason in the note of the step.
 15. When the plan is correct, select **Accept the plan**.
 16. In stage 5, the panel shows the current step. The steps go in sequence.
-17. For a step of Claude, tell Claude "Do step N." Claude changes the files of the step, and gives a receipt.
+17. For a step of Claude, tell Claude "Do step N." Claude changes the files of the step, and gives a receipt. The receipt also shows the choice of Claude for each open decision of the step.
 18. Walk the receipt in the panel. Put a mark on each change: **OK**, **Issue** or **Question**. Write a note for Claude if necessary.
 19. For an issue or a question, tell Claude "Fix the issues of step N." Then walk the new receipt.
 20. Select **Accept the receipt**.
-21. For a step of level 3, tell Claude "Give me a frame for step N." Fill each hole of the frame. Then select **The step is done**.
+21. For a step of level 3, tell Claude "Give me a frame for step N." Each open decision of the step is a hole of the frame. Fill each hole. Then select **The step is done**.
 22. For a step of yours, write its code. Then select **The step is done**. At level 4, you can select **I want a frame** first.
 23. While you write a step, read the callouts of DataFlow on your lines. Tell Claude "Explain the callout on line N." for the words of Claude. Ask Claude about a line, for example "Does the lambda on line 95 copy charge?".
 24. At the gate of each step, Shotgun gets the loose ends of the step from DataFlow. Hand a mechanical loose end to Claude, and tell Claude "Do the loose ends.".
@@ -158,12 +159,37 @@ More rules make a level only higher:
 - Callers that the call graph cannot see: level 3 or higher.
 - A frame path with more than 8 calls, or a line in the main loop: level 4 or higher.
 - A worker thread at the line: 1 level more. A lock at the line: 1 level more. The maximum is 5.
-- A data member of a type: level 2, or level 3 if threads share a member or a member is on a frame path. A change of a data member gets the level of the hottest function that uses it.
+- A data member of a type: level 2, or level 3 if threads share a member or a member is on a frame path. A change of a data member gets the level of the hottest function that uses it. A new data member next to the other members changes no member, so the hottest function does not apply.
 - Before the end of the scan of the call graph, a function with an incomplete reach has no level. After a stopped scan or a failed scan, the level is 3 or higher.
+
+The open decisions of the step change the level of the rules too. A step with no open decision gets at most level 2, but level 5 stays. The next section tells more.
 
 In stage 5, the level selects the writer of the step. At the levels 1 and 2, Claude writes. At level 3, Claude writes a frame with a hole for each decision, and you fill the holes. At the levels 4 and 5, you write, and at level 4 you can ask for a frame. Only you change a level: in stage 4, and in stage 5 for a step that Claude did not start. The ledger records each level and each note of yours.
 
 In the stages 4 and 5, the text editor shows each place of a step with the color of its level, and a CodeLens line. A click on the CodeLens line shows the step on the page.
+
+## Open decisions
+
+The plan names the open decisions of each step: 0 to 3 choices that the brief, your answers and the order do not settle. An example is "What happens to the solve that still runs at the limit?". Claude can give the options that it sees, but not its choice. A type, a name, a signature or a value that the brief gives is no decision.
+
+The open decisions select your work:
+
+- A step with no open decision gets at most level 2, so Claude writes it, and you walk the receipt. The heat of the place does not change this.
+- A step with an open decision keeps the level of the heat. At level 3, each open decision is a hole of the frame. At the levels 4 and 5, you write the step.
+- A step of level 5 stays your step, also with no open decision.
+
+The plan page shows the open decisions under each step. The badge **Model** marks a decision of Claude, and **You** marks a decision of yours. You can:
+
+- **Answer** a decision in words. Then it is no hole, and the writer puts your answer into the code.
+- **Open again** a decision that you answered.
+- **Add a decision** of yours, for example a choice that Claude did not see. It is open, so the step keeps the level of the heat.
+- **Remove** a decision that you added.
+
+You change the decisions in stage 4, and in stage 5 for a step that Claude did not start. An answer or a new decision changes the level at once, and the ledger records it. A level of yours comes first.
+
+An open decision in a step of Claude is a choice of Claude in its errand. The gate **Accept the plan** names these decisions, and a modal message asks you first. The receipt of the step shows each choice of Claude with the badge **Model**. For a different choice, put an issue on its change.
+
+A plan of version 0.1.0 has no open decisions. Its steps keep the level of the heat.
 
 ## The build
 
@@ -189,9 +215,11 @@ You write a step of the levels 3, 4 and 5. Shotgun keeps the text of the files o
 
 A step of level 3 gets a frame. A step of level 4 gets a frame only after you select **I want a frame** in the panel.
 
-1. You tell Claude "Give me a frame for step N." Claude opens the step with the tool `shotgun_start_step` and the kind `frame`.
-2. Claude writes the lines of the step that have no decision. In the place of each decision, Claude writes a marker in a comment, for example `/*@hole 1: When is the plan too late? */`.
-3. Claude gives the holes with the tool `shotgun_submit_frame`. Each hole has 4 hints: a nudge, a pointer to the facts, an example from the project, and the answer. Shotgun checks each marker and each place.
+1. You tell Claude "Give me a frame for step N." Claude opens the step with the tool `shotgun_start_step` and the kind `frame`. A frame needs an open decision of the step, so a step with no open decision gets no frame.
+2. Claude writes all lines of the step that are not the code of an open decision. These are the declarations, the signatures, the calls that the plan names, and the code of each decision that you answered. In the place of the code of each open decision, Claude writes a marker in a comment, for example `/*@hole 1: What happens to the solve that still runs at the limit? */`.
+3. Claude gives the holes with the tool `shotgun_submit_frame`. Each open decision has exactly 1 hole. Each hole has 4 hints: a nudge, a pointer to the facts, an example from the project, and 1 possible answer. Shotgun checks each marker, each place and each decision.
+
+A hole holds the whole code of its decision, for example a condition with its branch, the change of the state and the error path. Shotgun refuses a hole that is only a type, a name, a literal or a list of parameters. It also refuses a hole whose answer is in the text of the step. Such code has no decision, so it is a line of the frame.
 
 The panel shows the holes and the state of each hole. Select a hole to see its question and the facts of DataFlow at its line. The hint ladder shows the hints one at a time. The hints came with the frame, so a click sends no request to Claude. **4 Show me** puts the answer of Claude into the hole, after a modal message. Its lines are lines of Claude.
 
@@ -323,9 +351,9 @@ The guard helps you, but it is not a security boundary:
 | `.shotgun/<task>/engine.json` | The facts of DataFlow for each hook of the survey. |
 | `.shotgun/<task>/answers.json` | Your answers to the questions of the survey. |
 | `.shotgun/<task>/order.json` | Your order of the tasks: the sequence, your texts, your new tasks, the tasks for later, and the surveys of Claude for the changed tasks. |
-| `.shotgun/<task>/plan.json` | The steps of the plan of Claude. |
-| `.shotgun/<task>/risk.json` | The facts of DataFlow and the level of the rules for each step. |
-| `.shotgun/<task>/levels.json` | Your levels and your notes for the steps. |
+| `.shotgun/<task>/plan.json` | The steps of the plan of Claude, with their open decisions. |
+| `.shotgun/<task>/risk.json` | The facts of DataFlow and the level of the heat for each step. |
+| `.shotgun/<task>/levels.json` | Your levels, your notes, your answers to the open decisions, and your decisions for the steps. |
 | `.shotgun/<task>/build.json` | The state of each step of the build, its scope and its base. Also the receipt with the notes of Claude and your marks, and the holes of a frame with their hints. |
 | `.shotgun/<task>/lines.json` | The writer of each changed line, with a hash of each line of the file. |
 | `.shotgun/<task>/callouts.json` | The facts of DataFlow at the start of each step, the callouts with your reasons and the words of Claude, and the answers on lines. |

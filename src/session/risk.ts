@@ -17,7 +17,7 @@ export type StepWriter = 'claude' | 'frame' | 'user';
 export const LEVEL_INFO: Readonly<Record<Level, { readonly name: string; readonly writer: StepWriter; readonly text: string }>> = {
 	1: { name: 'Very low', writer: 'claude', text: 'Claude writes. The step changes no code that is there. You check 1 receipt.' },
 	2: { name: 'Low', writer: 'claude', text: 'Claude writes in the scope of the step. You check the receipt.' },
-	3: { name: 'Medium', writer: 'frame', text: 'Claude writes the frame. Each decision is a hole for you.' },
+	3: { name: 'Medium', writer: 'frame', text: 'Claude writes the frame. Each open decision is a hole for you.' },
 	4: { name: 'High', writer: 'user', text: 'You write. A frame is possible on request. Tests run before and after the step.' },
 	5: { name: 'Very high', writer: 'user', text: 'You write each line. Claude gives facts and callouts only. The step gets its own commit.' },
 };
@@ -54,7 +54,8 @@ export interface PlaceRisk {
 	readonly type?: {
 		readonly name: string;
 		readonly isHot: boolean; // a data member is on a frame path, or 2 or more threads use it
-		readonly changed: readonly string[]; // the data members in the lines
+		readonly isNew?: boolean; // the step adds a data member next to the lines, and changes no member (P26)
+		readonly changed: readonly string[]; // the data members in the lines that the step changes
 		readonly hottestUser?: { readonly function: string; readonly score: number; readonly band: Band };
 	};
 }
@@ -86,13 +87,22 @@ export function placeLevel(place: PlaceRisk, scan: ScanState): RuleResult {
 }
 
 // A place in a type. A new data member gets level 2. It gets level 3 if a data member of the type is on a frame path, or
-// if threads share it. A change of a data member gets the level of its hottest user
+// if threads share it. A change of a data member gets the level of its hottest user. A place with insert changes no
+// member, so the hottest user does not apply (P26)
 function typeLevel(place: PlaceRisk): RuleResult {
 	const type = place.type!;
 	let level: Level = type.isHot ? 3 : 2;
-	const reasons = [type.isHot
-		? `A data member of the type ${type.name} is on a frame path, or threads share it: level 3.`
-		: `A data member of the type ${type.name}, with no frame path and no shared data: level 2.`];
+	let reason: string;
+	if (type.isNew) {
+		reason = type.isHot
+			? `The step adds a data member to the type ${type.name}. A data member of this type is on a frame path, or threads share it: level 3.`
+			: `The step adds a data member to the type ${type.name}, with no frame path and no shared data: level 2.`;
+	} else {
+		reason = type.isHot
+			? `A data member of the type ${type.name} is on a frame path, or threads share it: level 3.`
+			: `A data member of the type ${type.name}, with no frame path and no shared data: level 2.`;
+	}
+	const reasons = [reason];
 	const user = type.hottestUser;
 	if (user && LEVEL_OF_BAND[user.band] > level) {
 		level = LEVEL_OF_BAND[user.band];

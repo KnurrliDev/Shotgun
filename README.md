@@ -18,14 +18,14 @@ A task goes through 5 stages:
 
 A gate ends each stage, and only you pass a gate. A button of Shotgun records a decision of yours. It never starts Claude: you type each request in Claude Code. You can return the task to an earlier stage at any time.
 
-In the build, the risk level of a step selects its writer:
+The plan names the open decisions of each step: the choices that your brief and your answers do not settle. A step with no open decision gets at most level 2, so Claude writes it. On the plan page, you can answer a decision in words, or add a decision of yours. In the build, the risk level of a step selects its writer:
 
 | Level | Writer |
 | --- | --- |
-| 1 and 2 | Claude does the step as an errand. You walk its receipt, and put a mark on each change. |
-| 3 | Claude writes a frame with a hole for each decision. You fill the holes, with 4 hints for each hole. |
+| 1 and 2 | Claude does the step as an errand. You walk its receipt, and put a mark on each change. The receipt shows the choice of Claude for each open decision. |
+| 3 | Claude writes a frame with a hole for each open decision. You fill the holes, with 4 hints for each hole. |
 | 4 | You write the step. You can ask for a frame. |
-| 5 | You write the step. Claude changes no file, but it answers your questions. |
+| 5 | You write the step, also with no open decision. Claude changes no file, but it answers your questions. |
 
 The guard of Shotgun stops each file change of Claude in the stages 1 to 4. In the build, it lets Claude change only the files of its open step. While you write, Shotgun shows the new facts of DataFlow on your lines as callouts, for example a race. The ledger keeps your decisions and the writer of each changed line.
 

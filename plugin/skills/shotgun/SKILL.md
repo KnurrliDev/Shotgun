@@ -79,7 +79,7 @@ When the user asks for the survey of the changed tasks, for example "Survey my c
 
 ## Stage 4: the plan
 
-When the user asks for the plan, for example "Make the plan", use the skill `shotgun-plan`. Shotgun gives each step a risk level from the facts of DataFlow. Do not choose a level: only the user changes a level. When the plan is correct, the user selects "Accept the plan".
+When the user asks for the plan, for example "Make the plan", use the skill `shotgun-plan`. The plan names the open decisions of each step. Shotgun gives each step a risk level from the facts of DataFlow and from its open decisions. A step with no open decision gets at most level 2. Do not choose a level: only the user changes a level. The user can answer a decision in words on the plan page. When the plan is correct, the user selects "Accept the plan".
 
 ## Stage 5: the build
 
@@ -87,8 +87,8 @@ The steps of the plan go in sequence. The risk level of a step selects its write
 
 | Level | Writer |
 | --- | --- |
-| 1 and 2 | You. The step is an errand with a receipt for the user. |
-| 3 | You write a frame, and the user fills its holes: the decisions of the user. |
+| 1 and 2 | You. The step is an errand with a receipt for the user. You decide its open decisions, and the receipt shows your choices. |
+| 3 | You write a frame, and the user fills a hole for each open decision of the step. |
 | 4 | The user. If the user selects "I want a frame" in the panel of Shotgun, you write a frame. |
 | 5 | The user. You change no file in the step, but you can answer questions in the chat. |
 

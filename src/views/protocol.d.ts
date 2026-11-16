@@ -187,6 +187,16 @@ export interface PlanPlaceView {
 	excerpt?: ExcerptView;
 }
 
+// A decision of a step (decision 31): open, or with the answer of the user. by: Claude gave it in the plan, or the user
+// added it
+export interface StepDecisionView {
+	id: string; // D1 to D3 of Claude, U1 to U3 of the user
+	question: string;
+	options: string[];
+	by: 'claude' | 'user';
+	answer?: string;
+}
+
 export interface PlanStepView {
 	id: string;
 	n: number; // the place of the step in the plan, from 1
@@ -207,7 +217,9 @@ export interface PlanStepView {
 	reasons: string[]; // the rules that gave the level of the rules
 	userNote: string;
 	heat?: PlanHeatView;
-	isLevelEditable: boolean; // stage 4, or a step in stage 5 that Claude did not start (decision 17)
+	isLevelEditable: boolean; // stage 4, or a step in stage 5 that Claude did not start (decision 17). Also for the decisions
+	decisions?: StepDecisionView[]; // undefined: a plan of version 0.1.0 or a loose end, with the level of the heat only (P34)
+	isCapped: boolean; // the step has no open decision, so the level of the rules is at most 2 (decision 31)
 }
 
 export interface PlanView {
@@ -219,6 +231,9 @@ export interface PlanView {
 	riskTime?: string; // the time of the last check of the levels
 	isEditable: boolean; // stage 4
 	maxNote: number;
+	maxQuestion: number; // the maximum length of a decision of the user
+	maxAnswer: number; // the maximum length of an answer of the user
+	maxUserDecisions: number; // the decisions that the user can add to a step
 }
 
 // A step of the plan in the build (stage 5)
@@ -276,6 +291,7 @@ export interface ReceiptView {
 	deleted: string[];
 	looseEnds: { text: string; place?: string; path?: string; line?: number }[];
 	notice?: string;
+	choices: { decision: string; question: string; choice: string }[]; // the choices of Claude for the open decisions (P31)
 }
 
 // A place of a hint, as a link
@@ -317,8 +333,9 @@ export interface CurrentStepView extends BuildStepView {
 	holes?: HoleView[]; // the holes of the frame of Claude
 	holesDone?: number; // the holes with code, or with a place that Shotgun cannot find
 	frameNote?: string; // the note of Claude for the frame
-	canRequestFrame: boolean; // a step of level 4 of the user: the button "I want a frame" (decision 16)
+	canRequestFrame: boolean; // a step of level 4 of the user with an open decision: the button "I want a frame" (decision 16)
 	isFrameRequested: boolean;
+	decisions?: StepDecisionView[]; // the decisions of the step with the answers of the user (decision 31)
 }
 
 // A callout: a new fact of DataFlow on a line of the user (decision 13: the badge Engine), with the words of Claude
@@ -507,6 +524,10 @@ export type FromView =
 	| { type: 'editOrder'; edit: OrderEditView }
 	| { type: 'setLevel'; step: string; level: number | null } // null: the level of the rules again
 	| { type: 'setLevelNote'; step: string; note: string }
+	// the decisions of a step (P29): an answer in words, an empty answer opens the decision again, a decision of the user
+	| { type: 'answerDecision'; step: string; decision: string; text: string }
+	| { type: 'addDecision'; step: string; question: string }
+	| { type: 'removeDecision'; step: string; decision: string }
 	| { type: 'checkLevels' }
 	| { type: 'setMark'; step: string; change: string; mark: 'todo' | 'ok' | 'issue' | 'question' } // todo: no mark
 	| { type: 'setChangeNote'; step: string; change: string; note: string }

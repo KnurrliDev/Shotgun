@@ -53,6 +53,7 @@ export interface HoleFacts {
 export interface Hole {
 	readonly n: number;
 	readonly question: string;
+	readonly decision?: string; // the open decision of the step that the hole decides, for example D1 (decision 32)
 	readonly file: string; // relative to the first folder of the project, with /
 	readonly line: number; // the first line of the marker at the time of the frame
 	readonly anchor: HoleAnchor;
@@ -196,6 +197,83 @@ export interface FrameContext {
 	readonly folders: readonly string[];
 	readonly isCaseSensitive: boolean;
 	readonly readLines: (file: string) => readonly string[] | undefined; // the lines of a file now, from an open text editor first
+	// the open decisions of the step: each one needs 1 hole (decision 32). undefined: a plan of version 0.1.0 (P34)
+	readonly decisions?: readonly { readonly id: string; readonly question: string }[];
+	readonly stepText?: string; // the text, the checks and the answers of the step. An answer of a hole cannot be in it (P32)
+}
+
+//-------------------
+// An obvious hole (P32): an answer that is only a type, a name, a literal or a list of parameters. Such code has no
+// decision, so it is a line of the frame
+
+const QNAME = String.raw`(?:::)?[A-Za-z_]\w*(?:\s?::\s?[A-Za-z_]\w*)*`;
+const LITERAL = /^(?:[-+]?(?:\d|\.\d)[\w.']*|"S"|'C'|true|false|nullptr|NULL)$/;
+const NAME = new RegExp(String.raw`^${QNAME}(?:\s?(?:\.|->)\s?[A-Za-z_]\w*)*$`);
+const TYPE = new RegExp(String.raw`^(?:(?:const|volatile|unsigned|signed|long|short|struct|class|enum|typename|constexpr|static|inline)\s)*`
+	+ String.raw`${QNAME}(?:\s?<[^;{}()=]*>)?(?:\s?::\s?[A-Za-z_]\w*)*(?:\s?(?:\*|&&|&|const\b|volatile\b))*$`);
+// a type and a name, with an optional default value: the type ends with a space, *, & or >
+const DECLARATION = /^(.+?[\s*&>])\s*([A-Za-z_]\w*)(?:\s?=\s?(.+))?$/;
+// the words that start a statement or an expression, not a type
+const KEYWORDS = new Set(['return', 'if', 'else', 'while', 'for', 'do', 'switch', 'case', 'default', 'break', 'continue', 'goto', 'throw', 'try',
+	'catch', 'new', 'delete', 'co_return', 'co_await', 'co_yield', 'sizeof', 'alignof', 'decltype', 'static_assert', 'using', 'typedef', 'operator', 'not']);
+
+const startsWithKeyword = (code: string): boolean => KEYWORDS.has(/^[A-Za-z_]\w*/.exec(code)?.[0] ?? '');
+const isLiteral = (code: string): boolean => LITERAL.test(code);
+const isName = (code: string): boolean => NAME.test(code) && !startsWithKeyword(code);
+const isType = (code: string): boolean => TYPE.test(code) && !startsWithKeyword(code);
+
+// The code of an answer with no comments, no text in quotes and no last semicolon, on 1 line
+function codeOf(answer: string): string {
+	return answer.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ')
+		.replace(/"(?:[^"\\\n]|\\.)*"/g, '"S"').replace(/'(?:[^'\\\n]|\\.)*'/g, "'C'")
+		.replace(/\s+/g, ' ').trim().replace(/;$/, '').trim();
+}
+
+// The parts of a list at its top level: the commas in <>, () and [] do not split
+function topLevelParts(code: string): string[] {
+	const parts: string[] = [];
+	let depth = 0;
+	let start = 0;
+	for (let i = 0; i < code.length; i++) {
+		const c = code[i];
+		if (c === '<' || c === '(' || c === '[') {
+			depth++;
+		} else if (c === '>' || c === ')' || c === ']') {
+			depth--;
+		} else if (c === ',' && depth === 0) {
+			parts.push(code.slice(start, i).trim());
+			start = i + 1;
+		}
+	}
+	parts.push(code.slice(start).trim());
+	return parts;
+}
+
+// A part of a list of parameters or arguments: a name, a literal, a type, or a type with a name and a default value
+function isParameter(part: string): boolean {
+	if (isName(part) || isLiteral(part) || isType(part)) {
+		return true;
+	}
+	const m = DECLARATION.exec(part);
+	if (!m) {
+		return false;
+	}
+	const init = m[3]?.trim();
+	return isType(m[1].trim()) && (init === undefined || isLiteral(init) || isName(init));
+}
+
+// True if the answer of a hole is only a type, a name, a literal, a declaration or a list of parameters (P32). An answer
+// with more than 1 statement, a block, an operator or a call is not obvious
+export function isObviousAnswer(answer: string): boolean {
+	const code = codeOf(answer);
+	if (!code || /[;{}]/.test(code)) {
+		return false;
+	}
+	// a list of parameters in parentheses, also an empty list
+	if (code.startsWith('(') && code.endsWith(')') && topLevelParts(code.slice(1, -1)).every((p) => p === '' || isParameter(p))) {
+		return true;
+	}
+	return topLevelParts(code).every((p) => p !== '' && isParameter(p));
 }
 
 // Checks the holes of Claude in submit_frame against the markers in the files of the scope. Each marker needs a hole
@@ -247,6 +325,10 @@ export function checkFrame(raw: Record<string, unknown>, ctx: FrameContext): { h
 	};
 	const holes: Omit<Hole, 'shown' | 'facts'>[] = [];
 	const given = new Set<number>();
+	const decided = new Set<string>(); // the open decisions with a hole
+	if (ctx.decisions && ctx.decisions.length === 0) {
+		problems.push('The step has no open decision, so a frame has no hole. The user can add a decision on the plan page.');
+	}
 	const raws = Array.isArray(raw.holes) ? raw.holes : [];
 	if (!Array.isArray(raw.holes) || raws.length === 0) {
 		problems.push('Give 1 hole or more in "holes", with the number of the marker of each hole.');
@@ -308,10 +390,30 @@ export function checkFrame(raw: Record<string, unknown>, ctx: FrameContext): { h
 			problems.push(`${label}: give the "answer" of 1 to ${MAX_ANSWER} characters: the code in the place of the marker.`);
 		} else if (/\/\*\s*@hole/.test(answer)) {
 			problems.push(`${label}: the answer has a hole marker. Give the code of the decision.`);
+		} else if (isObviousAnswer(answer)) {
+			problems.push(`${label}: the answer "${norm(answer)}" is only a type, a name, a literal or a list of parameters. Such code is no decision: `
+				+ 'write it in the frame. A hole holds the whole code of its decision, for example a condition with its branch.');
+		} else if (ctx.stepText && norm(codeOf(answer)).length >= 8 && norm(ctx.stepText).includes(norm(codeOf(answer)))) {
+			problems.push(`${label}: the text of the step already gives the answer "${norm(answer)}", so the hole is no open decision. Write it in the frame.`);
+		}
+		// the open decision of the hole (decision 32)
+		const decision = typeof item.decision === 'string' ? item.decision.trim() : '';
+		if (ctx.decisions) {
+			const ids = ctx.decisions.map((d) => d.id).join(', ');
+			if (!decision) {
+				problems.push(`${label}: give "decision": the id of the open decision of the step that the hole decides (${ids}).`);
+			} else if (!ctx.decisions.some((d) => d.id === decision)) {
+				problems.push(`${label}: ${decision} is not an open decision of the step. The open decisions are ${ids}. A decision with an answer of the user `
+					+ 'is no hole: write the code of the answer in the frame.');
+			} else if (decided.has(decision)) {
+				problems.push(`${label}: the decision ${decision} has a hole already. Give each open decision exactly 1 hole.`);
+			}
+			decided.add(decision);
 		}
 		if (found && question && nudge && pointerText && places.length > 0 && exampleText && examplePlace && code && answer) {
 			holes.push({
-				n, question: found.marker.question, file: found.file, line: found.marker.start.line, anchor: anchorOf(found.lines, found.marker),
+				n, question: found.marker.question, ...(ctx.decisions && decision ? { decision } : {}), file: found.file, line: found.marker.start.line,
+				anchor: anchorOf(found.lines, found.marker),
 				hints: {
 					nudge,
 					pointer: { text: pointerText, places },
@@ -322,6 +424,8 @@ export function checkFrame(raw: Record<string, unknown>, ctx: FrameContext): { h
 		}
 	});
 	markers.filter((m) => !given.has(m.marker.n)).forEach((m) => problems.push(`The marker of hole ${m.marker.n} in ${m.file}:${m.marker.start.line} has no hints. Give hole ${m.marker.n} in "holes".`));
+	(ctx.decisions ?? []).filter((d) => !decided.has(d.id)).forEach((d) => problems.push(`The open decision ${d.id} "${d.question}" has no hole. `
+		+ 'Give each open decision of the step 1 hole with the whole code of the decision.'));
 	const note = text(raw.note);
 	if (note.length > MAX_FRAME_NOTE) {
 		problems.push(`The "note" has more than ${MAX_FRAME_NOTE} characters.`);

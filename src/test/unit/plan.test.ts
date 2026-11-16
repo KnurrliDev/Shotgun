@@ -6,7 +6,7 @@ import type { ClaudeState } from '../../claude/connection';
 import type { HeatFacts } from '../../dataflow/dataflow-api';
 import { StepDecorations } from '../../editor/steps';
 import { readText } from '../../session/files';
-import { checkPlan, levelOf, parseLevels, parsePlan, parseRisk } from '../../session/plan';
+import { checkPlan, decisionsOf, levelOf, levelReasons, parseLevels, parsePlan, parseRisk } from '../../session/plan';
 import { placeLevel } from '../../session/risk';
 import { SessionStore } from '../../session/store';
 import type { SurveyContext } from '../../session/survey';
@@ -18,20 +18,22 @@ import { buildModel, decisionText } from '../../views/model';
 import { isFromView } from '../../views/views';
 import { fakeEngine, heatFacts, makeProject, noBuild, placeFacts, SURVEY } from './fixture';
 
-// A plan for the fixture: S1 changes the loop of solve(), S2 makes a new file, and S3 changes the README
+// A plan for the fixture: S1 changes the loop of solve() with 1 open decision, S2 makes a new file, and S3 changes the
+// README
 const PLAN = {
 	steps: [
 		{
 			id: 'S1', title: 'The limit in the loop', task: 'T1', hooks: ['H1'], text: 'Stop the loop at the limit.', checks: ['The project builds.'],
 			places: [{ file: 'src/solver.cpp', lines: [5, 7], code: 'for (int i = 0; i < plan.steps; ++i)' }],
+			decisions: [{ question: 'What happens to the partial result at the limit?', options: ['Keep it', 'Drop it'] }],
 		},
 		{
 			id: 'S2', title: 'A test of the limit', task: 'T1', hooks: [], text: 'A test for the limit.', checks: ['The test passes.'],
-			places: [{ file: 'tests/limit_test.cpp', new: true }],
+			places: [{ file: 'tests/limit_test.cpp', new: true }], decisions: [],
 		},
 		{
 			id: 'S3', title: 'The note in the README', task: 'T2', hooks: ['H2'], text: 'Write the limit in the README.', checks: ['The README tells the limit.'],
-			places: [{ file: 'README.md', lines: [3, 3], code: 'It has no limit.' }], note: 'A text file, with no facts of DataFlow.',
+			places: [{ file: 'README.md', lines: [3, 3], code: 'It has no limit.' }], note: 'A text file, with no facts of DataFlow.', decisions: [],
 		},
 	],
 };
@@ -59,7 +61,7 @@ suite('Plan', () => {
 		version: '0.1.0', snapshot: store.snapshot, dataflow: { state: 'ready', version: '0.6.0', engine: 'ready' }, claude: connected,
 		readLines: (f) => readText(f)?.split(/\r?\n/),
 	});
-	const levels = () => store.snapshot.plan!.steps.map((s) => levelOf(s.id, store.snapshot.risk, store.snapshot.levels).level);
+	const levels = () => store.snapshot.plan!.steps.map((s) => levelOf(s, store.snapshot.risk, store.snapshot.levels).level);
 
 	setup(() => {
 		root = makeProject('shotgun-plan-');
@@ -80,12 +82,16 @@ suite('Plan', () => {
 			[{ file: 'tests/limit_test.cpp' }],
 			[{ file: 'README.md', lines: [3, 3], code: 'It has no limit.', codeLine: 3 }],
 		]);
+		// Shotgun gives the open decisions the ids D1 to D3
+		assert.deepStrictEqual(plan.steps.map((s) => s.decisions), [
+			[{ id: 'D1', question: 'What happens to the partial result at the limit?', options: ['Keep it', 'Drop it'] }], [], [],
+		]);
 		const bad = checkPlan({
 			steps: [
-				{ id: 'S1', title: 'A', task: 'T2', hooks: ['H9'], text: 'x', checks: [], places: [] },
-				{ id: 's1', title: 'B', task: 'T7', text: 'x', checks: ['a', 'b', 'c', 'd', 'e', 'f'], places: [{ file: 'README.md', new: true }] },
-				{ id: 'S3', title: 'C', task: 'T1', text: 'x', checks: ['a'], places: [{ file: 'src/none.cpp', lines: [1, 1], code: 'abc' }] },
-				{ id: 'S4', title: 'D', task: 'T1', text: 'x', checks: ['a'], places: [{ file: 'src/solver.cpp', lines: [5, 7], code: 'while (true)' }] },
+				{ id: 'S1', title: 'A', task: 'T2', hooks: ['H9'], text: 'x', checks: [], places: [], decisions: [] },
+				{ id: 's1', title: 'B', task: 'T7', text: 'x', checks: ['a', 'b', 'c', 'd', 'e', 'f'], places: [{ file: 'README.md', new: true }], decisions: [] },
+				{ id: 'S3', title: 'C', task: 'T1', text: 'x', checks: ['a'], places: [{ file: 'src/none.cpp', lines: [1, 1], code: 'abc' }], decisions: [] },
+				{ id: 'S4', title: 'D', task: 'T1', text: 'x', checks: ['a'], places: [{ file: 'src/solver.cpp', lines: [5, 7], code: 'while (true)' }], decisions: [] },
 			],
 		}, context(), order, survey);
 		assert.deepStrictEqual(bad.problems, [
@@ -160,6 +166,13 @@ suite('Plan', () => {
 			kind: 'type', type: { name: 'Plan', isHot: false, changed: ['steps'], hottestUser: { function: 'solve', score: 80, band: 'very hot' } },
 		});
 		assert.strictEqual(placeLevel(type, 'ready').level, 5);
+		// with insert, the step adds a member next to the line and changes no member, so the hot user does not apply (P26)
+		const inserted = await placeRisk(fakeEngine([], { heat: typeHeat, functionHeat: veryHot }), root,
+			{ file: 'src/solver.cpp', lines: [1, 1], code: '#include', codeLine: 1, insert: true });
+		assert.deepStrictEqual(inserted, { kind: 'type', type: { name: 'Plan', isHot: false, isNew: true, changed: [] } });
+		assert.deepStrictEqual(placeLevel(inserted, 'ready'), {
+			level: 2, reasons: ['The step adds a data member to the type Plan, with no frame path and no shared data: level 2.'],
+		});
 		const coolHeat = async (file: string): Promise<HeatFacts> => {
 			const h = heatFacts(file, true);
 			return { ...h, functions: [h.functions[0]] };
@@ -181,6 +194,93 @@ suite('Plan', () => {
 		assert.deepStrictEqual(await placeRisk(undefined, root, { file: 'src/solver.cpp', lines: [5, 7] }), {
 			kind: 'unknown', reason: 'Shotgun has no link to DataFlow, so the place has no facts. The level comes with the link.',
 		});
+	});
+
+	test('The open decisions: the checks, the level from the heat and the decisions, and the answers and the decisions of the user', async () => {
+		await planStage();
+		// the checks of the decisions and of insert (P26, P27)
+		const bad = checkPlan({
+			steps: [
+				{ ...PLAN.steps[0], decisions: undefined },
+				{ ...PLAN.steps[1], decisions: [{ question: '' }, { question: 'A?' }, { question: 'a?' }] },
+				{
+					...PLAN.steps[1], id: 'S3', title: 'Another test', places: [{ file: 'tests/other_test.cpp', new: true }],
+					decisions: [{ question: 'A?', options: ['x'.repeat(121)] }, { question: 'B?' }, { question: 'C?' }, { question: 'D?' }],
+				},
+				{
+					...PLAN.steps[2], id: 'S4', decisions: [],
+					places: [{ file: 'tests/x.cpp', new: true, insert: true }, { file: 'README.md', lines: [3, 3], code: 'It has no limit.', insert: 'yes' }],
+				},
+			],
+		}, context(), store.order, store.snapshot.survey!);
+		assert.deepStrictEqual(bad.problems, [
+			'Step 1: give "decisions": the open decisions of the step, 0 to 3. An open decision is a choice that the brief, the answers of the user and the '
+				+ 'order do not settle. Give an empty list for a step with no open decision.',
+			'Step 2, decision 1: give a "question" of 1 to 200 characters.',
+			'Step 2, decision 3: the step has the question "a?" 2 times.',
+			'Step 3: give a maximum of 3 "decisions". Split a step with more decisions into 2 steps.',
+			'Step 3, decision 1: give 0 to 4 "options", each with a maximum of 120 characters.',
+			'Step 4, place 1: a new file has no "insert". Give "insert": true only for lines of a file that is there.',
+			'Step 4, place 2: "insert" is true or false.',
+		]);
+		const s1 = () => store.snapshot.plan!.steps[0];
+		const level = () => levelOf(s1(), store.snapshot.risk, store.snapshot.levels);
+		// an open decision keeps the level of the heat. With no open decision, the level is at most 2 (decision 31)
+		await call('submit_plan', PLAN);
+		assert.deepStrictEqual(level(), { level: 4, rule: 4, heat: 4, isCapped: false });
+		store.answerDecision('S1', 'D1', '  Keep   it, and log it. ');
+		assert.deepStrictEqual(level(), { level: 2, rule: 2, heat: 4, isCapped: true });
+		assert.deepStrictEqual(levelReasons(s1(), store.snapshot.risk, store.snapshot.levels), [
+			'A change of a hot function, solve: level 4.', 'The step has no open decision, so its level is at most 2. The heat gave level 4.',
+		]);
+		// a decision of the user is open, so the step has the level of the heat again
+		store.addDecision('S1', 'Does the log line name the limit?');
+		assert.strictEqual(level().level, 4);
+		assert.throws(() => store.addDecision('S1', 'does the log line name the limit?'), /has the decision "does the log line name the limit\?" already/);
+		assert.throws(() => store.removeDecision('S1', 'D1'), /Only a decision that you added can go/);
+		assert.throws(() => store.answerDecision('S1', 'D9', 'x'), /Step S1 has no decision D9/);
+		assert.throws(() => store.answerDecision('S1', 'D1', 'x'.repeat(501)), /maximum of 500 characters/);
+		store.removeDecision('S1', 'U1');
+		assert.strictEqual(level().level, 2);
+		store.answerDecision('S1', 'D1', '');
+		assert.strictEqual(level().level, 4);
+		// a level of the user comes first (decision 9)
+		store.setLevel('S1', 3);
+		store.answerDecision('S1', 'D1', 'Drop it.');
+		assert.deepStrictEqual(level(), { level: 3, rule: 2, heat: 4, isCapped: true, user: 3 });
+		const file = parseLevels(readFileSync(path.join(root, '.shotgun', id, 'levels.json'), 'utf8'), id);
+		assert.deepStrictEqual([file.levels.S1.level, file.levels.S1.answers?.D1.text, file.levels.S1.added], [3, 'Drop it.', undefined]);
+		assert.deepStrictEqual(store.snapshot.decisions.filter((d) => d.kind === 'decision').map((d) => decisionText(d)), [
+			'You answered the decision "What happens to the partial result at the limit?" of step S1: "Keep it, and log it.".',
+			'You added the decision "Does the log line name the limit?" to step S1.',
+			'You removed your decision "Does the log line name the limit?" from step S1.',
+			'You opened the decision "What happens to the partial result at the limit?" of step S1 again.',
+			'You answered the decision "What happens to the partial result at the limit?" of step S1: "Drop it.".',
+		]);
+		const got = tool('get_plan').call({}) as { steps: { decisions?: unknown[] }[] };
+		assert.deepStrictEqual(got.steps[0].decisions, [{ id: 'D1', question: 'What happens to the partial result at the limit?', options: ['Keep it', 'Drop it'], by: 'claude', answer: 'Drop it.' }]);
+		// a new plan with a different question: the old answer does not apply
+		await call('submit_plan', { steps: [{ ...PLAN.steps[0], decisions: [{ question: 'Where does the loop stop?' }] }, PLAN.steps[1], PLAN.steps[2]] });
+		store.setLevel('S1', undefined);
+		assert.deepStrictEqual(decisionsOf(s1(), store.snapshot.levels), [{ id: 'D1', question: 'Where does the loop stop?', by: 'claude' }]);
+		assert.deepStrictEqual(level(), { level: 4, rule: 4, heat: 4, isCapped: false });
+		const view = model().task!.plan!;
+		assert.deepStrictEqual(view.steps.map((s) => [s.level, s.isCapped, s.decisions?.length]), [[4, false, 1], [1, false, 0], [2, false, 0]]);
+		assert.deepStrictEqual([view.maxQuestion, view.maxAnswer, view.maxUserDecisions], [200, 500, 3]);
+		// a step with no field decisions, for example of a plan of version 0.1.0, has the level of the heat only (P34)
+		assert.deepStrictEqual(levelOf({ ...s1(), decisions: undefined }, store.snapshot.risk, undefined), { level: 4, rule: 4, heat: 4, isCapped: false });
+		// level 5 stays a step of the user, also with no open decision (decision 33)
+		const veryHot = async (f: string): Promise<HeatFacts> => {
+			const h = heatFacts(f, true);
+			return { ...h, functions: [{ ...h.functions[1], score: 80, band: 'very hot' }] };
+		};
+		await call('submit_plan', { steps: [{ ...PLAN.steps[0], decisions: [] }, PLAN.steps[1], PLAN.steps[2]] }, fakeEngine([], { heat: veryHot }));
+		assert.deepStrictEqual(level(), { level: 5, rule: 5, heat: 5, isCapped: false });
+		// the messages of the page
+		assert.strictEqual(isFromView({ type: 'answerDecision', step: 'S1', decision: 'D1', text: 'x' }), true);
+		assert.strictEqual(isFromView({ type: 'addDecision', step: 'S1', question: 'x' }), true);
+		assert.strictEqual(isFromView({ type: 'removeDecision', step: 'S1', decision: 'U1' }), true);
+		assert.strictEqual(isFromView({ type: 'answerDecision', step: 'S1', decision: 'D1' }), false);
 	});
 
 	test('The levels and the notes of the user go into levels.json and the ledger, and stay with their steps', async () => {

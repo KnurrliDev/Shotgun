@@ -1,14 +1,14 @@
 # Shotgun: implementation plan
 
-- Date: 13 November 2026, changed on 14 November 2026
-- Status: the phases 0 to 9 are done. Section 8 gives the status of each phase.
+- Date: 13 November 2026, changed on 16 November 2026
+- Status: the phases 0 to 11 are done, except the full test of phase 10 in a real project of the user. Phase 11 tuned the risk levels and the holes of the frames. The phases 12 and 13 add stage 6, the review, and they wait until later. Section 8 gives the status of each phase.
 - Sources:
   - the design canvas: https://claude.ai/artifact/Sxm9DJ8WPE6LAFqW8PVD6z
   - `dataflow-gaps.md` and `dataflow-gaps-2.md` in this folder
   - `docs/api.md`, `docs/tools.md` and `src/mcp/claude.ts` in the repository of DataFlow
   - the documentation of Claude Code on 13 November 2026: hooks, plugins, MCP, the extension for VS Code, and legal and compliance
 
-Shotgun is a VS Code extension for pair programming with Claude. The work of a task goes through 5 stages, and each stage of Claude starts and ends at a gate of the user. A risk level for each step selects the writer of the step. The user writes the hot code, and Claude writes the cool code with a receipt. The goal is code that the user owns and understands.
+Shotgun is a VS Code extension for pair programming with Claude. The work of a task goes through 6 stages, and each stage of Claude starts and ends at a gate of the user. Version 0.1.0 has the stages 1 to 5. Phase 11 tunes the risk levels and the holes of the frames, and the phases 12 and 13 add stage 6, the review. A risk level for each step selects the writer of the step. The user writes the hot code, and Claude writes the cool code with a receipt. The goal is code that the user owns and understands.
 
 This document gives the architecture, the phases of the work and the decisions. Section 2 gives the decisions of the user. Section 3 gives the proposals of this plan, which the user can change before a phase starts. Section 4 gives the open decisions.
 
@@ -23,6 +23,8 @@ Version 1 has these parts:
 - the risk levels from the facts of DataFlow
 - the guard, the errands of Claude with receipts, the frames with holes and hints, the callouts, and the questions on a line
 - the ledger, and a check of the commit message on a request of the user
+
+Version 2 adds stage 6, the review (decisions 27 to 30). Claude reviews the whole diff of the task, the user walks the review in DataFlow, and the fixes stay in stage 6. Section 6.10 gives the design.
 
 These items are not in the scope of version 1:
 
@@ -64,8 +66,15 @@ These items are not in the scope of version 1:
 24. The user can return the active task to each earlier stage at any time, also a done task. The work of the later stages stays, and the user passes the gates again. Claude does a stage again only when the user asks. A new survey starts a new order, and a new plan keeps the state of each step of the build with the same id and the same title.
 25. A return from the build closes an open step: the step goes back to todo, its changes stay in the files, and its base goes away. A step with a receipt or with holes keeps its state.
 26. A click on a hook, on a place of a step or on a change shows the place in the side view of DataFlow, with its lines highlighted and a short note. A small button beside it opens the text editor. This changes decision 5: after a click of the user, Shotgun puts 1 note into the side view of DataFlow, in 1 file at a time.
+27. A task has 6 stages. Stage 6, the review, comes after the build. Claude reviews the whole diff of the task first, and gives its findings and a walk plan with the hottest changes first. Then the user walks the plan, and decides each finding. This changes decision 1.
+28. A finding that the user accepts becomes a fix step in stage 6, and the task stays in stage 6. A fix is an errand of Claude with a receipt, a frame, or a fix of the user, as a step of the build.
+29. The risk rules give the level of a fix step from the facts of DataFlow, as for each step of the plan. Thus a fix in a hot function is a fix of the user.
+30. The user walks the review in a diff walk of Shotgun in the side view of DataFlow. The user marks each step there: OK, issue or question. The findings show as notes of Shotgun in DataFlow, with the buttons **Fix** and **Not a problem**. This extends decision 26: in stage 6, Shotgun puts a guide and the notes of the findings into the side view of DataFlow.
+31. The plan names the open decisions of each step. An open decision is a choice that the brief, the answers of the user and the order do not settle. A step with no open decision gets at most level 2, so Claude writes it, and the user walks the receipt. A step with an open decision keeps the level of the heat. This changes decision 8.
+32. Each open decision of a step becomes 1 hole of its frame, as a whole block, for example a condition with its branch. The user can answer a decision in words on the plan page. Then the decision is no hole, and Claude writes its code. Shotgun refuses a hole that is only a type, a name or a literal.
+33. A step of level 5 stays a step of the user, also with no open decision. The user writes the code with the most risk.
 
-The user gave decision 10 on 13 November 2026, the decisions 11 to 23 on 14 November 2026, and the decisions 24 to 26 on 15 November 2026. Decision 10 changes the buttons of the canvas that started Claude. Section 12 lists these changes.
+The user gave decision 10 on 13 November 2026, and the decisions 11 to 23 on 14 November 2026. The user gave the decisions 24 to 26 on 15 November 2026, and the decisions 27 to 33 on 16 November 2026. The decisions 31 to 33 come from 13 frames of the runs of `scripts/test-claude.mjs`. Each of their 27 holes was 1 obvious line, and the text of the step gave most of the answers. Decision 10 changes the buttons of the canvas that started Claude. Section 12 lists these changes.
 
 ## 3. Proposals of this plan
 
@@ -88,6 +97,25 @@ The user can change each proposal before the phase that needs it starts.
 | P13 | Claude gives a brief from the chat to Shotgun unchanged, with `submit_brief`. Claude adds no fact and fills no part that is not there. It asks the user. | 2 |
 | P14 | The context of Claude comes with each prompt. A UserPromptSubmit hook of type `mcp_tool` calls `shotgun_session_context`. Claude Code does not run this type of hook at SessionStart (S4). | 1 |
 | P15 | The plugin of Shotgun is on only in the projects of Shotgun. The marketplace goes into the user settings of Claude Code. The plugin goes on in `.claude/settings.local.json` of the workspace folder. | 1 |
+| P16 | The gate of stage 5 becomes **The build is done**, and the gate of stage 6 is **The task is done**. As decision 22, the gate of stage 6 never waits. With open findings, open fix steps or steps of the walk with no mark, the button tells their number, and a modal message asks first. The ledger keeps them as not reviewed. | 12 |
+| P17 | The diff of the task: the changes since the commit at the gate **Accept the plan**, from `getDiff` of DataFlow with `allFiles`. Shotgun records this commit and the files with uncommitted changes at the gate. The diff has only the files that the task changed: the files of `lines.json` and of the scopes of the steps. | 12 |
+| P18 | 3 new tools: `get_review`, `submit_review` with the walk plan and the findings, and `submit_finding_answer`. A fix step uses the tools of the build: `get_step`, `start_step`, `submit_errand` and `submit_frame`. | 12 |
+| P19 | A finding has a place with a short text of its code, and up to 4 more places for its fix. It also has a kind, a weight (must, should or question), a text, and a check for the user. It names the read tools of DataFlow that show it. As decision 13, Shotgun refuses a tool that Claude did not call in this stage. Shotgun also refuses a place outside of the diff of the task and of the ripple of DataFlow. A round has a maximum of 20 findings. | 12 |
+| P20 | The skill `shotgun-review` for "Review my task." and "Review the fixes.". Claude reads first the lines of the user in the steps of the levels 3 to 5, which nobody read a second time. Then it reads the lines of Claude that the user did not walk, the ripple, and the tests for "Done when". Claude changes no file in the review, and decides nothing. | 12 |
+| P21 | The walk plan starts from `suggestedSteps` of `getDiff`, the hottest first. A step of the walk with the mark issue and a note of the user can also become a fix step. | 12 |
+| P22 | A fix step has the id F1, F2 and so on, and it comes after the steps of the build. It has the places of its finding, the text of the finding with the note of the user, and the check of the finding. The fix steps go in sequence. Each fix step gets callouts and loose ends, as a step of the build. | 13 |
+| P23 | After the fix steps, "Review the fixes." starts the next round. Each round keeps the hashes of the hunks of its diff, so the next round marks the new and the changed hunks. Claude reviews only these hunks, and checks each fixed finding. | 13 |
+| P24 | The check of the commit message works in the stages 5 and 6, and after the end of the task. **Copy for the pull request** adds the findings with the decisions of the user, and the marks of the walk. | 13 |
+| P25 | A task of version 0.1.0 that is done in stage 5 stays done, with no review. A task in stage 5 that is not done goes to stage 6 at the gate **The build is done**. A new plan of Claude removes the fix steps, as each step that is not in the plan, and their findings are open again. | 12 |
+| P26 | A place of a step can have `"insert": true`: the new lines go next to these lines, and these lines do not change. A place in a type with `insert` gets the level of a new data member: 2, or 3 if the type is hot. The hottest user of a data member applies only to a member that the step changes. | 11 |
+| P27 | `submit_plan` gives 0 to 3 open decisions for each step. Each decision is a short question. It can have the options that Claude sees, but not the choice of Claude. | 11 |
+| P28 | The text of a step gives its goal and its result, but no answer to an open decision. A choice that the brief or the answers of the user settle is no open decision, and the text can name it. | 11 |
+| P29 | The plan page shows the open decisions under each step. The user can answer a decision in words, keep it open, or add a decision. An answer or a new decision changes the level at once, and the ledger records it. `get_step` gives the answers to Claude. | 11 |
+| P30 | The level of a step is the level of the heat if the step has an open decision. Else it is the lower of the level of the heat and 2. Level 5 stays 5 (decision 33). The reasons on the plan page name this rule, and a level of the user comes first (decision 9). | 11 |
+| P31 | At the levels 1 and 2, Claude decides each open decision in its errand. The receipt names each choice in a note with the badge Model. The gate **Accept the plan** names these decisions, and a modal message asks first. | 11 |
+| P32 | Each hole of a frame names its open decision, and each open decision has 1 hole. `submit_frame` refuses a hole with no decision, and an open decision with no hole. It also refuses an answer that is only a type, a name, a literal or a list of parameters. It refuses an answer that the text of the step contains too. | 11 |
+| P33 | A hole holds the whole code of its decision, for example the condition, the branch, the change of the state and the error path. Claude writes the other lines of the step: the declarations, the signatures, and the calls that the plan names. Hint 4 gives 1 possible answer, not the only answer. | 11 |
+| P34 | A plan with no field `decisions`, for example a plan of version 0.1.0, keeps the rule of the heat only. | 11 |
 
 ## 4. Open decisions
 
@@ -161,14 +189,15 @@ The other stages of Claude run in the same way: the user asks, Claude reads, and
 | `engine.json` | Shotgun | The facts of DataFlow for each hook of the survey: the function, the threads, the locks and the heat. |
 | `answers.json` | User | The answers of the user to the questions of the survey. |
 | `order.json` | User | The tasks in sequence, with the new texts, the new tasks and the tasks for later. Each changed task keeps the last survey of Claude for its text. |
-| `plan.json` | Claude | The steps of the plan: the task, the hooks, the places, the text and the checks of each step. |
+| `plan.json` | Claude | The steps of the plan: the task, the hooks, the places, the text and the checks of each step. From phase 11, also the open decisions of each step, and `insert` for a place. |
 | `risk.json` | Shotgun | The facts of DataFlow and the level of the rules for each step. |
-| `levels.json` | User | The levels and the notes of the user for the steps. A level stays with the id of its step. |
+| `levels.json` | User | The levels and the notes of the user for the steps. A level stays with the id of its step. From phase 11, also the answers of the user to the open decisions, and the decisions that the user added. |
 | `build.json` | Shotgun | The state of each step, its scope and its base. The receipt of an errand, with the notes and the loose ends of Claude and the marks and the notes of the user. The holes of a frame with their hints, and the hints that the user opened. |
 | `lines.json` | Shotgun | The writer of each changed line, with a hash of each line of the file. |
 | `callouts.json` | Shotgun | The keys of the facts of DataFlow at the start of each step of the user. The callouts with the reasons of the user and the words of Claude. The answers of Claude on lines. |
 | `loose.json` | Shotgun | The loose ends of the steps, the steps that Shotgun checked, the reasons of the user, and the steps of Claude for the loose ends. |
 | `message.json` | Claude | The last check of Claude of the commit message: the message, its points and a note. |
+| `review.json` | Claude and user | Stage 6, from phase 12: the base of the task (P17), and the rounds of the review. Each round has the walk plan, the findings and the hashes of its hunks. It also has the marks of the walk, the decisions and the reasons of the user, and the answers of Claude. |
 | `decisions.jsonl` | Shotgun | The ledger: 1 line for each decision of the user and for each deny of the guard. |
 
 Each JSON file has a `version` field. Shotgun writes each file in 1 step, as `writeTextAtomic` of DataFlow does.
@@ -196,17 +225,24 @@ The MCP name of each tool starts with `shotgun_`. In Claude Code, the full name 
 | `submit_explanation` | submit | 5 | A sentence of Claude for a callout. |
 | `submit_line_answer` | submit | 5 | The answer of Claude to a question of the user about a line. |
 | `submit_message_check` | submit | 5 | The points of the check of the commit message. |
+| `get_review` | read | 6 | The diff of the task: the hunks with their heat, and the writer and the walk of each changed line. The parts of the brief, and the steps with their checks and levels. The callouts that the user closed, with the reasons. The open loose ends, and the findings with the decisions of the user. Phase 12. |
+| `submit_review` | submit | 6 | The walk plan and the findings of a round. A new review of the same round replaces the old review. A finding with the same place and the same text keeps the decision of the user. Phase 12. |
+| `submit_finding_answer` | submit | 6 | The answer of Claude to a question of the user about a finding. Phase 12. |
 | `guard` | hook | all | The decision of the guard for a file change. |
 | `session_context` | hook | all | A short text with the task, the stage and the gates for each prompt to Claude. With no active task, it gives no text. |
 
 A submit tool changes no file if its data has a problem. It also checks the stage and the gates. For example, `submit_plan` gives an error before the user accepts the order.
+
+From phase 11, `submit_plan` gives the open decisions of each step, and `submit_frame` gives the open decision of each hole (P27, P32).
+
+From phase 13, the tools of the build also work in stage 6 for the fix steps. The check of the commit message works in stage 6 too (P24).
 
 ### 6.5 The plugin of Shotgun
 
 - **Folder:** Shotgun writes the plugin into `~/.shotgun/claude`, with the marketplace `shotgun-vscode` and the plugin `shotgun`. Claude Code loads a plugin of a local folder in place, so the plugin needs no install.
 - **Connection:** the command **Shotgun: Connect to Claude Code** adds the marketplace to `extraKnownMarketplaces` in the user settings of Claude Code. It also adds the plugin to `enabledPlugins` in `.claude/settings.local.json` of each workspace folder (P15). **Shotgun: Disconnect from Claude Code** removes these settings. `src/mcp/claude.ts` of DataFlow is the model for this code.
 - **Git:** Shotgun adds `.claude/settings.local.json` to `.git/info/exclude`, so that git does not show the file.
-- **Skills:** `shotgun`, `shotgun-survey`, `shotgun-plan`, `shotgun-errand`, `shotgun-frame` and `shotgun-explain`. The description of each skill names the requests of the user that load it. Each skill gives the full names of its tools.
+- **Skills:** `shotgun`, `shotgun-survey`, `shotgun-plan`, `shotgun-errand`, `shotgun-frame`, `shotgun-explain` and `shotgun-commit`. Phase 12 adds `shotgun-review`. The description of each skill names the requests of the user that load it. Each skill gives the full names of its tools.
 - **PreToolUse hook:** a handler of type `mcp_tool` that calls `shotgun_guard` on the server `plugin:dataflow:dataflow`. The matcher is `Edit|MultiEdit|Write`. `NotebookEdit` has its own handler, because its path is in the field `notebook_path`.
 - **Time limit:** each handler has a time limit of 10 seconds. The default of Claude Code is 600 seconds.
 - **UserPromptSubmit hook:** a handler of type `mcp_tool` that calls `shotgun_session_context` (P14). Its text tells Claude about the active task, the stage and the gates. The hook also gives the prompt of the user to Shotgun, for the check of a brief from the chat (decision 12).
@@ -258,6 +294,7 @@ The guard tool gives its decision as the JSON of a PreToolUse hook: `hookSpecifi
 | No active task, a pause of the guard, or a done task | No decision. The normal permissions of Claude Code apply. |
 | Stage 1 to 4 | Deny. Claude changes no file in these stages. |
 | Stage 5 with no open step of Claude | Deny. The reason names the current step and its writer. |
+| Stage 6 with no open fix step of Claude | Deny. Claude changes no file in the review. From phase 13, an open fix errand of Claude opens its scope, as a step of the build. |
 | An open step of Claude, and the file is in its scope | No decision. |
 | An open step of Claude, and the file is not in its scope | Deny. The reason names the scope. |
 
@@ -290,6 +327,9 @@ The guard helps the user, but it is not a security boundary:
 | The callouts | `getThreads`, `getLogic`, `getHidden` and `getPlace` after `onDidParse` |
 | The state of the engine | `engineState`, `engineError`, `onDidChangeEngineState` |
 | The proof of a callout, after a click of the user | `showLine`, `setLens` |
+| The review of stage 6 | `getDiff` with the commit of the gate **Accept the plan** and `allFiles`, and `getRipple` with the same base |
+| The walk of the review | `showDiffWalk` with an id, `reviewStep`, `closeGuide`, and `onDidChangeGuide` for the marks and the notes of the user |
+| The findings in the side view | `highlight` with `actions`, and `onDidInvokeAction` for the buttons **Fix** and **Not a problem** |
 
 Shotgun needs DataFlow 0.6.1, the release with the fixes of the 2 gap lists (decision 20). At the start, Shotgun reads `packageJSON.version` of DataFlow. With an older version, Shotgun shows the reason and stops.
 
@@ -300,6 +340,54 @@ Shotgun needs DataFlow 0.6.1, the release with the fixes of the 2 gap lists (dec
 - An edit of the user in the scope of an open step gets a warning.
 - A line of Claude that the user changes becomes a line of the user. The lines of the answer of a hole are lines of Claude.
 - `lines.json` keeps the ranges of the lines, and moves them with each edit.
+
+### 6.10 Stage 6: the review
+
+The build checks each step alone. The receipt shows the changes of Claude, the callouts check the lines of the user, and the loose ends come at each gate. No check reads the task as 1 change:
+
+- The lines of the user in the steps of the levels 3 to 5 had no second reader, and these steps have the most risk.
+- The ledger can have lines of Claude that the user did not walk.
+- 2 steps can be correct alone, but wrong together.
+- The changes can affect code outside of the changed lines: the ripple.
+- The brief gives the specs, the work that is not in scope, and the condition of done. No check compares them with the diff.
+
+Stage 6 reviews the whole diff of the task 1 time before the commit (decision 27):
+
+1. After the last step of the build, the user selects **The build is done**. The task goes to stage 6.
+2. The user tells Claude "Review my task." Claude Code loads the skill `shotgun-review`.
+3. Claude calls `shotgun_get_review`. Then it reads the code with the read tools of DataFlow: the heat, the threads, the flow, the callers and the ripple.
+4. Claude calls `shotgun_submit_review` with a walk plan and its findings. Shotgun checks each place, each hunk and each tool, and gives all problems back to Claude in 1 list. Claude changes no file.
+5. Shotgun shows the walk plan as a diff walk of Shotgun in the side view of DataFlow (decision 30). Each step shows its hunks, what to look at, its checks and the facts of DataFlow. The findings in the file of the step show as notes: red for must, orange for should, and pink for a question.
+6. The user walks the steps, and marks each step in DataFlow: OK, issue or question. Shotgun gets each mark and each note of the user from `onDidChangeGuide`, and the ledger records them.
+7. The user decides each finding with a button on its note, or in the panel:
+   - **Fix:** the finding becomes a fix step (decision 28). The rules give its level (decision 29).
+   - **Not a problem:** the ledger keeps the reason of the user.
+   - A question: the user asks Claude in the chat, for example "Is finding R3 a real race?". Claude gives its answer with `shotgun_submit_finding_answer`, and the panel shows it at the finding.
+8. The fix steps go in sequence, as the steps of the build. At the levels 1 and 2, the user tells Claude "Do fix F1.", and walks the receipt. At level 3, Claude writes a frame. At the levels 4 and 5, the user writes the fix, and gets callouts.
+9. After the fix steps, the user tells Claude "Review the fixes." The next round reviews only the new and the changed hunks, and checks each fixed finding (P23).
+10. The user selects **The task is done**. The gate never waits (P16). Then the user writes the commit message, and can ask Claude for a check.
+
+| Kind | A finding about |
+| --- | --- |
+| `fault` | Code that does not do what the step or the brief needs |
+| `race` | Data that 2 threads can use at the same time with no protection |
+| `lifetime` | Data that a thread or a lambda uses after the end of its owner |
+| `spec` | A spec or a condition of done that the diff does not give |
+| `scope` | A change in the work that the brief puts out of scope |
+| `test` | A condition of done with no test |
+| `design` | A change that works, but makes the code hard to keep, for example 2 copies of the same code |
+
+| Weight | Description |
+| --- | --- |
+| must | Claude found a fault, and its evidence shows the fault. |
+| should | A risk or a gap. The user decides. |
+| question | Claude is not sure. The user answers, or asks Claude. |
+
+The views in stage 6:
+
+- **The panel:** the tab **Review** shows the findings with their state, the progress of the walk, the current fix step and the next request. The tabs **Loose ends** and **Ledger** stay.
+- **The page:** a review section with the findings in each file, and the walk with the marks of the user. The specs and the conditions of done of the brief show next to the findings about them.
+- **DataFlow:** the diff walk of Shotgun has an id, so a new round replaces it in the stack of guides. The findings show as notes of Shotgun only in the file of the current step (decision 26).
 
 ## 7. Prerequisites
 
@@ -326,6 +414,9 @@ Each phase ends with its tests, its documents and an item of the changelog. The 
 | 8 Callouts | The facts of the engine on the lines of the user | Medium | Phase 6, D2 |
 | 9 Ledger | Loose ends, the ledger page, the check of the commit message | Medium | Phase 6 |
 | 10 Release | Documents, VSIX package, a full test with Claude Code | Small | Phases 1 to 9, D3 |
+| 11 Levels and holes | The level from the heat and the open decisions, `insert` for a new data member, and holes for the open decisions | Medium | Phase 10, decisions 31 to 33 |
+| 12 Review | Stage 6: the review of Claude with `get_review` and `submit_review`, the walk in DataFlow, the decisions about the findings, and the gate | Large | Phase 10, decisions 27 to 30 |
+| 13 Fixes | The fix steps in stage 6, the next rounds of the review, the commit message in stage 6, a full test, and release 0.2.0 | Medium | Phase 12 |
 
 ### Phase 0: spikes
 
@@ -640,6 +731,56 @@ Differences from the plan:
 - A check of the package: a script installed the VSIX packages of DataFlow 0.6.1 and Shotgun 0.1.0 into the test build of VS Code 1.146.0, with its own extensions folder and user data. All 15 checks passed. Shotgun started from the package, and DataFlow got the 19 tools of Shotgun. The panel and the page showed the new task. The connection wrote the plugin of version 0.1.0 with its 2 hooks and 7 skills. The data of Claude Code of the user did not change.
 - Full test: run 10 of `scripts/test-claude.mjs` did 1 task from the brief to the check of the commit message in the fixture of DataFlow. It passed all 151 checks. The user does the full test in a real project with the VSIX before the push of the release.
 
+### Phase 11: levels and holes
+
+The frames of the runs of `scripts/test-claude.mjs` had only obvious holes, and the levels did not agree with the work of the steps:
+
+- The survey answers of the user and the text of the step already settled each decision. Thus each of the 27 holes in 13 frames was 1 line, for example `home_battery_ctl.planning_cycles = 0;`.
+- The skill `shotgun-frame` named "a condition, a limit, an order of the statements" as decisions, and Claude wrote each branch itself. Hint 4 needed the exact code, so Claude selected holes with 1 correct answer. In a step with a new function, Claude wrote the body, and the holes were return types and parameters.
+- The level came only from the heat of the place. Each change of a warm function got a frame, also a change of 1 line.
+- A step that adds a data member next to a member got the heat of the hottest user of that member. Thus `int cycle_limit = 8;` got level 3 and a frame.
+
+The work of this phase:
+
+- **Rules:** `insert` for a new data member (P26). The level from the heat and the open decisions (P30, the decisions 31 and 33).
+- **Plan:** `submit_plan` gives the open decisions of each step (P27, P28). The skill `shotgun-plan` tells Claude what an open decision is, and how to write the text of a step.
+- **Plan page:** the open decisions under each step, with **Answer** and **Add a decision** (P29). The gate **Accept the plan** names the open decisions in the steps of Claude (P31).
+- **Frames:** `submit_frame` gives the decision of each hole, and refuses an obvious hole (P32). The skill `shotgun-frame` gets the rules of P33.
+- **Errands:** the skill `shotgun-errand` gives a note for each open decision that Claude decides (P31).
+- **Migration:** a plan with no field `decisions` keeps the rule of the heat (P34).
+- **Done when:** in the fixture task, a step that adds a data member gets level 2. Each hole of a frame names an open decision of the plan, and no hole is only a type, a name or a literal. The unit tests check the rules with the open decisions and `insert`, and the checks of `submit_plan` and `submit_frame`. A run of `scripts/test-claude.mjs` shows the new levels and holes.
+
+**Status, 16 November 2026:** done. `scripts/test-claude.mjs` passed all 158 checks with 12 prompts of Claude Code, and 136 unit tests passed:
+
+- The plan of Claude had 7 steps with 8 open decisions, 0 to 2 for each step. A decision of step 1 was "What happens to a limit outside 1 to 100: clamp to the range, reject it, or something else?". A decision of step 5 was "At the limit, must the controller wait for the worker to end before it computes the new schedule, or only set the flag and go on?". The step of a new counter and the step of a log line had no open decision.
+- The 2 steps that add a data member had places with insert, and got level 2. In the earlier runs, these steps got level 3 from the heat of `process()`.
+- On the plan page, the test added a decision of the user to step 3, and answered a decision of step 7. The gate "Accept the plan" asked first, because step 5 of Claude had 2 open decisions.
+- The frame of step 3 had 3 holes, 1 for each open decision, also for the decision of the user. 2 holes were blocks of 3 lines, each a condition with its branch. The hole for the decision of the user was 1 line, because its question did not fit the step well. No hole was only a type, a name or a literal.
+
+Open item: only the unit tests checked the choices of Claude in a receipt. In this run, step 2 had no open decision, and the test does not build step 5.
+
+### Phase 12: review
+
+- **Stages:** `STAGES` gets `review`. The gate of stage 5 becomes **The build is done**, and stage 6 has the gate **The task is done** (P16). A done task of version 0.1.0 stays done (P25). The stage bar, the sidebar, the status bar and the context of Claude show 6 stages.
+- **Base:** the gate **Accept the plan** records the commit and the files with uncommitted changes (P17). If a file has uncommitted changes, the gate tells the user.
+- **Tools:** `get_review`, `submit_review` and `submit_finding_answer`, with their checks (P18, P19). `review.json` keeps the rounds.
+- **Skill:** `shotgun-review` (P20). The skill `shotgun` gets stage 6 in its contract and in its table of stages.
+- **Walk:** the diff walk of Shotgun in DataFlow with `showDiffWalk` (P21). The marks and the notes of the user come from `onDidChangeGuide`. The findings are notes with the buttons **Fix** and **Not a problem** (decision 30). In this phase, **Fix** records the decision, and phase 13 makes the fix step.
+- **Views:** the tab **Review** of the panel, and the review section of the page.
+- **Guard:** in stage 6, the guard denies each file change of Claude.
+- **Ledger:** the marks of the walk, the decisions about the findings with their reasons, and the gate with the open items.
+- **Done when:** in the fixture task, "Review my task." gives a walk plan and 1 finding or more, each with the evidence of DataFlow. Shotgun refuses a finding outside of the diff of the task. The user walks each step in DataFlow, decides each finding, and the gate **The task is done** ends the task. The unit tests check the stages with stage 6, the migration of a task of 0.1.0, and the checks of `submit_review`.
+
+### Phase 13: fixes in the review
+
+- **Fix steps:** **Fix** makes a fix step after the steps of the build (P22). The rules give its level (decision 29). The tools of the build work for the fix steps, for example "Do fix F1." and "Give me a frame for fix F2.". A fix of the user gets callouts, and each fix step gets loose ends at its gate.
+- **Guard:** an open fix errand of Claude opens the files of its scope, as a step of the build.
+- **Rounds:** "Review the fixes." reviews only the new and the changed hunks, and checks each fixed finding (P23). The diff walk of the new round replaces the old walk.
+- **Commit message and ledger:** the check of the commit message works in stage 6. **Copy for the pull request** adds the review (P24).
+- **Full test:** `scripts/test-claude.mjs` adds stage 6. Claude reviews the fixture task. The test walks the steps, and makes a fix step of a finding. Claude does the fix, and "Review the fixes." checks it. Then the test ends the task, and Claude checks the commit message.
+- **Release:** the documents and the skills name 6 stages, and the changelog gives version 0.2.0.
+- **Done when:** a fix of Claude and a fix of the user go through stage 6 with a receipt and with callouts. The second round shows the fixed finding as fixed.
+
 ## 9. Tests
 
 | Kind | Tests |
@@ -732,3 +873,10 @@ The gates stay buttons, because they record decisions of the user. A click on th
 | A test with the CLI of Claude Code changes the data of Claude Code of the user. | A marketplace or a folder of a test stays in the setup of the user. | The rule for the hook tests in section 9. |
 | Shotgun keeps the prompts of the user (decision 12). | A prompt can have private data. | Shotgun keeps only the last 20 prompts or 200,000 characters, only in memory, and only for its window. No file gets them. |
 | A version of Claude Code does not fill `${prompt}` in the input of the hook. | `submit_brief` refuses each brief from the chat. | The tool tells Claude that it has no prompt. `scripts/test-claude.mjs` checks the brief from the chat. |
+| The findings of Claude steer the walk of the user (decision 27). | The user looks only at the findings, and misses a fault. | The walk has all hunks of the diff, also the hunks with no finding. Each step of the walk shows the facts of DataFlow. |
+| The working tree has uncommitted changes at the gate **Accept the plan**. | The diff of the task has changes from before the task. | The gate tells the user, and `get_review` marks the hunks of these files (P17). |
+| A large diff. | `getDiff` cuts a long hunk, or a tool result is too large. | `get_review` gives the files in parts. A round has a maximum of 20 findings. The skill tells Claude to review file by file. |
+| The stack of DataFlow has 5 guides. | DataFlow refuses the walk of Shotgun. | The walk has an id, so a new round replaces it in place. If the stack is full, the panel tells the user to close a guide. |
+| Claude names no open decision in a step. | Claude writes a step with a decision of the user. | The plan page shows the open decisions of each step, and the user can add a decision. Then the level of the heat applies again. |
+| Claude names a decision that the brief or the answers of the user already settle. | A hole is obvious again. | The user can answer the decision in words. `submit_frame` refuses an answer that the text of the step contains. |
+| Claude names again a callout that the user closed as "Not a problem". | The user decides the same thing 2 times. | `get_review` gives the closed callouts with the reasons. The skill tells Claude to name such a place again only with new evidence, and with the weight question. |

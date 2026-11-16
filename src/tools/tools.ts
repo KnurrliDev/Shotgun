@@ -136,7 +136,7 @@ export function sessionData(snapshot: Snapshot, brief?: { file: string; text: st
 		...(task && snapshot.plan ? {
 			plan: {
 				steps: snapshot.plan.steps.length,
-				waiting: snapshot.plan.steps.filter((s) => levelOf(s.id, snapshot.risk, snapshot.levels).level === null).map((s) => s.id),
+				waiting: snapshot.plan.steps.filter((s) => levelOf(s, snapshot.risk, snapshot.levels).level === null).map((s) => s.id),
 				userLevels: Object.values(snapshot.levels?.levels ?? {}).filter((l) => l.level).length,
 				tool: 'Call shotgun_get_plan for the steps with their levels.',
 			},
@@ -225,8 +225,9 @@ export function shotgunTools(deps: ToolDeps): ExtensionTool[] {
 			name: 'submit_plan',
 			title: 'Shotgun: give the plan',
 			description: 'Gives your plan to Shotgun, in stage 4: the steps in the sequence of the order of the user. Each step names its task, '
-				+ 'its hooks and its places: lines of a file with a short text of their code, or a new file. Each task of the plan needs 1 '
-				+ 'step or more. Shotgun gives each step a risk level from the facts of DataFlow. A new plan replaces the old plan.',
+				+ 'its hooks, its places (lines of a file with a short text of their code, or a new file) and its open decisions. Each task of the '
+				+ 'plan needs 1 step or more. Shotgun gives each step a risk level from the facts of DataFlow and its open decisions: a step with '
+				+ 'no open decision gets at most level 2. A new plan replaces the old plan.',
 			inputSchema: {
 				type: 'object',
 				properties: {
@@ -248,16 +249,35 @@ export function shotgunTools(deps: ToolDeps): ExtensionTool[] {
 											lines: { type: 'array', items: { type: 'integer' }, minItems: 2, maxItems: 2, description: '[first, last], from 1.' },
 											code: { type: 'string', description: 'A short text of the code in the lines, copied exactly.' },
 											new: { type: 'boolean', description: 'True for a new file. Then give no lines and no code.' },
+											insert: {
+												type: 'boolean',
+												description: 'True if the new lines go next to these lines, and these lines do not change. For example a new data member '
+													+ 'next to the other members of a type.',
+											},
 										},
 										required: ['file'],
 									},
 									description: 'The places that the step changes, 1 to 8.',
 								},
-								text: { type: 'string', description: 'What the step does, in 1 to 3 sentences.' },
+								text: { type: 'string', description: 'The goal and the result of the step, in 1 to 3 sentences. Give no answer to an open decision.' },
 								checks: { type: 'array', items: { type: 'string' }, description: '1 to 5 checks for the user after the step.' },
 								note: { type: 'string', description: 'A short note for the user, for example a risk that the facts show.' },
+								decisions: {
+									type: 'array',
+									maxItems: 3,
+									items: {
+										type: 'object',
+										properties: {
+											question: { type: 'string', description: 'The decision as a short question, for example "What happens to the solve that still runs at the limit?".' },
+											options: { type: 'array', items: { type: 'string' }, maxItems: 4, description: 'Optional: the options that you see, with no choice.' },
+										},
+										required: ['question'],
+									},
+									description: 'The open decisions of the step, 0 to 3: the choices that the brief, the answers of the user and the order do not settle. '
+										+ 'A type, a name, a signature or a value that the brief gives is no decision. Give an empty list for a step with no open decision.',
+								},
 							},
-							required: ['id', 'title', 'task', 'places', 'text', 'checks'],
+							required: ['id', 'title', 'task', 'places', 'text', 'checks', 'decisions'],
 						},
 					},
 				},
@@ -301,7 +321,7 @@ export function shotgunTools(deps: ToolDeps): ExtensionTool[] {
 			description: 'Closes the open step after your changes, in stage 5. Give a change for each change since the base of the step: its file, '
 				+ 'its lines in the text now, a title, a check for the user, and a note for a change that the user did not ask for. Shotgun gets '
 				+ 'the diff since the base from DataFlow, and refuses a change with no note. Give the places outside of the scope that the step '
-				+ 'can also need as loose ends.',
+				+ 'can also need as loose ends. For each open decision of the step, give your choice in "choices".',
 			inputSchema: {
 				type: 'object',
 				properties: {
@@ -333,6 +353,18 @@ export function shotgunTools(deps: ToolDeps): ExtensionTool[] {
 						},
 						description: 'The places outside of the scope that the step can also need. The user decides about them.',
 					},
+					choices: {
+						type: 'array',
+						items: {
+							type: 'object',
+							properties: {
+								decision: { type: 'string', description: 'The id of an open decision of the step, for example D1.' },
+								choice: { type: 'string', description: 'Your choice and its reason, in 1 or 2 sentences.' },
+							},
+							required: ['decision', 'choice'],
+						},
+						description: 'Your choice for each open decision of the step, from get_step. The receipt shows them, and the user checks them.',
+					},
 				},
 				required: ['step', 'changes'],
 			},
@@ -341,10 +373,11 @@ export function shotgunTools(deps: ToolDeps): ExtensionTool[] {
 		{
 			name: 'submit_frame',
 			title: 'Shotgun: give the frame',
-			description: 'Closes the open frame step after you wrote the frame, in stage 5. The frame has the lines with no decision, and a marker '
-				+ '/*@hole N: question */ in the place of each decision of the user. Give each hole with its number, its question and 4 hints: '
-				+ 'a nudge with no code, a pointer to the facts with places, an example from the project with its place and code, and the '
-				+ 'answer. Shotgun checks each marker and each place. Do not give the answers in the chat.',
+			description: 'Closes the open frame step after you wrote the frame, in stage 5. Each open decision of the step is exactly 1 hole: a '
+				+ 'marker /*@hole N: question */ in the place of the whole code of the decision, for example a condition with its branch. The '
+				+ 'frame has all other lines. Give each hole with its number, its decision, its question and 4 hints: a nudge with no code, a '
+				+ 'pointer to the facts with places, an example from the project with its place and code, and 1 possible answer. Shotgun refuses '
+				+ 'an answer that is only a type, a name, a literal or a list of parameters. Do not give the answers in the chat.',
 			inputSchema: {
 				type: 'object',
 				properties: {
@@ -355,6 +388,7 @@ export function shotgunTools(deps: ToolDeps): ExtensionTool[] {
 							type: 'object',
 							properties: {
 								n: { type: 'integer', description: 'The number of the marker /*@hole N: question */.' },
+								decision: { type: 'string', description: 'The id of the open decision of the step that the hole decides, for example D1.' },
 								question: { type: 'string', description: 'The question of the marker, the same text.' },
 								nudge: { type: 'string', description: 'Hint 1: a question that shows the way, with no code.' },
 								pointer: {
@@ -382,7 +416,7 @@ export function shotgunTools(deps: ToolDeps): ExtensionTool[] {
 									},
 									required: ['text', 'file', 'lines', 'code'],
 								},
-								answer: { type: 'string', description: 'Hint 4: the code in the place of the marker.' },
+								answer: { type: 'string', description: 'Hint 4: 1 possible code in the place of the marker. The user can write a different answer.' },
 							},
 							required: ['n', 'question', 'nudge', 'pointer', 'example', 'answer'],
 						},

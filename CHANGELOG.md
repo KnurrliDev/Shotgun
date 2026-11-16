@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Phase 11: levels and holes
+
+The 13 frames of the earlier runs of `scripts/test-claude.mjs` had 27 holes, and each hole was 1 obvious line. The survey answers of the user and the text of the step had settled each decision already. Now the heat and the open decisions give the writer of a step, and each hole is an open decision (decisions 31 to 33).
+
+- The plan names the open decisions of each step: 0 to 3 choices that the brief, the answers and the order do not settle. `submit_plan` needs the field `decisions` for each step. Claude can give the options that it sees, but not its choice.
+- A step with no open decision gets at most level 2, so Claude writes it, and the user walks the receipt. A step with an open decision keeps the level of the heat. A step of level 5 stays a step of the user. The reasons on the plan page name this rule.
+- The plan page shows the open decisions under each step. The user can answer a decision in words, open it again, add a decision, and remove a decision that the user added. An answer or a new decision changes the level at once, and the ledger records it. `levels.json` keeps the answers and the decisions of the user.
+- Each open decision is exactly 1 hole of the frame, and the hole holds the whole code of the decision. `submit_frame` needs the decision of each hole. It refuses a hole that is only a type, a name, a literal or a list of parameters. It also refuses a hole whose answer is in the text of the step. A step with no open decision gets no frame, and "I want a frame" needs an open decision. Hint 4 is 1 possible answer.
+- At the levels 1 and 2, Claude decides the open decisions in its errand. `submit_errand` needs a choice for each open decision, and the receipt shows the choices with the badge Model. The gate "Accept the plan" names these decisions, and a modal message asks first.
+- A place of a step can have `"insert": true`: the new lines go next to the lines, and the lines do not change. A new data member next to the other members then gets level 2, or 3 if the type is hot. Before, it got the heat of the functions that use the member next to it, for example level 3 for `int cycle_limit = 8;`.
+- A plan of version 0.1.0 has no open decisions, and its steps keep the level of the heat.
+- The skills `shotgun-plan`, `shotgun-frame`, `shotgun-errand` and `shotgun` give the new rules to Claude.
+- Tests: 136 unit tests. `scripts/test-claude.mjs` checks the decisions of the plan and the level of a new data member. It also checks a decision of the user on the plan page, the choices of Claude, and a hole for each open decision.
+
 ## 0.1.0
 
 The first release of Shotgun. The VSIX package is for all systems, but Shotgun needs DataFlow 0.6.1 or later, and DataFlow works only on Windows x64.

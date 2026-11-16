@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import type { BuildView, PlanHeatView, PlanStepView, PlanView, TaskView, ToView, ViewModel } from '../views/protocol';
+import type { BuildView, PlanHeatView, PlanStepView, PlanView, StepDecisionView, TaskView, ToView, ViewModel } from '../views/protocol';
 import { StateChip } from './build';
 import { CommandButton, GateBlock, linesOf, PlaceLink, StageBar, TellClaude, timeText, WriterBadges } from './common';
 import { post } from './vscode';
@@ -106,6 +106,112 @@ function NoteField({ step, maxNote }: { step: PlanStepView; maxNote: number }) {
 	);
 }
 
+// A text field with Save and Cancel. Enter saves, and Escape cancels
+function TextEntry({ value, maxLength, placeholder, label, onSave, onCancel }: {
+	value: string; maxLength: number; placeholder: string; label: string; onSave: (text: string) => void; onCancel: () => void;
+}) {
+	const [text, setText] = useState(value);
+	// the browser gives the focus to an autofocus field only 1 time in a document, so the field takes the focus itself
+	const input = useRef<HTMLInputElement>(null);
+	useEffect(() => input.current?.focus(), []);
+	const save = () => {
+		if (text.trim()) {
+			onSave(text.trim());
+		}
+	};
+	return (
+		<div class="decision-entry">
+			<input ref={input} type="text" value={text} maxLength={maxLength} placeholder={placeholder} aria-label={label}
+				onInput={(e) => setText((e.target as HTMLInputElement).value)}
+				onKeyDown={(e) => {
+					if (e.key === 'Enter') {
+						save();
+					} else if (e.key === 'Escape') {
+						onCancel();
+					}
+				}} />
+			<button type="button" class="pill" disabled={!text.trim()} onClick={save}>Save</button>
+			<button type="button" class="pill" onClick={onCancel}>Cancel</button>
+		</div>
+	);
+}
+
+// 1 decision of a step: its question, the options of Claude and the answer of the user (P29)
+function DecisionRow({ step, decision, isEditable, maxAnswer }: { step: PlanStepView; decision: StepDecisionView; isEditable: boolean; maxAnswer: number }) {
+	const [isEditing, setEditing] = useState(false);
+	useEffect(() => setEditing(false), [step.id, decision.id, decision.answer]);
+	const answer = (text: string) => post({ type: 'answerDecision', step: step.id, decision: decision.id, text });
+	const isAnswered = decision.answer !== undefined;
+	return (
+		<li class={`decision ${isAnswered ? 'answered' : 'open'}`}>
+			<div class="decision-head">
+				<span class={`badge ${decision.by === 'claude' ? 'claude' : 'user'}`}>{decision.by === 'claude' ? 'Model' : 'You'}</span>
+				<span class="decision-question">{decision.question}</span>
+				<span class="hint">{isAnswered ? 'answered' : 'open'}</span>
+			</div>
+			{decision.options.length > 0 && <p class="muted small">Options that Claude sees: {decision.options.join(' · ')}</p>}
+			{isAnswered && !isEditing && <p class="decision-answer"><span class="badge user">You</span> {decision.answer}</p>}
+			{isEditing && (
+				<TextEntry value={decision.answer ?? ''} maxLength={maxAnswer} placeholder="Your answer in words" label={`Your answer to: ${decision.question}`}
+					onSave={(text) => {
+						answer(text);
+						setEditing(false);
+					}}
+					onCancel={() => setEditing(false)} />
+			)}
+			{isEditable && !isEditing && (
+				<div class="buttons">
+					<button type="button" class="pill" onClick={() => setEditing(true)}>{isAnswered ? 'Change the answer' : 'Answer'}</button>
+					{isAnswered && <button type="button" class="pill" onClick={() => answer('')}>Open again</button>}
+					{decision.by === 'user' && <button type="button" class="pill" onClick={() => post({ type: 'removeDecision', step: step.id, decision: decision.id })}>Remove</button>}
+				</div>
+			)}
+		</li>
+	);
+}
+
+// The decisions of a step (decision 31). Each open decision is a choice of the user: a hole of the frame, or code of the
+// user. A step with no open decision gets at most level 2, so Claude writes it. A step of a plan of version 0.1.0 has no
+// decisions (P34)
+function DecisionsBlock({ step, view }: { step: PlanStepView; view: PlanView }) {
+	const [isAdding, setAdding] = useState(false);
+	useEffect(() => setAdding(false), [step.id]);
+	const decisions = step.decisions;
+	if (!decisions) {
+		return null;
+	}
+	const open = decisions.filter((d) => d.answer === undefined).length;
+	const added = decisions.filter((d) => d.by === 'user').length;
+	return (
+		<>
+			<div class="row-head">
+				<span class="name">Open decisions</span>
+				<span class="hint">{decisions.length === 0 ? 'none' : `${open} of ${decisions.length} open`}</span>
+			</div>
+			<p class="muted small">
+				{decisions.length === 0 ? 'Claude found no open decision in this step. ' : 'An open decision is your choice: a hole of the frame, or code that you write. '}
+				A step with no open decision gets at most level 2, so Claude writes it. Answer a decision in words, and Claude writes its code.
+			</p>
+			{decisions.length > 0 && (
+				<ul class="decisions">
+					{decisions.map((d) => <DecisionRow step={step} decision={d} isEditable={step.isLevelEditable} maxAnswer={view.maxAnswer} />)}
+				</ul>
+			)}
+			{step.isLevelEditable && added < view.maxUserDecisions && (isAdding ? (
+				<TextEntry value="" maxLength={view.maxQuestion} placeholder="Your decision as a question, for example: What happens at the limit?"
+					label="A new decision for this step"
+					onSave={(question) => {
+						post({ type: 'addDecision', step: step.id, question });
+						setAdding(false);
+					}}
+					onCancel={() => setAdding(false)} />
+			) : (
+				<div class="buttons"><button type="button" class="pill" onClick={() => setAdding(true)}>Add a decision</button></div>
+			))}
+		</>
+	);
+}
+
 // The state of a step in the build, in stage 5
 function BuildState({ build, id }: { build?: BuildView; id: string }) {
 	const s = build?.steps.find((b) => b.id === id);
@@ -116,7 +222,8 @@ function StepDetail({ step, view, build }: { step: PlanStepView; view: PlanView;
 	const setLevel = (level: number | null) => post({ type: 'setLevel', step: step.id, level });
 	let setBy = '';
 	if (step.level !== null) {
-		setBy = step.user === undefined ? 'set by the rules' : step.rule ? `set by you, the rules gave ${step.rule}` : 'set by you';
+		const rules = step.isCapped ? 'set by the rules: no open decision' : 'set by the rules';
+		setBy = step.user === undefined ? rules : step.rule ? `set by you, the rules gave ${step.rule}` : 'set by you';
 	}
 	return (
 		<section class="card">
@@ -140,6 +247,7 @@ function StepDetail({ step, view, build }: { step: PlanStepView; view: PlanView;
 			{step.note && <div class="order-note claude"><span class="badge claude">Model</span><span>{step.note}</span></div>}
 			<div class="row-head"><span class="name">Heat</span><span class="badge engine">Engine</span></div>
 			<HeatBlock heat={step.heat} />
+			<DecisionsBlock step={step} view={view} />
 			<div class="row-head">
 				<span class="name">Risk level</span>
 				<span class={`level-name lv-${step.level ?? 0}`}>{step.levelName}</span>

@@ -27,15 +27,15 @@ const PLAN = {
 	steps: [
 		{
 			id: 'S1', title: 'The limit in the loop', task: 'T1', hooks: ['H1'], text: 'Stop the loop at the limit.', checks: ['The project builds.'],
-			places: [{ file: 'src/solver.cpp', lines: [5, 7], code: 'for (int i = 0; i < plan.steps; ++i)' }],
+			places: [{ file: 'src/solver.cpp', lines: [5, 7], code: 'for (int i = 0; i < plan.steps; ++i)' }], decisions: [],
 		},
 		{
 			id: 'S2', title: 'A test of the limit', task: 'T1', hooks: [], text: 'A test for the limit.', checks: ['The test passes.'],
-			places: [{ file: 'tests/limit_test.cpp', new: true }],
+			places: [{ file: 'tests/limit_test.cpp', new: true }], decisions: [],
 		},
 		{
 			id: 'S3', title: 'The note in the README', task: 'T2', hooks: ['H2'], text: 'Write the limit in the README.', checks: ['The README tells the limit.'],
-			places: [{ file: 'README.md', lines: [3, 3], code: 'It has no limit.' }],
+			places: [{ file: 'README.md', lines: [3, 3], code: 'It has no limit.' }], decisions: [],
 		},
 	],
 };
@@ -355,7 +355,7 @@ suite('Loose ends and ledger', () => {
 		]);
 		const step = store.handLooseEnd('E1');
 		assert.deepStrictEqual([step.id, store.snapshot.plan!.steps.map((s) => s.id)], ['L1', ['S1', 'L1', 'S2', 'S3']]);
-		assert.strictEqual(levelOf('L1', store.snapshot.risk, store.snapshot.levels).level, 2);
+		assert.strictEqual(levelOf(store.snapshot.plan!.steps.find((s) => s.id === 'L1')!, store.snapshot.risk, store.snapshot.levels).level, 2);
 		const current = store.current!;
 		assert.deepStrictEqual([current.step.id, current.writer, current.state], ['L1', 'claude', 'todo']);
 		assert.strictEqual(buildNext(current).request, 'Do the loose ends.');

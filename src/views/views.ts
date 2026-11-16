@@ -52,6 +52,13 @@ export function isFromView(value: unknown): value is FromView {
 				&& (m.level as number) <= 5));
 		case 'setLevelNote':
 			return typeof m.step === 'string' && m.step.length <= 64 && typeof m.note === 'string' && m.note.length <= 2000;
+		case 'answerDecision':
+			return typeof m.step === 'string' && m.step.length <= 64 && typeof m.decision === 'string' && m.decision.length <= 16
+				&& typeof m.text === 'string' && m.text.length <= 2000;
+		case 'addDecision':
+			return typeof m.step === 'string' && m.step.length <= 64 && typeof m.question === 'string' && m.question.length <= 2000;
+		case 'removeDecision':
+			return typeof m.step === 'string' && m.step.length <= 64 && typeof m.decision === 'string' && m.decision.length <= 16;
 		case 'checkLevels':
 			return true;
 		case 'setMark':

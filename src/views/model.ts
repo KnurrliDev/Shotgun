@@ -12,14 +12,17 @@ import { findMarkers, Hole, holeNow, isHoleDone } from '../session/frame';
 import { ledgerMarkdown, ledgerRows, MessageCheck, sameMessage } from '../session/ledger';
 import type { LineRun } from '../session/lines';
 import { absolutePath } from '../session/paths';
-import { levelOf, MAX_LEVEL_NOTE, placeName } from '../session/plan';
+import {
+	decisionsOf, levelOf, levelReasons, MAX_DECISION_ANSWER, MAX_DECISION_QUESTION, MAX_LEVEL_NOTE, MAX_USER_DECISIONS, openDecisions, placeName, PlanStep,
+} from '../session/plan';
 import { LEVEL_INFO } from '../session/risk';
 import { GATE_LABEL, returnStages, STAGE_INFO, STAGES, stageText } from '../session/stages';
 import type { Snapshot } from '../session/store';
 import { excerptOf, findHook, Lines } from '../session/survey';
 import type {
 	BriefView, BuildStepView, BuildView, CurrentStepView, DecisionView, GateView, HoleView, HookView, LedgerView, LooseEndView, LooseView, MessageView,
-	NavigatorView, OrderTaskView, OrderView, PlanPlaceView, PlanStepView, PlanView, ReceiptView, SetupRow, StageView, SurveyView, TaskView, ViewModel,
+	NavigatorView, OrderTaskView, OrderView, PlanPlaceView, PlanStepView, PlanView, ReceiptView, SetupRow, StageView, StepDecisionView, SurveyView, TaskView,
+	ViewModel,
 } from './protocol';
 
 // The view model of the page and of the panel, from the session, the state of DataFlow and the connection to Claude
@@ -112,6 +115,18 @@ export function decisionText(decision: Decision): string {
 			return `You set step ${decision.step} to level ${decision.level}.${decision.rule ? ` The rules gave ${decision.rule}.` : ''}`;
 		case 'level-note':
 			return decision.text ? `Your note for step ${decision.step}: "${decision.text}".` : `You removed your note for step ${decision.step}.`;
+		case 'decision':
+			switch (decision.action) {
+				case 'answer':
+					return `You answered the decision "${decision.question}" of step ${decision.step}: "${decision.text ?? ''}".`;
+				case 'open':
+					return `You opened the decision "${decision.question}" of step ${decision.step} again.`;
+				case 'add':
+					return `You added the decision "${decision.question}" to step ${decision.step}.`;
+				case 'remove':
+					return `You removed your decision "${decision.question}" from step ${decision.step}.`;
+			}
+			break;
 		case 'step':
 			return decision.round > 1 ? `Claude opened step ${decision.step} again, round ${decision.round}.` : `Claude opened step ${decision.step}.`;
 		case 'errand':
@@ -279,7 +294,7 @@ function planView(snapshot: Snapshot, readLines: ModelInput['readLines']): PlanV
 		return files.get(file);
 	};
 	const steps: PlanStepView[] = plan.steps.map((s, i) => {
-		const l = levelOf(s.id, risk, levels);
+		const l = levelOf(s, risk, levels);
 		const stepRisk = risk?.steps[s.id];
 		const places: PlanPlaceView[] = s.places.map((p, j) => {
 			const path = absolutePath(p.file, root);
@@ -298,6 +313,7 @@ function planView(snapshot: Snapshot, readLines: ModelInput['readLines']): PlanV
 		// the heat of the place with the highest level
 		const hottest = [...(stepRisk?.places ?? [])].filter((p) => p.heat).sort((a, b) => (b.level ?? 0) - (a.level ?? 0))[0];
 		const info = l.level ? LEVEL_INFO[l.level] : undefined;
+		const decisions = stepDecisionsView(s, levels);
 		return {
 			id: s.id,
 			n: i + 1,
@@ -314,7 +330,9 @@ function planView(snapshot: Snapshot, readLines: ModelInput['readLines']): PlanV
 			...(l.user ? { user: l.user } : {}),
 			levelName: info ? `${info.name}, level ${l.level} of 5` : 'No level yet',
 			...(info ? { writer: info.writer, writerText: info.text } : {}),
-			reasons: [...(stepRisk?.reasons ?? ['Shotgun did not check the step with DataFlow yet.'])],
+			reasons: stepRisk ? levelReasons(s, risk, levels) : ['Shotgun did not check the step with DataFlow yet.'],
+			...(decisions ? { decisions } : {}),
+			isCapped: l.isCapped,
 			userNote: levels?.levels[s.id]?.note ?? '',
 			isLevelEditable: !task.isDone && (task.stage === 'plan' || (task.stage === 'build' && (stateOf(snapshot.build, s.id) === 'todo'
 				|| (stateOf(snapshot.build, s.id) === 'open' && snapshot.build?.steps[s.id]?.writer === 'user')))),
@@ -331,7 +349,17 @@ function planView(snapshot: Snapshot, readLines: ModelInput['readLines']): PlanV
 		...(risk ? { riskTime: risk.time } : {}),
 		isEditable: task.stage === 'plan' && !task.isDone,
 		maxNote: MAX_LEVEL_NOTE,
+		maxQuestion: MAX_DECISION_QUESTION,
+		maxAnswer: MAX_DECISION_ANSWER,
+		maxUserDecisions: MAX_USER_DECISIONS,
 	};
+}
+
+// The decisions of a step for the views, with the answers of the user. undefined: a step with no field decisions (P34)
+function stepDecisionsView(step: PlanStep, levels: Snapshot['levels']): StepDecisionView[] | undefined {
+	return decisionsOf(step, levels)?.map((d) => ({
+		id: d.id, question: d.question, options: [...(d.options ?? [])], by: d.by, ...(d.answer !== undefined ? { answer: d.answer } : {}),
+	}));
 }
 
 const WRITER_TEXT = { claude: 'Claude writes it', user: 'You write it', frame: 'Claude writes the frame, and you fill its holes' } as const;
@@ -495,7 +523,7 @@ function buildView(snapshot: Snapshot, plan: PlanView, readLines: ModelInput['re
 	const current = currentStep(snapshot.plan, risk, levels, build);
 	const steps: BuildStepView[] = snapshot.plan.steps.map((s, i) => {
 		const b = build?.steps[s.id];
-		const level = b?.level ?? levelOf(s.id, risk, levels).level;
+		const level = b?.level ?? levelOf(s, risk, levels).level;
 		const writer = b?.writer ?? buildWriterOf(level);
 		return {
 			id: s.id,
@@ -558,8 +586,12 @@ function buildView(snapshot: Snapshot, plan: PlanView, readLines: ModelInput['re
 					...(e.file ? { place: e.lines ? placeName({ file: e.file, lines: e.lines }) : e.file, path: absolutePath(e.file, root), line: e.lines?.[0] ?? 1 } : {}),
 				})),
 				...(receipt.notice ? { notice: receipt.notice } : {}),
+				choices: (receipt.choices ?? []).map((c) => ({ decision: c.decision, question: c.question, choice: c.choice })),
 			};
 		}
+		const decisions = stepDecisionsView(current.step, snapshot.levels);
+		// a frame needs an open decision (decision 32). A step of a plan with no decisions keeps the old rule (P34)
+		const hasOpenDecision = !decisions || openDecisions(current.step, snapshot.levels).length > 0;
 		view = {
 			...steps[current.n - 1],
 			total: steps.length,
@@ -576,8 +608,10 @@ function buildView(snapshot: Snapshot, plan: PlanView, readLines: ModelInput['re
 				return { holes, holesDone: holes.filter((h) => isHoleDone(h.state)).length };
 			})() : {}),
 			...(b?.frameNote ? { frameNote: b.frameNote } : {}),
-			canRequestFrame: !task.isDone && current.writer === 'user' && current.level === 4 && (current.state === 'todo' || current.state === 'open'),
+			canRequestFrame: !task.isDone && current.writer === 'user' && current.level === 4 && (current.state === 'todo' || current.state === 'open')
+				&& hasOpenDecision,
 			isFrameRequested: !!b?.isFrameRequested,
+			...(decisions ? { decisions } : {}),
 		};
 	}
 	return {
