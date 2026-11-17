@@ -8,6 +8,7 @@ import type { LineStore } from '../session/lines';
 import { changedTasks, Order, orderWarnings } from '../session/order';
 import { levelOf } from '../session/plan';
 import { absolutePath, IS_CASE_SENSITIVE } from '../session/paths';
+import { CATEGORIES, MAX_ISSUES, ORIGINS, SEVERITIES, SOURCES, VERDICTS } from '../session/review';
 import { GATE_LABEL, GATE_OF, STAGE_INFO, STAGES } from '../session/stages';
 import type { Snapshot, SessionStore } from '../session/store';
 import { SIZES } from '../session/survey';
@@ -20,6 +21,7 @@ import { commitMessageData, submitMessageCheck } from './ledger';
 import { orderData, submitTaskSurvey } from './order';
 import { planData, submitPlan } from './plan';
 import type { PromptLog } from './prompts';
+import { ReviewApi, reviewData, submitReview } from './review';
 import { EngineApi, submitSurvey } from './survey';
 
 export { IS_CASE_SENSITIVE };
@@ -46,6 +48,17 @@ const HOOK_SCHEMA = {
 
 const SIZE_SCHEMA = { type: 'string', enum: [...SIZES], description: 'Your estimate of the work of the task.' };
 
+// A place of an issue of the review
+const PLACE_SCHEMA = {
+	type: 'object',
+	properties: {
+		file: { type: 'string', description: 'The file, relative to the first folder of the project, or absolute.' },
+		lines: { type: 'array', items: { type: 'integer' }, minItems: 2, maxItems: 2, description: '[first, last], from 1.' },
+		code: { type: 'string', description: 'A short text of the code in the lines, copied exactly.' },
+	},
+	required: ['file', 'lines', 'code'],
+};
+
 export interface ToolDeps {
 	readonly store: SessionStore;
 	readonly folders: () => readonly string[]; // the workspace folders
@@ -63,6 +76,8 @@ export interface ToolDeps {
 	readonly calls?: (since: number) => ReadonlySet<string> | undefined;
 	// the commit message of the user from Source Control. undefined: no repository of git
 	readonly message?: () => CommitMessage | undefined;
+	// the diff and the ripple of DataFlow for the review of stage 6. undefined: no link to DataFlow
+	readonly review?: () => ReviewApi | undefined;
 }
 
 const textOf = (value: unknown): string => (typeof value === 'string' ? value : '');
@@ -168,7 +183,7 @@ export function shotgunTools(deps: ToolDeps): ExtensionTool[] {
 		{
 			name: 'get_session',
 			title: 'Shotgun session',
-			description: 'Gives the active Shotgun task: its title, its stage of 5, the gates of the user, the brief with its parts and the open '
+			description: 'Gives the active Shotgun task: its title, its stage of 6, the gates of the user, the brief with its parts and the open '
 				+ 'questions, the survey with the answers of the user, the rule of the guard and the next work. Call it first for each request '
 				+ 'about Shotgun.',
 			inputSchema: { type: 'object', properties: {} },
@@ -475,7 +490,7 @@ export function shotgunTools(deps: ToolDeps): ExtensionTool[] {
 		{
 			name: 'get_commit_message',
 			title: 'Shotgun commit message',
-			description: 'Gives the commit message that the user wrote in the input box of Source Control, in stage 5 or after the end of the '
+			description: 'Gives the commit message that the user wrote in the input box of Source Control, in the stages 5 and 6 or after the end of the '
 				+ 'task, when the user asks, for example "Check my commit message.". It also gives the changed files, the steps of the plan, the '
 				+ 'decisions of the user, the lines of each writer and the loose ends. Then read the diff, and give your check.',
 			inputSchema: { type: 'object', properties: {} },
@@ -513,6 +528,77 @@ export function shotgunTools(deps: ToolDeps): ExtensionTool[] {
 				required: ['message', 'agrees', 'points'],
 			},
 			call: (args) => submitMessageCheck(deps, args),
+		},
+		{
+			name: 'get_review',
+			title: 'Shotgun review',
+			description: 'Gives the review data of stage 6, when the user asks "Review my task.": the effort and the focus of the user, the base '
+				+ 'commit of the task, the changed files with their hunks, heat and writers, the ripple, the brief, the steps of the plan, and the '
+				+ 'earlier issues with the reasons of the user. Load the skill shotgun-review first. For the text of the diff, call get_diff of '
+				+ 'DataFlow with the base commit.',
+			inputSchema: { type: 'object', properties: {} },
+			isReadOnly: true,
+			call: () => reviewData({ ...deps, review: deps.review ?? (() => undefined) }),
+		},
+		{
+			name: 'submit_review',
+			title: 'Shotgun: give the review',
+			description: 'Gives the issues of your review of the task to Shotgun, in stage 6, after the verify pass of the skill shotgun-review. '
+				+ 'Give each issue that the verify pass kept, the most severe first, with a maximum of 32. Each issue has a place in the diff of '
+				+ 'the task or in its ripple, a failure scenario, a verdict, and the read tools of DataFlow that show it. Shotgun puts each issue '
+				+ 'into the list of steps or into the second list. A new review of the same round replaces the open issues of the round. '
+				+ 'Change no file.',
+			inputSchema: {
+				type: 'object',
+				properties: {
+					issues: {
+						type: 'array',
+						maxItems: MAX_ISSUES,
+						items: {
+							type: 'object',
+							properties: {
+								title: { type: 'string', description: 'A short title, a maximum of 60 characters.' },
+								summary: { type: 'string', description: 'The defect in 1 sentence, a maximum of 300 characters.' },
+								scenario: {
+									type: 'object',
+									description: 'The failure scenario. Each part has a maximum of 400 characters.',
+									properties: {
+										trigger: { type: 'string', description: 'The input or the state that starts the failure.' },
+										path: { type: 'string', description: 'The path through the changed code.' },
+										result: { type: 'string', description: 'The wrong result, the crash or the hang.' },
+										interleave: { type: 'string', description: 'Only for a race, and then necessary: the 2 accesses and 1 interleave of the 2 threads.' },
+									},
+									required: ['trigger', 'path', 'result'],
+								},
+								category: { type: 'string', enum: [...CATEGORIES] },
+								severity: { type: 'string', enum: [...SEVERITIES], description: 'important: a wrong result, a crash, a race, a leak or a gap in the brief.' },
+								origin: { type: 'string', enum: [...ORIGINS], description: 'new: the task added the problem. pre-existing: it was in the code before the task.' },
+								verdict: { type: 'string', enum: [...VERDICTS], description: 'confirmed: the verify pass found the failure scenario in the code. plausible: it did not confirm it, but it found no proof against it.' },
+								source: { type: 'string', enum: [...SOURCES], description: 'engine: the candidate came from a fact of DataFlow, for example a race of get_threads. model: from you alone.' },
+								place: PLACE_SCHEMA,
+								fixPlaces: { type: 'array', maxItems: 4, items: PLACE_SCHEMA, description: 'Up to 4 more places of the fix, for example the other places of the same class of bug.' },
+								decisions: {
+									type: 'array',
+									maxItems: 3,
+									description: 'The open decisions of the fix: the choices that the user makes. Give no choice of yours.',
+									items: {
+										type: 'object',
+										properties: { question: { type: 'string' }, options: { type: 'array', items: { type: 'string' } } },
+										required: ['question'],
+									},
+								},
+								tools: { type: 'array', minItems: 1, maxItems: 6, items: { type: 'string' }, description: 'The read tools of DataFlow that you called and that show the issue, for example get_threads.' },
+								repeats: { type: 'string', description: 'The id of the earlier issue that this issue repeats, for example I3.' },
+								evidence: { type: 'string', description: 'Necessary for an earlier issue that the user closed: the new evidence.' },
+							},
+							required: ['title', 'summary', 'scenario', 'category', 'severity', 'origin', 'verdict', 'source', 'place', 'tools'],
+						},
+					},
+					note: { type: 'string', description: 'A short note for the user, a maximum of 300 characters, for example the parts that the review did not read.' },
+				},
+				required: ['issues'],
+			},
+			call: (args) => submitReview({ ...deps, review: deps.review ?? (() => undefined) }, args),
 		},
 		{
 			name: 'submit_survey',

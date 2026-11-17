@@ -10,7 +10,7 @@ import { HoleDecorations } from './editor/holes';
 import { HookDecorations } from './editor/hooks';
 import { ClaudeLines } from './editor/lines';
 import { StepDecorations } from './editor/steps';
-import { commitMessage } from './git/message';
+import { commitMessage, headOf } from './git/message';
 import { addedLines, buildNext, ChangeMark, CurrentStep, markName, receiptCounts, scopeOf, stateOf } from './session/build';
 import {
 	CALLOUTS_FILE, DEFAULT_PAUSE_SECONDS, DEFAULT_VOICE, factKeys, isVoice, keepUserState, LENS_OF, revealCallouts, updateCallouts, Voice, VOICE_TEXT, VOICES,
@@ -23,6 +23,7 @@ import { orderWarnings } from './session/order';
 import { absolutePath, IS_CASE_SENSITIVE, isCppFile, isInside, projectPath } from './session/paths';
 import { levelOf, openDecisions, PlanPlace, writerOf } from './session/plan';
 import { Level, LEVEL_INFO, LEVELS } from './session/risk';
+import { Area, DEFAULT_OPTIONS, Effort, MAX_ISSUE_REASON, reviewPrompt } from './session/review';
 import { GATE_LABEL, isStage, returnStages, STAGE_INFO, stageText } from './session/stages';
 import { messageOf, SessionStore, Snapshot } from './session/store';
 import { findHook, MAX_ANSWER, movedHook } from './session/survey';
@@ -33,6 +34,7 @@ import { findLooseEnds, LooseApi } from './tools/loose';
 import { PromptLog } from './tools/prompts';
 import { planRisk } from './tools/plan';
 import { EngineApi, engineFacts } from './tools/survey';
+import type { ReviewApi } from './tools/review';
 import { shotgunTools } from './tools/tools';
 import { claudeText, HOME_ID, HomeState, HomeView, parseRecent, Project, RECENT_KEY, withRecent } from './views/home';
 import { buildModel, DataFlowView, statusOf } from './views/model';
@@ -207,6 +209,7 @@ class Shotgun implements vscode.Disposable {
 				openFile: (file) => void vscode.window.showTextDocument(vscode.Uri.file(file), { preview: false, preserveFocus: true }),
 				engine: () => this.engineApi(),
 				base: () => this.baseApi(),
+				review: () => this.reviewApi(),
 				saveFiles: (files) => this.saveFiles(files),
 				lines: this.lines,
 				voice: () => this.voice(),
@@ -388,6 +391,36 @@ class Shotgun implements vscode.Disposable {
 		}
 	}
 
+	// The prompt of the review of stage 6 into the clipboard. The review runs in a new session of Claude Code, which did not
+	// write the code of the task (decision 35)
+	private async copyReviewPrompt(): Promise<void> {
+		const { task, review } = this.store.snapshot;
+		if (!task || task.isDone || task.stage !== 'review') {
+			throw new Error('The review prompt is only for a task in stage 6, the review.');
+		}
+		await vscode.env.clipboard.writeText(reviewPrompt(task.title, review?.options ?? DEFAULT_OPTIONS));
+		void vscode.window.showInformationMessage('Shotgun: the review prompt is in the clipboard. Start a new session of Claude Code in the folder of the '
+			+ 'project, and paste the prompt. A new session did not write the code, so it reviews with a fresh view.');
+	}
+
+	// "Not a problem" for an issue of the review: the reason of the user goes into the ledger, and the next review gets it
+	private async closeIssue(id: string): Promise<void> {
+		const issue = this.store.snapshot.review?.issues.find((i) => i.id === id);
+		if (!issue) {
+			return;
+		}
+		const reason = await vscode.window.showInputBox({
+			title: `Shotgun: Not a Problem: ${issue.id}, ${issue.title}`,
+			prompt: 'Why is this issue not a problem? The ledger keeps your reason, and the next review gets it.',
+			ignoreFocusOut: true,
+			validateInput: (value) => (value.trim() ? (value.trim().length > MAX_ISSUE_REASON ? `A reason has a maximum of ${MAX_ISSUE_REASON} characters.` : undefined)
+				: 'Give your reason.'),
+		});
+		if (reason !== undefined) {
+			this.store.setIssueClosed(id, reason);
+		}
+	}
+
 	// "Not a problem": the reason of the user goes into the ledger
 	private async closeCallout(stepArg?: unknown, idArg?: unknown): Promise<void> {
 		const stepId = typeof stepArg === 'string' ? stepArg : this.calloutStep()?.id;
@@ -494,6 +527,18 @@ class Shotgun implements vscode.Disposable {
 	}
 
 	// The bases and the diffs of DataFlow for the build. undefined: no link to DataFlow
+	// The diff and the ripple of DataFlow since the base commit of the task, for the review of stage 6
+	private reviewApi(): ReviewApi | undefined {
+		const api = this.api;
+		if (!api) {
+			return undefined;
+		}
+		return {
+			diff: (base, paths) => api.getDiff({ base, paths: [...paths], allFiles: true }),
+			ripple: (base, paths) => api.getRipple({ base, paths: [...paths] }),
+		};
+	}
+
 	private baseApi(): BaseApi | undefined {
 		const api = this.api;
 		if (!api) {
@@ -1022,7 +1067,7 @@ class Shotgun implements vscode.Disposable {
 				stage: t.isDone ? 'done' : `${STAGE_INFO[t.stage].number} ${STAGE_INFO[t.stage].name}`,
 				stageText: t.isDone ? 'done' : stageText(t.stage),
 			})),
-			hasLedger: !!task && (task.isDone || task.stage === 'build'),
+			hasLedger: !!task && (task.isDone || task.stage === 'build' || task.stage === 'review'),
 			canReturn: !!task && returnStages(task).length > 0,
 			isPaused: snapshot.isPaused,
 			claude: claudeText(claude, snapshot.tasks.length > 0),
@@ -1321,7 +1366,7 @@ class Shotgun implements vscode.Disposable {
 		await vscode.window.showTextDocument(vscode.Uri.file(file), { preview: false, selection: new vscode.Range(position, position) });
 	}
 
-	// The gate of the current stage. In stage 5, the gate of the current step, or "The task is done"
+	// The gate of the current stage. In stage 5, the gate of the current step, or "The build is done"
 	private async passGate(): Promise<void> {
 		const task = this.store.snapshot.task;
 		if (!task) {
@@ -1341,19 +1386,40 @@ class Shotgun implements vscode.Disposable {
 				return this.passPlanGate(task);
 			case 'build':
 				return this.passBuildGate(task);
-			default:
-				throw new Error(`This version of Shotgun does not have the gate of ${stageText(task.stage)} yet.`);
+			case 'review':
+				return this.passReviewGate(task);
 		}
 	}
 
+	// The gate of stage 6, "The task is done" (P16). It never waits: with no review or with open issues in the list of steps,
+	// a modal message asks first, and the ledger keeps the issues as open
+	private async passReviewGate(task: NonNullable<Snapshot['task']>): Promise<void> {
+		const review = this.store.snapshot.review;
+		const open = (review?.issues ?? []).filter((i) => i.list === 'steps' && i.state === 'open');
+		const warning = !review || review.rounds.length === 0 ? 'Claude did not review the task.'
+			: open.length > 0 ? `${open.length === 1 ? '1 issue' : `${open.length} issues`} of the list of steps ${open.length === 1 ? 'is' : 'are'} open.` : undefined;
+		if (warning) {
+			const pick = await vscode.window.showWarningMessage(`${warning} Do you want to pass the gate "${GATE_LABEL['task-done']}"?`, {
+				modal: true,
+				detail: open.length > 0 ? `${open.slice(0, 10).map((i) => `${i.id}: ${i.title}`).join('\n')}\n\nThe ledger keeps them as open.`
+					: `Tell Claude "${STAGE_INFO.review.request}" for a review with your effort and focus.`,
+			}, PASS_GATE);
+			if (pick !== PASS_GATE) {
+				return;
+			}
+		}
+		this.store.passGate('task-done');
+		this.log.info(`The task ${task.id} passed the gate "${GATE_LABEL['task-done']}"${open.length > 0 ? ` with ${open.length} open issues` : ''}.`);
+	}
+
 	// The gates of stage 5: "Accept the receipt" for a step of Claude, "The step is done" for a step of the user, and "The
-	// task is done" after the last step
+	// build is done" after the last step. The task then goes to stage 6, the review
 	private async passBuildGate(task: NonNullable<Snapshot['task']>): Promise<void> {
 		const root = this.store.snapshot.root!;
 		const current = this.store.current;
 		if (!current) {
-			this.store.passGate('task-done');
-			this.log.info(`The task ${task.id} passed the gate "${GATE_LABEL['task-done']}".`);
+			this.store.passGate('build-done');
+			this.log.info(`The task ${task.id} passed the gate "${GATE_LABEL['build-done']}".`);
 			return;
 		}
 		const step = current.build;
@@ -1473,7 +1539,7 @@ class Shotgun implements vscode.Disposable {
 	private async copyLedger(): Promise<void> {
 		const markdown = this.lastModel?.task?.ledger?.markdown;
 		if (!markdown) {
-			throw new Error('The ledger is only for a task in stage 5, the build.');
+			throw new Error('The ledger is only for a task in the stages 5 and 6.');
 		}
 		await vscode.env.clipboard.writeText(markdown);
 		vscode.window.setStatusBarMessage('Shotgun: the ledger is in the clipboard as Markdown. Paste it into the pull request.', 6000);
@@ -1490,7 +1556,7 @@ class Shotgun implements vscode.Disposable {
 	private watchCommitMessage(): vscode.Disposable {
 		let last: string | undefined;
 		const timer = setInterval(() => {
-			if (this.store.snapshot.task?.stage !== 'build') {
+			if (this.store.snapshot.task?.stage !== 'build' && this.store.snapshot.task?.stage !== 'review') {
 				return;
 			}
 			const text = this.commitText()?.text;
@@ -1610,8 +1676,29 @@ class Shotgun implements vscode.Disposable {
 				return;
 			}
 		}
-		this.store.acceptPlan();
-		this.log.info(`The task ${task.id} passed the gate "${GATE_LABEL['accept-plan']}" with ${plan.steps.length} steps.`);
+		// the base of the task for the review of stage 6 (P17). Only the first gate records it
+		let base: { commit?: string; dirty: readonly string[]; error?: string } | undefined;
+		if (!this.store.snapshot.review?.base) {
+			const head = headOf(this.store.snapshot.root!);
+			base = head?.commit ? { commit: head.commit, dirty: head.dirty }
+				: { dirty: head?.dirty ?? [], error: head ? 'The repository has no commit yet.' : 'The folder has no repository of git, or the Git extension of VS Code is off.' };
+			if (base.dirty.length > 0) {
+				const shown = base.dirty.slice(0, 10).join('\n') + (base.dirty.length > 10 ? `\n${base.dirty.length - 10} more` : '');
+				const pick = await vscode.window.showWarningMessage(
+					`${base.dirty.length === 1 ? '1 file has changes' : `${base.dirty.length} files have changes`} that are not committed. Do you want to pass the gate "${GATE_LABEL['accept-plan']}"?`,
+					{ modal: true, detail: `${shown}\n\nThe review of stage 6 starts from the commit of HEAD, so it also reviews these changes, and it marks them. Commit them first for a review of the task alone.` },
+					PASS_GATE);
+				if (pick !== PASS_GATE) {
+					return;
+				}
+			}
+			if (base.error) {
+				this.log.warn(`The task ${task.id} has no base commit for the review of stage 6: ${base.error}`);
+			}
+		}
+		this.store.acceptPlan(base);
+		this.log.info(`The task ${task.id} passed the gate "${GATE_LABEL['accept-plan']}" with ${plan.steps.length} steps`
+			+ `${base?.commit ? `, from the commit ${base.commit.slice(0, 7)}` : ''}.`);
 	}
 
 	// The gate of stage 1, "The brief is ready". Each part of the brief and each question of Claude is optional, so the
@@ -1773,6 +1860,18 @@ class Shotgun implements vscode.Disposable {
 				case 'copyLedger':
 					await this.copyLedger();
 					break;
+				case 'setReviewOptions':
+					this.store.setReviewOptions({ effort: message.effort as Effort, areas: message.areas as Area[], text: message.text });
+					break;
+				case 'copyReviewPrompt':
+					await this.copyReviewPrompt();
+					break;
+				case 'closeIssue':
+					await this.closeIssue(message.id);
+					break;
+				case 'reopenIssue':
+					this.store.setIssueClosed(message.id, undefined);
+					break;
 				default:
 					break;
 			}
@@ -1820,7 +1919,7 @@ class Shotgun implements vscode.Disposable {
 		const file = this.store.briefFile();
 		const doc = file ? this.documentOf(file) : undefined;
 		const text = doc?.getText() ?? (file ? readText(file) : undefined);
-		const commit = snapshot.task?.stage === 'build' ? this.commitText() : undefined;
+		const commit = snapshot.task?.stage === 'build' || snapshot.task?.stage === 'review' ? this.commitText() : undefined;
 		this.lastModel = buildModel({
 			version: String(this.context.extension.packageJSON.version),
 			snapshot,
@@ -1862,7 +1961,7 @@ class Shotgun implements vscode.Disposable {
 		void vscode.commands.executeCommand('setContext', 'shotgun.hasAnswers', (snapshot.callouts?.answers ?? []).some((a) => !a.resolved));
 		void vscode.commands.executeCommand('setContext', 'shotgun.hasLooseEnds', !!task && !task.isDone && task.stage === 'build'
 			&& (snapshot.loose?.ends ?? []).some((e) => e.state === 'open'));
-		void vscode.commands.executeCommand('setContext', 'shotgun.hasLedger', !!task && task.stage === 'build');
+		void vscode.commands.executeCommand('setContext', 'shotgun.hasLedger', !!task && (task.stage === 'build' || task.stage === 'review'));
 		void this.ensureCalloutStart();
 		// decision 17: in stage 5, the user changes the level of a step that Claude did not start
 		void vscode.commands.executeCommand('setContext', 'shotgun.canSetLevel', !!task && !task.isDone && !!snapshot.plan

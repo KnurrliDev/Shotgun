@@ -311,7 +311,7 @@ suite('Plan', () => {
 		assert.strictEqual(store.snapshot.task?.stage, 'build');
 		store.setLevel('S1', 4);
 		assert.deepStrictEqual(levels(), [4, 2]);
-		store.passGate('task-done');
+		store.passGate('build-done');
 		assert.throws(() => store.setLevel('S1', 3), /only in stage 4, the plan, and in stage 5, the build/);
 		await assert.rejects(call('submit_plan', PLAN), /The user accepted the plan already/);
 		await assert.rejects(call('submit_task_survey', { task: 'T1', text: 'A cycle limit', hooks: ['H1'], needs: [] }), /The user accepted the plan already/);
@@ -388,7 +388,7 @@ suite('Plan', () => {
 			assert.deepStrictEqual(steps.placesOf(doc).map((p) => p.lines), [[6, 8]]);
 			// after the build, the text editor shows no step
 			store.acceptPlan();
-			store.passGate('task-done');
+			store.passGate('build-done');
 			steps.update(store.snapshot);
 			assert.deepStrictEqual(steps.placesOf(doc), []);
 		} finally {

@@ -18,14 +18,14 @@ suite('View model', () => {
 	const snapshot = (over: Partial<Snapshot> = {}): Snapshot => ({
 		root, task: undefined, isPaused: false, tasks: [], decisions: [], questions: [], survey: undefined, engine: undefined, answers: {},
 		order: undefined, plan: undefined, risk: undefined, levels: undefined, build: undefined, callouts: undefined, loose: undefined, message: undefined,
-		problems: [], ...over,
+		review: undefined, problems: [], ...over,
 	});
 	const model = (s: Snapshot, claude = connected, dataflow = ready) => buildModel({ version: '0.1.0', snapshot: s, dataflow, claude });
 
 	test('No task: the stages are to do, and the setup asks for each missing part', () => {
 		const m = model(snapshot(), { dataflow: 'none', marketplace: 'none', plugin: 'off' }, { state: 'old', version: '0.5.0' });
 		assert.strictEqual(m.task, null);
-		assert.deepStrictEqual(m.stages.map((s) => s.state), ['todo', 'todo', 'todo', 'todo', 'todo']);
+		assert.deepStrictEqual(m.stages.map((s) => s.state), ['todo', 'todo', 'todo', 'todo', 'todo', 'todo']);
 		assert.deepStrictEqual(m.setup.map((r) => [r.id, r.isOk, r.action?.command]), [
 			['folder', true, undefined],
 			['dataflow', false, undefined],
@@ -40,8 +40,8 @@ suite('View model', () => {
 
 	test('A task in stage 2: stage 1 is done, stage 2 is current, with its request and its gate', () => {
 		const m = model(snapshot({ task: task(), tasks: [{ id: 'fix', title: 'Fix', stage: 'survey', isDone: false, created: '' }] }));
-		assert.deepStrictEqual(m.stages.map((s) => s.state), ['done', 'current', 'todo', 'todo', 'todo']);
-		assert.deepStrictEqual(m.stages.map((s) => s.writer), ['user', 'claude', 'user', 'claude', 'both']);
+		assert.deepStrictEqual(m.stages.map((s) => s.state), ['done', 'current', 'todo', 'todo', 'todo', 'todo']);
+		assert.deepStrictEqual(m.stages.map((s) => s.writer), ['user', 'claude', 'user', 'claude', 'both', 'both']);
 		assert.strictEqual(m.task?.stageName, 'Survey');
 		assert.strictEqual(m.task?.request, 'Survey my brief.');
 		// the gate of stage 2 waits for the survey of Claude
@@ -64,7 +64,7 @@ suite('View model', () => {
 		assert.strictEqual(paused.task?.request, undefined);
 		assert.match(paused.task?.guard ?? '', /no decision in a pause/);
 		const done = model(snapshot({ task: task({ stage: 'build', isDone: true }) }));
-		assert.deepStrictEqual(done.stages.map((s) => s.state), ['done', 'done', 'done', 'done', 'done']);
+		assert.deepStrictEqual(done.stages.map((s) => s.state), ['done', 'done', 'done', 'done', 'done', 'done']);
 		assert.strictEqual(done.task?.gate, undefined);
 	});
 
@@ -125,7 +125,7 @@ suite('View model', () => {
 
 	test('The status bar', () => {
 		assert.strictEqual(statusOf(snapshot()).text, 'Shotgun');
-		assert.strictEqual(statusOf(snapshot({ task: task() })).text, 'Shotgun: stage 2 of 5, the survey');
+		assert.strictEqual(statusOf(snapshot({ task: task() })).text, 'Shotgun: stage 2 of 6, the survey');
 		assert.strictEqual(statusOf(snapshot({ task: task(), isPaused: true })).text, 'Shotgun: paused');
 		assert.strictEqual(statusOf(snapshot({ task: task({ isDone: true }) })).text, 'Shotgun: the task is done');
 	});

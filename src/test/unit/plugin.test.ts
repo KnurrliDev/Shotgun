@@ -76,7 +76,7 @@ suite('Plugin of Shotgun', () => {
 	test('The extension has the skills of each stage of Claude, of the callouts and of the commit message', () => {
 		const skills = readSkills(repo);
 		assert.deepStrictEqual(Object.keys(skills).sort(),
-			['shotgun', 'shotgun-commit', 'shotgun-errand', 'shotgun-explain', 'shotgun-frame', 'shotgun-plan', 'shotgun-survey']);
+			['shotgun', 'shotgun-commit', 'shotgun-errand', 'shotgun-explain', 'shotgun-frame', 'shotgun-plan', 'shotgun-review', 'shotgun-survey']);
 		assert.match(skills['shotgun-commit'], /^---\r?\nname: shotgun-commit\r?\ndescription: '[^']*Check my commit message[^']*'\r?\n---/);
 		for (const tool of ['shotgun_get_commit_message', 'shotgun_submit_message_check']) {
 			assert.ok(skills['shotgun-commit'].includes(`mcp__plugin_dataflow_dataflow__${tool}`), tool);

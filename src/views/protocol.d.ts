@@ -2,7 +2,7 @@
 // the text editor. The extension sends the view model. A webview sends the actions of the user. tsconfig.webview.json
 // includes this file, so the 2 sides use the same types.
 
-export type StageName = 'brief' | 'survey' | 'order' | 'plan' | 'build';
+export type StageName = 'brief' | 'survey' | 'order' | 'plan' | 'build' | 'review';
 export type WriterName = 'user' | 'claude' | 'both';
 
 export interface StageView {
@@ -31,7 +31,8 @@ export interface TaskView {
 	order?: OrderView; // stage 3 and later: the order of the user
 	plan?: PlanView; // stage 4 and later: the plan of Claude with the risk levels
 	build?: BuildView; // stage 5: the steps of the build and the current step
-	ledger?: LedgerView; // stage 5 and after the end of the task: the ledger and the commit message
+	review?: ReviewView; // stage 6: the effort, the focus and the issues of the review
+	ledger?: LedgerView; // the stages 5 and 6, and after the end of the task: the ledger and the commit message
 	gate?: GateView; // the gate of the stage, if this version of Shotgun has it
 	isDone: boolean;
 	isPaused: boolean;
@@ -451,6 +452,71 @@ export interface BuildView {
 	maxNote: number; // the maximum length of a note of the user for a change
 }
 
+// A place of an issue of the review, at its lines now
+export interface IssuePlaceView {
+	name: string; // for example "src/battery.cpp:101-103"
+	path: string; // absolute
+	line: number;
+	lines: [number, number];
+}
+
+// An issue of the review of Claude (P19)
+export interface IssueView {
+	id: string;
+	title: string;
+	summary: string;
+	scenario: { trigger: string; path: string; result: string; interleave?: string };
+	category: string;
+	areaName: string;
+	severity: 'important' | 'minor';
+	origin: 'new' | 'pre-existing';
+	verdict: 'confirmed' | 'plausible';
+	source: 'engine' | 'model';
+	place: IssuePlaceView;
+	fixPlaces: IssuePlaceView[];
+	decisions: { id: string; question: string; options?: string[] }[];
+	tools: string[];
+	list: 'steps' | 'second';
+	listReason?: string; // why the issue is in the second list
+	state: 'open' | 'fixed' | 'closed';
+	reason?: string; // the reason of the user for "Not a problem"
+	evidence?: string; // the new evidence of Claude for an issue that the user closed before
+	round: number;
+}
+
+export interface EffortView {
+	id: string;
+	name: string;
+	finders: string;
+	context: string;
+	verify: string;
+}
+
+export interface AreaView {
+	id: string;
+	name: string;
+	looksFor: string;
+}
+
+// Stage 6: the effort and the focus of the next review, the request, and the 2 lists of the last review (P22)
+export interface ReviewView {
+	effort: string;
+	areas: string[];
+	text: string;
+	efforts: EffortView[];
+	allAreas: AreaView[];
+	maxText: number;
+	maxReason: number;
+	prompt: string; // the prompt of the review for a new session of Claude Code
+	base?: string; // for example "1a2b3c4, 2 files with changes that were not committed"
+	baseError?: string; // why the review has no base commit
+	round?: { n: number; time: string; effortName: string; areaNames: string[]; cap: number; changedLines: number; note?: string };
+	steps: IssueView[]; // the list of steps
+	second: IssueView[]; // the second list
+	open: number; // the open issues of the list of steps
+	closed: number;
+}
+
 export interface GateView {
 	label: string; // the text of the button
 	note: string;
@@ -543,4 +609,8 @@ export type FromView =
 	| { type: 'closeLooseEnd'; id: string } // the extension asks for the reason
 	| { type: 'reopenLooseEnd'; id: string }
 	| { type: 'showLedger' } // the page shows the ledger
-	| { type: 'copyLedger' }; // the extension copies the ledger as Markdown for a pull request
+	| { type: 'copyLedger' } // the extension copies the ledger as Markdown for a pull request
+	| { type: 'setReviewOptions'; effort: string; areas: string[]; text: string } // the effort and the focus of the next review
+	| { type: 'copyReviewPrompt' } // the prompt of the review for a new session of Claude Code
+	| { type: 'closeIssue'; id: string } // "Not a problem": the extension asks for the reason
+	| { type: 'reopenIssue'; id: string };

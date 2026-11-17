@@ -362,6 +362,24 @@ progress.walk-track::-webkit-progress-value { border-radius: 2px; background: va
 .ledger-table td.warn { color: var(--sg-warn); font-weight: 600; }
 .hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
+/* stage 6: the review. The options of the next review, and the issues of the 2 lists */
+.review-options { margin: 6px 0 10px; }
+.review-options .chips { margin: 2px 0 6px; }
+.field { display: flex; flex-direction: column; gap: 2px; margin: 6px 0; }
+.field select, .field input { padding: 2px 6px; border: 1px solid var(--vscode-input-border, var(--sg-border)); border-radius: 2px;
+  background: var(--vscode-input-background); color: var(--vscode-input-foreground); font: inherit; }
+.field select:focus, .field input:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+.issues { margin: 4px 0 0; padding: 0; list-style: none; }
+.issue { padding: 8px 0; }
+.issue + .issue { border-top: 1px solid color-mix(in srgb, var(--sg-border) 50%, transparent); }
+.issue.s-closed, .issue.s-fixed { opacity: 0.7; }
+.issue .row-head { margin-top: 0; }
+.issue p { margin: 3px 0; overflow-wrap: anywhere; }
+.scenario { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 10px; margin: 6px 0; }
+.scenario dt { color: var(--vscode-descriptionForeground); }
+.scenario dd { margin: 0; overflow-wrap: anywhere; }
+.issue-decisions ul { margin: 2px 0; padding-left: 0; list-style: none; }
+
 /* lists: the setup, the decisions and the tasks */
 .list { margin: 4px 0 0; padding: 0; list-style: none; }
 .list li { display: flex; align-items: baseline; gap: 6px; padding: 3px 0; }

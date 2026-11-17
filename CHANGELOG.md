@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Phase 12: review
+
+Stage 6 is the review (the decisions 35 to 39). A new session of Claude Code reviews the whole diff of the task with the effort and the focus of the user. Shotgun shows the issues in 2 lists.
+
+- A task has 6 stages. The gate of stage 5 is "The build is done", and the gate of stage 6 is "The task is done". A task of Shotgun 0.2.0 or earlier that is done in stage 5 stays done.
+- The first gate "Accept the plan" records the commit of HEAD as the base of the task. It tells the user the files with changes that were not committed then.
+- In the panel, the user selects the effort and the focus, and copies the review prompt into a new session of Claude Code. The new session did not write the code. The effort has the levels low, medium, high, xhigh and max.
+- The new skill `shotgun-review` starts the finders and the verifiers as subagents. Each effort level has a verify pass, and the finders of races start from the races of DataFlow. The new tools `get_review` and `submit_review` give the data and take the issues. Shotgun has 21 tools and 8 skills.
+- `submit_review` checks the place of each issue in the diff of the task or in its ripple, and the text of the code. It also checks the failure scenario, and the read tools that someone called in this stage. A race needs the interleave of the 2 threads. A closed issue comes again only with new evidence and the verdict plausible.
+- The list of steps has the confirmed new issues, the important issues first. Its cap is 3 issues, plus 1 for each 100 changed lines, with a maximum of 10. The second list has the plausible issues, the pre-existing issues and the issues above the cap.
+- "Not a problem" closes an issue with a reason, and the next review gets it. The ledger records the options, each review and each closed issue. The gate "The task is done" asks first if issues of the list of steps are open.
+- The guard denies each file change of Claude in stage 6. The check of the commit message also works in stage 6.
+- Tests: 146 unit tests. `scripts/test-claude.mjs` has a step 12 for stage 6. A new run of Claude Code reviews the task at the effort medium with subagents. The test checks a refusal through the bridge, closes an issue with "Not a problem", and ends the task. The test ends the steps that it does not build with no code. It finds the step of the race in the plan of Claude.
+- The page keeps its tab until the stage changes. Then a new stage starts with the default tab, for example the review in stage 6.
+
 ## 0.2.0
 
 Shotgun 0.2.0 needs DataFlow 0.6.2 or later. The open decisions of the plan now select the writer of each step, and each hole of a frame is an open decision. A link shows a place only in the 1 side view of DataFlow.

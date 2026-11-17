@@ -40,7 +40,7 @@ suite('Tools of Shotgun', () => {
 			const out = guard(path.join(root, 'src', 'a.cpp'));
 			assert.strictEqual(out.hookSpecificOutput.hookEventName, 'PreToolUse');
 			assert.strictEqual(out.hookSpecificOutput.permissionDecision, 'deny');
-			assert.match(out.hookSpecificOutput.permissionDecisionReason, new RegExp(`the task "Cycle limit" is in stage \\d of 5, the ${stage}\\.`));
+			assert.match(out.hookSpecificOutput.permissionDecisionReason, new RegExp(`the task "Cycle limit" is in stage \\d of 6, the ${stage}\\.`));
 			store.passGate(GATE_OF[stage]);
 		}
 		const denies = store.snapshot.decisions.filter((d) => d.kind === 'deny');
@@ -48,12 +48,14 @@ suite('Tools of Shotgun', () => {
 		assert.deepStrictEqual(denies[0], { ...denies[0], tool: 'Edit', file: 'src/a.cpp' });
 	});
 
-	test('In stage 5 with no open step, the guard denies; after the last gate, it gives no decision', () => {
+	test('In the stages 5 and 6, the guard denies; after the last gate, it gives no decision', () => {
 		store.newTask('Fix');
 		for (const stage of STAGES.slice(0, 4)) {
 			store.passGate(GATE_OF[stage]);
 		}
-		assert.match(guard('a.cpp').hookSpecificOutput.permissionDecisionReason, /stage 5 of 5, the build\. No step of Claude is open\./);
+		assert.match(guard('a.cpp').hookSpecificOutput.permissionDecisionReason, /stage 5 of 6, the build\. No step of Claude is open\./);
+		store.passGate('build-done');
+		assert.match(guard('a.cpp').hookSpecificOutput.permissionDecisionReason, /stage 6 of 6, the review\. Claude changes no file in the review\./);
 		store.passGate('task-done');
 		assert.deepStrictEqual(guard('a.cpp'), {});
 	});
@@ -97,7 +99,7 @@ suite('Tools of Shotgun', () => {
 		store.newTask('Cycle limit');
 		const out = context('UserPromptSubmit');
 		assert.strictEqual(out.hookSpecificOutput.hookEventName, 'UserPromptSubmit');
-		assert.strictEqual(out.hookSpecificOutput.additionalContext, 'Shotgun: the active task is "Cycle limit", in stage 1 of 5, the brief. '
+		assert.strictEqual(out.hookSpecificOutput.additionalContext, 'Shotgun: the active task is "Cycle limit", in stage 1 of 6, the brief. '
 			+ `Claude changes no file in this stage. For the details, call the tool ${GET_SESSION_TOOL}.`);
 		// the name of the event comes from the input. A name that cannot give a text becomes UserPromptSubmit
 		assert.strictEqual(context('SessionStart').hookSpecificOutput.hookEventName, 'SessionStart');
@@ -126,7 +128,7 @@ suite('Tools of Shotgun', () => {
 		assert.strictEqual(session.guard, 'Claude changes no file in this stage.');
 		assert.match(session.next, /asks Claude for the survey/);
 		assert.deepStrictEqual(session.otherTasks, [{ id: 'old-task', title: 'Old task', stage: 1, isDone: false }]);
-		assert.strictEqual(session.stages.length, 5);
+		assert.strictEqual(session.stages.length, 6);
 		assert.ok(!('problems' in session));
 	});
 });
@@ -253,7 +255,7 @@ suite('Tools of stage 1', () => {
 		assert.deepStrictEqual(store.snapshot.questions, []);
 		store.passGate('brief-ready');
 		assert.throws(() => call('submit_questions', { questions: [{ text: 'Why?' }] }),
-			/The active task is in stage 2 of 5, the survey\. Questions about the brief are only for stage 1\./);
+			/The active task is in stage 2 of 6, the survey\. Questions about the brief are only for stage 1\./);
 	});
 
 	test('get_session gives the brief with its parts and the open questions', () => {

@@ -1,7 +1,8 @@
-// The 5 stages of a task, their writers and their gates. A gate is a decision of the user that ends a stage. The gate
+// The 6 stages of a task, their writers and their gates. A gate is a decision of the user that ends a stage. The gate
 // of the last stage ends the task. These functions use no VS Code API, so the unit tests can call them directly.
+// A task of Shotgun 0.2.0 or earlier that is done in stage 5 stays done there, with no review (P25).
 
-export const STAGES = ['brief', 'survey', 'order', 'plan', 'build'] as const;
+export const STAGES = ['brief', 'survey', 'order', 'plan', 'build', 'review'] as const;
 export type Stage = (typeof STAGES)[number];
 
 // The writer of a stage: the user, Claude, or the 2 together
@@ -57,9 +58,18 @@ export const STAGE_INFO: Readonly<Record<Stage, StageInfo>> = {
 		next: 'The user asks Claude for a step of Claude, or writes a step of the user.',
 		request: 'Do step 1.',
 	},
+	review: {
+		number: 6, name: 'Review', writer: 'both',
+		text: 'Claude reviews the whole diff of the task with your effort and your focus. You work through the issues.',
+		guard: 'Claude changes no file in the review.',
+		next: 'The user selects the effort and the focus, and asks Claude for the review. Then the user works through the issues, and selects '
+			+ '"The task is done".',
+		request: 'Review my task.',
+	},
 };
 
-export const GATES = ['brief-ready', 'order-tasks', 'accept-order', 'accept-plan', 'task-done'] as const;
+// build-done: the gate of stage 5. task-done: the gate of stage 6, and of stage 5 in a task of Shotgun 0.2.0 or earlier
+export const GATES = ['brief-ready', 'order-tasks', 'accept-order', 'accept-plan', 'build-done', 'task-done'] as const;
 export type Gate = (typeof GATES)[number];
 
 // The gate that ends each stage
@@ -68,7 +78,8 @@ export const GATE_OF: Readonly<Record<Stage, Gate>> = {
 	survey: 'order-tasks',
 	order: 'accept-order',
 	plan: 'accept-plan',
-	build: 'task-done',
+	build: 'build-done',
+	review: 'task-done',
 };
 
 // The text of the button of each gate
@@ -77,6 +88,7 @@ export const GATE_LABEL: Readonly<Record<Gate, string>> = {
 	'order-tasks': 'Order the tasks',
 	'accept-order': 'Accept the order',
 	'accept-plan': 'Accept the plan',
+	'build-done': 'The build is done',
 	'task-done': 'The task is done',
 };
 
@@ -98,7 +110,7 @@ export const START: Progress = { stage: 'brief', isDone: false, gates: [] };
 export const isStage = (value: unknown): value is Stage => typeof value === 'string' && (STAGES as readonly string[]).includes(value);
 export const isGate = (value: unknown): value is Gate => typeof value === 'string' && (GATES as readonly string[]).includes(value);
 
-// The text of a stage for a person, for example "stage 1 of 5, the brief"
+// The text of a stage for a person, for example "stage 1 of 6, the brief"
 export function stageText(stage: Stage): string {
 	const info = STAGE_INFO[stage];
 	return `stage ${info.number} of ${STAGES.length}, the ${info.name.toLowerCase()}`;

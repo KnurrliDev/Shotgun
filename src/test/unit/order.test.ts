@@ -208,7 +208,7 @@ suite('Order', () => {
 
 	test('get_order and submit_task_survey: Claude surveys the changed tasks', async () => {
 		store.newTask('A cycle limit for the solver');
-		await assert.rejects(async () => tool('get_order').call({}), /The active task is in stage 1 of 5, the brief\. The order starts in stage 3/);
+		await assert.rejects(async () => tool('get_order').call({}), /The active task is in stage 1 of 6, the brief\. The order starts in stage 3/);
 		store.passGate('brief-ready');
 		await call('submit_survey', SURVEY);
 		store.passGate('order-tasks');

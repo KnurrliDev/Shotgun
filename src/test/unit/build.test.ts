@@ -279,8 +279,10 @@ suite('Build', () => {
 		store.finishStep('S3', 'step-done');
 		assert.strictEqual(store.current, undefined);
 		m = model();
-		assert.deepStrictEqual([m.task?.gate?.label, m.task?.build?.done], ['The task is done', 3]);
+		assert.deepStrictEqual([m.task?.gate?.label, m.task?.build?.done], ['The build is done', 3]);
 		assert.strictEqual(buildGuard(undefined, 'x').closed, 'Each step of the plan is done, so Claude changes no file.');
+		store.passGate('build-done');
+		assert.strictEqual(store.snapshot.task?.stage, 'review');
 		store.passGate('task-done');
 		assert.strictEqual(store.snapshot.task?.isDone, true);
 		assert.strictEqual(currentStep(store.snapshot.plan, store.snapshot.risk, store.snapshot.levels, store.snapshot.build), undefined);

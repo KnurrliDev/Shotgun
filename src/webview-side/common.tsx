@@ -39,7 +39,7 @@ export function WriterBadges({ writer }: { writer: WriterName }) {
 	return <>{writersOf(writer).map((w) => <span class={`badge ${w}`}>{WRITER_NAMES[w]}</span>)}</>;
 }
 
-// The 5 stages. A click on an earlier stage returns the active task to that stage (decision 24). The extension asks first
+// The 6 stages. A click on an earlier stage returns the active task to that stage (decision 24). The extension asks first
 export function StageBar({ stages, isLarge }: { stages: StageView[]; isLarge?: boolean }) {
 	return (
 		<ol class={isLarge ? 'stages large' : 'stages'} aria-label="Stages">
@@ -269,7 +269,7 @@ export function NoTask({ hasTasks }: { hasTasks: boolean }) {
 	return (
 		<div>
 			<p class="title">No active task</p>
-			<p>Make a task for your next change. Shotgun takes it through the 5 stages, and you make the decisions.</p>
+			<p>Make a task for your next change. Shotgun takes it through the 6 stages, and you make the decisions.</p>
 			{hasTasks && <p class="muted">Or select a task of this folder with Open task.</p>}
 		</div>
 	);

@@ -295,16 +295,19 @@ export function checkPlan(raw: Record<string, unknown>, ctx: SurveyContext, orde
 	return { plan: { steps }, problems };
 }
 
-// The open decisions of a step of Claude (P27): 0 to 3, each with a question and the options that Claude sees. Shotgun
-// gives them the ids D1 to D3 in their sequence
-function decisionList(value: unknown, label: string, problems: string[]): PlanDecision[] {
+// The open decisions of a step of Claude (P27), or of the fix of an issue of the review (P19): 0 to 3, each with a
+// question and the options that Claude sees. Shotgun gives them the ids D1 to D3 in their sequence
+export function decisionList(value: unknown, label: string, problems: string[], kind: 'step' | 'issue' = 'step'): PlanDecision[] {
 	if (!Array.isArray(value)) {
-		problems.push(`${label}: give "decisions": the open decisions of the step, 0 to ${MAX_DECISIONS}. An open decision is a choice that the brief, `
-			+ 'the answers of the user and the order do not settle. Give an empty list for a step with no open decision.');
+		problems.push(kind === 'step'
+			? `${label}: give "decisions": the open decisions of the step, 0 to ${MAX_DECISIONS}. An open decision is a choice that the brief, `
+				+ 'the answers of the user and the order do not settle. Give an empty list for a step with no open decision.'
+			: `${label}: "decisions" must be a list of 0 to ${MAX_DECISIONS} open decisions of the fix.`);
 		return [];
 	}
 	if (value.length > MAX_DECISIONS) {
-		problems.push(`${label}: give a maximum of ${MAX_DECISIONS} "decisions". Split a step with more decisions into 2 steps.`);
+		problems.push(kind === 'step' ? `${label}: give a maximum of ${MAX_DECISIONS} "decisions". Split a step with more decisions into 2 steps.`
+			: `${label}: give a maximum of ${MAX_DECISIONS} "decisions" for the fix.`);
 	}
 	const decisions: PlanDecision[] = [];
 	value.slice(0, MAX_DECISIONS).forEach((d, k) => {

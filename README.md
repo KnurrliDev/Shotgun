@@ -6,7 +6,7 @@ Shotgun is an extension for Visual Studio Code. It is for pair programming with 
 
 ## Overview
 
-A task goes through 5 stages:
+A task goes through 6 stages:
 
 | Stage | Writer | Work |
 | --- | --- | --- |
@@ -15,6 +15,7 @@ A task goes through 5 stages:
 | 3 Order | You | You put the tasks in sequence. You can rewrite a task, add a task, or keep a task for later. |
 | 4 Plan | Claude | Claude makes the steps of the plan. Shotgun gives each step a risk level from the facts of DataFlow. |
 | 5 Build | You and Claude | The risk level of a step selects its writer. You write the steps with the most risk. |
+| 6 Review | Claude, then you | A new session of Claude Code reviews the whole diff with your effort and focus. You work through the issues. |
 
 A gate ends each stage, and only you pass a gate. A button of Shotgun records a decision of yours. It never starts Claude: you type each request in Claude Code. You can return the task to an earlier stage at any time.
 
@@ -27,7 +28,9 @@ The plan names the open decisions of each step: the choices that your brief and 
 | 4 | You write the step. You can ask for a frame. |
 | 5 | You write the step, also with no open decision. Claude changes no file, but it answers your questions. |
 
-The guard of Shotgun stops each file change of Claude in the stages 1 to 4. In the build, it lets Claude change only the files of its open step. While you write, Shotgun shows the new facts of DataFlow on your lines as callouts, for example a race. The ledger keeps your decisions and the writer of each changed line.
+The guard of Shotgun stops each file change of Claude in the stages 1 to 4 and in stage 6. In the build, it lets Claude change only the files of its open step. While you write, Shotgun shows the new facts of DataFlow on your lines as callouts, for example a race. The ledger keeps your decisions and the writer of each changed line.
+
+In stage 6, you select the effort and the focus of the review, and paste its prompt into a new session of Claude Code. The new session did not write the code, so it reviews with a fresh view. It checks each candidate in a verify pass, and gives each issue with a failure scenario and the evidence of DataFlow. Shotgun shows the confirmed new issues in the list of steps, and the other issues in a second list. You close an issue that is not a problem with a reason, and the next review gets it.
 
 Shotgun needs DataFlow 0.6.2 or later, VS Code 1.143 or later, and Claude Code 2.1.323 or later. DataFlow works only on Windows 64-bit, so Shotgun works only there too.
 
@@ -80,7 +83,7 @@ The ledger keeps your decisions and the writer of each changed line. Claude chec
 ## Documents
 
 - [Install Shotgun](docs/install.md): the VSIX package, the connection to Claude Code, and the build from the source code
-- [Use Shotgun](docs/usage.md): the 5 stages, the sidebar, the panel, the page, the commands and the settings
+- [Use Shotgun](docs/usage.md): the 6 stages, the sidebar, the panel, the page, the commands and the settings
 - [The tools and the skills](docs/tools.md): the plugin of Shotgun for Claude Code, its hooks and skills, and each tool with its parameters
 - [Develop Shotgun](docs/development.md): the files, the tests and the releases
 - [Changelog](CHANGELOG.md): the changes of each release

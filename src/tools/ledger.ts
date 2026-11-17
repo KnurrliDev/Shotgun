@@ -24,11 +24,12 @@ const MAX_DECISIONS = 40;
 
 const textOf = (value: unknown): string => (typeof value === 'string' ? value : '');
 
-// The active task in stage 5 or after its end, and the commit message of the user, else an error for Claude
+// The active task in the stages 5 and 6 or after its end (P24), and the commit message of the user, else an error for
+// Claude
 function requireMessage(deps: LedgerDeps): { message: CommitMessage } {
 	const task = deps.store.snapshot.task;
-	if (!task || task.stage !== 'build') {
-		throw new Error('The check of the commit message is only for a task in stage 5, the build, or after its end. Tell the user.');
+	if (!task || (task.stage !== 'build' && task.stage !== 'review')) {
+		throw new Error('The check of the commit message is only for a task in the stages 5 and 6, or after its end. Tell the user.');
 	}
 	const message = deps.message?.();
 	if (!message) {

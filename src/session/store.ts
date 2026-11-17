@@ -21,6 +21,10 @@ import {
 	decisionsOf, levelOf, LevelsFile, MAX_DECISION_ANSWER, MAX_DECISION_QUESTION, MAX_LEVEL_NOTE, MAX_USER_DECISIONS, openDecisions, parseLevels, parsePlan,
 	parseRisk, Plan, PlanFile, PlanStep, RiskFile, UserLevel, writerOf,
 } from './plan';
+import {
+	applyReview, AREAS, EFFORTS, EMPTY_REVIEW, IssueInput, MAX_FOCUS_TEXT, MAX_ISSUE_REASON, parseReview, REVIEW_FILE, ReviewFile, ReviewIssue, ReviewOptions,
+	ReviewRound, TaskBase,
+} from './review';
 import type { Level } from './risk';
 import { Gate, passGate, returnTo, Stage, START } from './stages';
 import { Answer, AnswersFile, checkAnswer, EngineFile, parseAnswers, parseEngine, parseSurvey, Survey, SurveyFile, SurveyHook } from './survey';
@@ -55,6 +59,7 @@ export interface Snapshot {
 	readonly callouts: CalloutsFile | undefined; // the callouts of the steps, and the answers of Claude about lines
 	readonly loose: LooseFile | undefined; // the loose ends of the steps
 	readonly message: MessageCheck | undefined; // the check of Claude of the commit message
+	readonly review: ReviewFile | undefined; // the base of the task, and the effort, the focus and the issues of the review in stage 6
 	readonly problems: readonly string[]; // the stage files that Shotgun cannot read
 }
 
@@ -87,7 +92,7 @@ export class SessionStore {
 		this.state = {
 			root, task: undefined, isPaused: false, tasks: [], decisions: [], questions: [], survey: undefined, engine: undefined, answers: {},
 			order: undefined, plan: undefined, risk: undefined, levels: undefined, build: undefined, callouts: undefined, loose: undefined, message: undefined,
-			problems: [],
+			review: undefined, problems: [],
 		};
 	}
 
@@ -159,6 +164,7 @@ export class SessionStore {
 		let callouts: CalloutsFile | undefined;
 		let loose: LooseFile | undefined;
 		let message: MessageCheck | undefined;
+		let review: ReviewFile | undefined;
 		// a stage file that is there, but that Shotgun cannot read, is a problem
 		const readFile = <T>(name: string, parse: (text: string, id: string) => T): T | undefined => {
 			const text = task && dir ? readText(path.join(dir, task.id, name)) : undefined;
@@ -184,6 +190,7 @@ export class SessionStore {
 			callouts = readFile(CALLOUTS_FILE, parseCallouts);
 			loose = readFile(LOOSE_FILE, parseLoose);
 			message = readFile(MESSAGE_FILE, parseMessageCheck);
+			review = readFile(REVIEW_FILE, parseReview);
 			const parsed = parseDecisions(readText(path.join(dir, task.id, DECISIONS_FILE)) ?? '');
 			decisions = parsed.decisions.slice(-MAX_DECISIONS);
 			if (parsed.invalid > 0) {
@@ -216,6 +223,7 @@ export class SessionStore {
 			callouts,
 			loose,
 			message,
+			review,
 			problems,
 		});
 	}
@@ -533,13 +541,91 @@ export class SessionStore {
 		this.load();
 	}
 
-	// The gate of stage 4, "Accept the plan". The levels and the notes of the user are in the ledger already
-	acceptPlan(): TaskFile {
-		this.requireStage('plan', 'The active task is not in stage 4, the plan.');
+	// The gate of stage 4, "Accept the plan". The levels and the notes of the user are in the ledger already. base: the
+	// commit of HEAD and the files with changes that were not committed (P17). Only the first gate records it, because a
+	// later gate comes after changes of the task
+	acceptPlan(base?: Omit<TaskBase, 'time'>): TaskFile {
+		const task = this.requireStage('plan', 'The active task is not in stage 4, the plan.');
 		if (!this.state.plan) {
 			throw new Error('The active task has no plan. Ask Claude for the plan first.');
 		}
+		if (base && !this.state.review?.base) {
+			this.writeReviewFile(task.id, { ...(this.state.review ?? EMPTY_REVIEW), base: { ...base, time: this.time() } });
+		}
 		return this.passGate('accept-plan');
+	}
+
+	// The effort and the focus of the user for the next review of stage 6 (decision 36). The ledger records each change
+	setReviewOptions(options: ReviewOptions): ReviewOptions {
+		const task = this.requireStage('review', 'You select the effort and the focus only in stage 6, the review.');
+		if (!(EFFORTS as readonly string[]).includes(options.effort)) {
+			throw new Error(`The effort must be 1 of ${EFFORTS.join(', ')}.`);
+		}
+		const areas = AREAS.filter((a) => options.areas.includes(a));
+		if (areas.length === 0) {
+			throw new Error('Select 1 area of the focus or more.');
+		}
+		const text = (options.text ?? '').trim().replace(/\s+/g, ' ');
+		if (text.length > MAX_FOCUS_TEXT) {
+			throw new Error(`The text of the focus has a maximum of ${MAX_FOCUS_TEXT} characters.`);
+		}
+		const value: ReviewOptions = { effort: options.effort, areas, ...(text ? { text } : {}) };
+		if (JSON.stringify(this.state.review?.options) === JSON.stringify(value)) {
+			return value;
+		}
+		this.writeReviewFile(task.id, { ...(this.state.review ?? EMPTY_REVIEW), options: value });
+		this.append(task.id, { kind: 'review-options', by: 'user', effort: value.effort, areas: value.areas, ...(text ? { text } : {}) });
+		this.load();
+		return value;
+	}
+
+	// A review of Claude in stage 6, from submit_review: the round with its effort, focus, changed lines and hunks, and the
+	// issues after the checks
+	writeReview(round: Omit<ReviewRound, 'time' | 'cap'>, issues: readonly IssueInput[]): { review: ReviewFile; added: number; repeated: number } {
+		const task = this.requireStage('review', 'Claude gives the review only in stage 6, the review.');
+		const result = applyReview(this.state.review ?? EMPTY_REVIEW, round, issues, this.time());
+		this.writeReviewFile(task.id, result.review);
+		const open = result.review.issues.filter((i) => i.lastRound === round.n && i.state === 'open');
+		this.append(task.id, {
+			kind: 'review', by: 'claude', round: round.n, effort: round.effort, issues: issues.length,
+			steps: open.filter((i) => i.list === 'steps').length, second: open.filter((i) => i.list === 'second').length,
+		});
+		this.load();
+		return result;
+	}
+
+	// The user closes an issue of the review with "Not a problem" and a reason, or opens it again with no reason (P22)
+	setIssueClosed(id: string, reason: string | undefined): void {
+		const task = this.requireStage('review', 'The issues of the review are only in stage 6, the review.');
+		const review = this.state.review;
+		const issue = review?.issues.find((i) => i.id === id);
+		if (!review || !issue) {
+			throw new Error(`The review has no issue ${id}.`);
+		}
+		let next: ReviewIssue;
+		if (reason === undefined) {
+			if (issue.state !== 'closed') {
+				return;
+			}
+			const { closed: _old, ...rest } = issue;
+			next = { ...rest, state: 'open' };
+		} else {
+			const text = reason.trim().replace(/\s+/g, ' ');
+			if (!text) {
+				throw new Error('Give the reason why the issue is not a problem. The next review gets it.');
+			}
+			if (text.length > MAX_ISSUE_REASON) {
+				throw new Error(`A reason has a maximum of ${MAX_ISSUE_REASON} characters.`);
+			}
+			if (issue.state === 'closed' && issue.closed?.reason === text) {
+				return;
+			}
+			next = { ...issue, state: 'closed', closed: { reason: text, time: this.time() } };
+		}
+		this.writeReviewFile(task.id, { ...review, issues: review.issues.map((i) => (i === issue ? next : i)) });
+		this.append(task.id, reason === undefined ? { kind: 'issue-open', by: 'user', issue: id }
+			: { kind: 'issue-close', by: 'user', issue: id, title: issue.title, reason: next.closed!.reason });
+		this.load();
 	}
 
 	// Opens the current step of the build: Claude opens an errand, or Shotgun opens a step of the user. Claude can open its
@@ -799,12 +885,12 @@ export class SessionStore {
 		this.load();
 	}
 
-	// The check of Claude of the commit message, in stage 5 or after the gate "The task is done". A new check replaces the
-	// old check
+	// The check of Claude of the commit message, in the stages 5 and 6, or after the gate "The task is done" (P24). A new
+	// check replaces the old check
 	writeMessageCheck(check: Omit<MessageCheck, 'version' | 'time'>): MessageCheck {
 		const task = this.requireTask();
-		if (task.stage !== 'build') {
-			throw new Error('Claude checks the commit message only in stage 5, the build, or after the end of the task.');
+		if (task.stage !== 'build' && task.stage !== 'review') {
+			throw new Error('Claude checks the commit message only in the stages 5 and 6, or after the end of the task.');
 		}
 		const value: MessageCheck = { version: FILE_VERSION, ...check, time: this.time() };
 		writeTextAtomic(path.join(this.requireDir(), task.id, MESSAGE_FILE), jsonText(value));
@@ -1032,6 +1118,10 @@ export class SessionStore {
 			throw new Error(`The task has no loose end ${id}.`);
 		}
 		return end;
+	}
+
+	private writeReviewFile(id: string, value: ReviewFile): void {
+		writeTextAtomic(path.join(this.requireDir(), id, REVIEW_FILE), jsonText(value));
 	}
 
 	private writeLooseFile(id: string, value: LooseFile): void {

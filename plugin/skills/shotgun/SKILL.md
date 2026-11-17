@@ -1,6 +1,6 @@
 ---
 name: shotgun
-description: 'Work with the Shotgun extension of VS Code: its active task, the 5 stages, the guard, the brief and the questions about the brief. Use this skill when the user mentions Shotgun, or gives a brief for a task in the chat. Also use it when the user asks for questions about the brief, for example "Ask me questions about my brief", or about the active task.'
+description: 'Work with the Shotgun extension of VS Code: its active task, the 6 stages, the guard, the brief and the questions about the brief. Use this skill when the user mentions Shotgun, or gives a brief for a task in the chat. Also use it when the user asks for questions about the brief, for example "Ask me questions about my brief", or about the active task.'
 ---
 
 # Shotgun
@@ -13,7 +13,7 @@ The full names of the tools start with `mcp__plugin_dataflow_dataflow__shotgun_`
 
 - Call `shotgun_get_session` first for each request about Shotgun. It gives the active task, its stage, the brief, the rule of the guard and the next work.
 - Give your results only with the tools of Shotgun. Do not change the files in the folder `.shotgun`.
-- The guard of Shotgun stops each change of a file in the stages 1 to 4. In stage 5, it lets you change only the files of the scope of your open step. If the guard stops a change, do not try a different way, for example a shell command. Tell the user the reason of the guard.
+- The guard of Shotgun stops each change of a file in the stages 1 to 4 and in stage 6. In stage 5, it lets you change only the files of the scope of your open step. If the guard stops a change, do not try a different way, for example a shell command. Tell the user the reason of the guard.
 - A gate is a decision of the user. Only the user selects a gate, with a button of Shotgun. Tell the user which gate comes next.
 - The user can return the task to an earlier stage at any time. Then the task is in that stage again, and the work of the later stages stays. Do a stage again only when the user asks, for example "Survey my brief.".
 - The tools of Shotgun check your data. If a tool gives problems, correct all of them, and call the tool again.
@@ -27,6 +27,7 @@ The full names of the tools start with `mcp__plugin_dataflow_dataflow__shotgun_`
 | 3 Order | The user | The user puts the tasks in sequence. |
 | 4 Plan | You | You make the steps of the plan. Shotgun gives each step a risk level. |
 | 5 Build | The user and you | The risk level of a step selects its writer. |
+| 6 Review | You, then the user | A new session reviews the whole diff of the task. The user works through the issues. |
 
 ## Stage 1: the brief
 
@@ -98,4 +99,14 @@ While the user writes a step, Shotgun shows the new facts of DataFlow on the lin
 
 At the gate of each step, Shotgun finds its loose ends. The user can hand a loose end to you as the next step. Use the skill `shotgun-errand` when the user asks for them, for example "Do the loose ends".
 
-The user writes the commit message in the input box of Source Control. Use the skill `shotgun-commit` when the user asks for a check of the message, for example "Check my commit message". You change no message, and you make no commit: the user commits.
+After the last step, the user selects "The build is done". Then the task goes to stage 6.
+
+## Stage 6: the review
+
+The review runs in a new session of Claude Code, because a new session did not write the code of the task. The user selects the effort and the focus in the panel of Shotgun. Then the user copies the prompt of the review, and pastes it into a new session. Use the skill `shotgun-review` when the user asks for the review, or when a prompt names the skill `shotgun-review`.
+
+The guard stops each change of a file in stage 6. The user works through the issues, and closes an issue that is not a problem with a reason. Then the user selects "The task is done".
+
+## The commit message
+
+The user writes the commit message in the input box of Source Control. This is in stage 5, in stage 6 or after the end of the task. Use the skill `shotgun-commit` when the user asks for a check of the message, for example "Check my commit message". You change no message, and you make no commit: the user commits.

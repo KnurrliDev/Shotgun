@@ -1,6 +1,6 @@
 ---
 name: shotgun-commit
-description: 'Check the commit message of the user against the diff, for the active Shotgun task in stage 5 or after its end. The user writes the message in the input box of Source Control. Use this skill when the user asks for a check of the message, for example "Check my commit message".'
+description: 'Check the commit message of the user against the diff. This is for the active Shotgun task in the stages 5 and 6, or after its end. The user writes the message in the input box of Source Control. Use this skill when the user asks for a check of the message, for example "Check my commit message".'
 ---
 
 # The check of the commit message

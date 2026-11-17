@@ -330,9 +330,9 @@ suite('Loose ends and ledger', () => {
 			['plan', false, ['brief-ready', 'order-tasks', 'accept-order'], 'S2', 'sg.base.S2']);
 		assert.deepStrictEqual(Object.entries(store.snapshot.build!.steps).map(([id, b]) => [id, b.state]), [['S1', 'done']]);
 		assert.strictEqual(decisionText(store.snapshot.decisions.at(-1)!),
-			'You returned the task from stage 5 to stage 4 of 5, the plan. Step S2 was open, and it went back to todo.');
+			'You returned the task from stage 5 to stage 4 of 6, the plan. Step S2 was open, and it went back to todo.');
 		// the stage chips of the stages before the plan are returns
-		assert.deepStrictEqual(model().stages.map((s) => s.canReturn), [true, true, true, false, false]);
+		assert.deepStrictEqual(model().stages.map((s) => s.canReturn), [true, true, true, false, false, false]);
 		assert.throws(() => store.returnToStage('build'), /It can return only to an earlier stage/);
 		// a new plan with the same title of step 1 keeps its state in the build
 		await call('submit_plan', PLAN);

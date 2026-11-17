@@ -94,6 +94,10 @@ export interface QuestionsFile {
 // - explanation: Claude explained a callout
 // - line-answer: Claude answered a question of the user about a line. line-resolve: the user resolved the question
 // - decision: the user answered an open decision of a step, opened it again, added a decision or removed it (P29)
+// - review-options: the user selected the effort and the focus of the review (decision 36)
+// - review: Claude gave a review of stage 6, with its round, its effort and the number of its issues in each list
+// - issue-close: the user closed an issue of the review with "Not a problem" and a reason. issue-open: the user opened
+//   it again
 export const DECISION_ACTIONS = ['answer', 'open', 'add', 'remove'] as const;
 export type DecisionAction = (typeof DECISION_ACTIONS)[number];
 
@@ -162,7 +166,17 @@ export type Decision =
 	| { readonly version: 1; readonly time: string; readonly kind: 'loose-hand'; readonly by: 'user'; readonly end: string; readonly step: string; readonly title: string }
 	| { readonly version: 1; readonly time: string; readonly kind: 'loose-close'; readonly by: 'user'; readonly end: string; readonly title: string; readonly reason: string }
 	| { readonly version: 1; readonly time: string; readonly kind: 'loose-open'; readonly by: 'user'; readonly end: string }
-	| { readonly version: 1; readonly time: string; readonly kind: 'message-check'; readonly by: 'claude'; readonly agrees: boolean; readonly points: number };
+	| { readonly version: 1; readonly time: string; readonly kind: 'message-check'; readonly by: 'claude'; readonly agrees: boolean; readonly points: number }
+	| {
+		readonly version: 1; readonly time: string; readonly kind: 'review-options'; readonly by: 'user'; readonly effort: string;
+		readonly areas: readonly string[]; readonly text?: string;
+	}
+	| {
+		readonly version: 1; readonly time: string; readonly kind: 'review'; readonly by: 'claude'; readonly round: number; readonly effort: string;
+		readonly issues: number; readonly steps: number; readonly second: number;
+	}
+	| { readonly version: 1; readonly time: string; readonly kind: 'issue-close'; readonly by: 'user'; readonly issue: string; readonly title: string; readonly reason: string }
+	| { readonly version: 1; readonly time: string; readonly kind: 'issue-open'; readonly by: 'user'; readonly issue: string };
 
 // The gates of a step: the gate of an errand, and the gate of a step of the user
 export const STEP_GATES = ['accept-receipt', 'step-done'] as const;
@@ -382,6 +396,26 @@ function parseDecision(value: unknown): Decision | undefined {
 		case 'message-check':
 			return value.by === 'claude' && typeof value.agrees === 'boolean' && typeof value.points === 'number'
 				? { version: FILE_VERSION, time, kind: 'message-check', by: 'claude', agrees: value.agrees, points: value.points } : undefined;
+		case 'review-options':
+			return value.by === 'user' && isText(value.effort) && Array.isArray(value.areas) && value.areas.every((a) => typeof a === 'string')
+				&& (value.text === undefined || typeof value.text === 'string')
+				? {
+					version: FILE_VERSION, time, kind: 'review-options', by: 'user', effort: value.effort, areas: value.areas as string[],
+					...(typeof value.text === 'string' ? { text: value.text } : {}),
+				} : undefined;
+		case 'review': {
+			const counts = [value.round, value.issues, value.steps, value.second];
+			return value.by === 'claude' && isText(value.effort) && counts.every((n) => typeof n === 'number')
+				? {
+					version: FILE_VERSION, time, kind: 'review', by: 'claude', round: value.round as number, effort: value.effort, issues: value.issues as number,
+					steps: value.steps as number, second: value.second as number,
+				} : undefined;
+		}
+		case 'issue-close':
+			return value.by === 'user' && isText(value.issue) && typeof value.title === 'string' && typeof value.reason === 'string'
+				? { version: FILE_VERSION, time, kind: 'issue-close', by: 'user', issue: value.issue, title: value.title, reason: value.reason } : undefined;
+		case 'issue-open':
+			return value.by === 'user' && isText(value.issue) ? { version: FILE_VERSION, time, kind: 'issue-open', by: 'user', issue: value.issue } : undefined;
 		case 'step-gate':
 			return value.by === 'user' && isText(value.step) && (STEP_GATES as readonly unknown[]).includes(value.gate) && typeof value.notWalked === 'number'
 				? {

@@ -73,6 +73,13 @@ export function decide(input: GuardInput, state: GuardState): GuardDecision {
 	if (task.isDone) {
 		return { decision: 'none', why: 'done' };
 	}
+	if (task.stage === 'review') {
+		return {
+			decision: 'deny',
+			reason: `Shotgun: the task "${task.title}" is in ${stageText(task.stage)}. ${STAGE_INFO.review.guard} Give the issues to Shotgun with `
+				+ 'shotgun_submit_review. The user decides each issue. For work outside of the task, the user selects "Shotgun: Pause".',
+		};
+	}
 	if (task.stage !== 'build') {
 		return {
 			decision: 'deny',

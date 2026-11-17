@@ -23,7 +23,7 @@ suite('Sidebar', () => {
 		const state: HomeState = {
 			project: { name: 'battery', root },
 			tasks: [
-				{ id: 'a-cycle-limit', title: 'A cycle limit', stage: '2 Survey', stageText: 'stage 2 of 5, the survey', isActive: true, isDone: false },
+				{ id: 'a-cycle-limit', title: 'A cycle limit', stage: '2 Survey', stageText: 'stage 2 of 6, the survey', isActive: true, isDone: false },
 				{ id: 'a-log-line', title: 'A log line', stage: 'done', stageText: 'done', isActive: false, isDone: true },
 			],
 			hasLedger: false,
@@ -38,7 +38,7 @@ suite('Sidebar', () => {
 		assert.strictEqual(items.find((i) => i.id === 'returnToStage')!.description, 'from 2 Survey');
 		// the short stage is the description, and the tooltip has the full stage
 		assert.deepStrictEqual(items.find((i) => i.id === 'tasks')!.children!.map((c) => [c.label, c.description, c.tooltip, c.icon, c.arguments]), [
-			['A cycle limit', '2 Survey', 'The active task: A cycle limit, stage 2 of 5, the survey', 'circle-filled', ['a-cycle-limit']],
+			['A cycle limit', '2 Survey', 'The active task: A cycle limit, stage 2 of 6, the survey', 'circle-filled', ['a-cycle-limit']],
 			['A log line', 'done', 'Make A log line the active task: done', 'pass', ['a-log-line']],
 		]);
 		assert.deepStrictEqual([items.find((i) => i.id === 'claude')!.label, items.find((i) => i.id === 'claude')!.description], ['Claude Code', 'connected']);

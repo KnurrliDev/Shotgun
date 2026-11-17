@@ -1,7 +1,7 @@
 # Shotgun: implementation plan
 
 - Date: 13 November 2026, changed on 17 November 2026
-- Status: the phases 0 to 11 are done, except the full test of phase 10 in a real project of the user. Phase 11 tuned the risk levels and the holes of the frames. The phases 12 and 13 add stage 6, the review, and they wait until later. On 17 November 2026, the decisions 35 to 38 changed the design of stage 6, and a research report gave the evidence. Section 8 gives the status of each phase.
+- Status: the phases 0 to 12 are done, except the full test of phase 10 in a real project of the user. Phase 11 tuned the risk levels and the holes of the frames. Phase 12 added stage 6, the review, and phase 13 adds the steps of the issues. On 17 November 2026, the decisions 35 to 39 changed the design of stage 6, and a research report gave the evidence. Section 8 gives the status of each phase.
 - Sources:
   - the design canvas: https://claude.ai/artifact/Sxm9DJ8WPE6LAFqW8PVD6z
   - `dataflow-gaps.md` and `dataflow-gaps-2.md` in this folder
@@ -78,8 +78,9 @@ These items are not in the scope of version 1:
 36. Before the review, the user selects the effort and the focus. The effort has the levels of `/code-review`: low, medium, high, xhigh and max. The focus is 1 or more areas, for example threads and races, and an optional text of the user.
 37. Each issue is a step of the user by default, as a step of level 4 in the build. The user can use Claude as in a step of the user. The user can ask a question, ask for a frame, or change the level. At the levels 1 and 2, Claude writes the fix as an errand. This changes the decisions 28 and 29.
 38. The design of stage 6 follows the research report `reports/Agentic code review design.md`. Each effort level has a verify pass. Plausible issues, pre-existing issues and the issues above the cap go into a second list, and the user can make each of them a step. The size of the diff sets the cap on the steps, not the effort. After 3 rounds of the review, the panel asks the user before the next round. This changes decision 37 for the issues in the second list.
+39. The review runs in a new session of Claude Code, which did not write the code of the task. The panel has a button that copies the prompt of the review, and a hint to paste it into a new session. The new session loads the skill `shotgun-review`, and starts the subagents that the effort needs. The subagents use the model of the session.
 
-The user gave decision 10 on 13 November 2026, and the decisions 11 to 23 on 14 November 2026. The user gave the decisions 24 to 26 on 15 November 2026, and the decisions 27 to 34 on 16 November 2026. The user gave the decisions 35 to 38 on 17 November 2026. Decision 38 applies the research report, which has 82 sources. The decisions 31 to 33 come from 13 frames of the runs of `scripts/test-claude.mjs`. Each of their 27 holes was 1 obvious line, and the text of the step gave most of the answers. Decision 10 changes the buttons of the canvas that started Claude. Section 12 lists these changes.
+The user gave decision 10 on 13 November 2026, and the decisions 11 to 23 on 14 November 2026. The user gave the decisions 24 to 26 on 15 November 2026, and the decisions 27 to 34 on 16 November 2026. The user gave the decisions 35 to 39 on 17 November 2026. Decision 38 applies the research report, which has 82 sources. The decisions 31 to 33 come from 13 frames of the runs of `scripts/test-claude.mjs`. Each of their 27 holes was 1 obvious line, and the text of the step gave most of the answers. Decision 10 changes the buttons of the canvas that started Claude. Section 12 lists these changes.
 
 ## 3. Proposals of this plan
 
@@ -362,7 +363,7 @@ Shotgun cannot run `/code-review` itself. Its text is not public, and it can cha
 
 1. After the last step of the build, the user selects **The build is done**. The task goes to stage 6.
 2. In the panel, the user selects the effort and the focus of the review (decision 36). The panel keeps the last choice.
-3. The user tells Claude "Review my task." Claude Code loads the skill `shotgun-review`.
+3. The user selects **Copy the review prompt**, and pastes the prompt into a new session of Claude Code (decision 39). The new session loads the skill `shotgun-review`.
 4. Claude calls `shotgun_get_review`. It gets the diff of the task, the effort, the focus, the brief and the steps. It also gets the issues of the earlier rounds with the reasons of the user.
 5. Fresh subagents find the candidates: 1 finder for each area of the focus, and 1 generalist finder. Each finder gets a slice: the hunk, its ripple and the facts of DataFlow. It calls the read tools of DataFlow for more. The finders of races and lifetime start from the races and the threads of DataFlow (P20).
 6. A verify pass in a fresh subagent checks each candidate, at each effort. It gives the verdict first, then the failure scenario, with a file and line and a fact of DataFlow for each claim. Then Claude removes the duplicates, and ranks the issues by severity.
@@ -803,6 +804,21 @@ Open item: only the unit tests checked the choices of Claude in a receipt. In th
 - **Guard:** in stage 6, the guard denies each file change of Claude.
 - **Ledger:** each review with its effort and its focus, the issues that the user closed with the reasons, and the gate with the open issues.
 - **Done when:** in the fixture task, "Review my task." at the effort medium gives 1 issue or more. Each issue has a severity, an origin, a verdict, a failure scenario and the evidence of DataFlow. A race issue starts from a race of DataFlow. Shotgun refuses an issue outside of the diff of the task. The user closes an issue with **Not a problem**, and the gate **The task is done** ends the task. The unit tests check the stages with stage 6, the migration of a task of 0.2.0, and the checks of `submit_review`.
+
+**Status, 17 November 2026:** done. 146 unit tests passed. Run 5 of `scripts/test-claude.mjs` passed 172 of 174 checks with 13 runs of Claude Code:
+
+- The review at the effort medium, with the focus correctness and threads, ran in a new run of Claude Code. It started 9 subagents, and it took about 2 minutes.
+- The diff of the task had 9 changed lines, so the cap was 3 steps. The list of steps had 2 confirmed issues, and the second list had 1 plausible race. Each issue had a failure scenario and the evidence of DataFlow.
+- The review did not name again the race that the user closed as a callout in step 4. A direct call through the bridge showed that Shotgun refuses an issue outside of the diff of the task.
+- The 2 failed checks came from a fault of this phase in the page: a new page lost "Show the ledger". The fix changes the tab only when the stage changes. A check in the harness of the webviews confirmed the fix, but no full run tested it.
+- The test now ends the steps that it does not build with no code. It also finds the step of the race in the plan of Claude, because the plan changes from run to run.
+- The subagents of the review write their data into the folder of the project of the run in the data of Claude Code. The test removes this folder.
+
+Open items:
+
+- Until phase 13, the user fixes an issue in the text editor, because the guard stops each change of Claude in stage 6.
+- The subagents are general subagents (decision 39). The guard stops their edits, but not a shell command. Only the prompts of the skill forbid a shell command that changes a file.
+- The check "A step that adds a data member has a place with insert, and gets level 2" of phase 11 failed in run 4. It depends on the plan of Claude.
 
 ### Phase 13: the steps of the issues
 

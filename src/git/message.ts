@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { isInside } from '../session/paths';
 
 // The commit message of the user: the input box of the repository in Source Control, from the API of the Git extension
@@ -13,7 +14,11 @@ interface GitChange {
 interface GitRepository {
 	readonly rootUri: vscode.Uri;
 	readonly inputBox: { readonly value: string };
-	readonly state: { readonly indexChanges: readonly GitChange[]; readonly workingTreeChanges: readonly GitChange[] };
+	readonly state: {
+		readonly HEAD?: { readonly commit?: string };
+		readonly indexChanges: readonly GitChange[];
+		readonly workingTreeChanges: readonly GitChange[];
+	};
 }
 
 interface GitExtension {
@@ -41,6 +46,25 @@ function repositoryOf(root: string): GitRepository | undefined {
 	}
 	const repositories = extension.exports.getAPI(1).repositories.filter((r) => isInside(root, r.rootUri.fsPath));
 	return repositories.sort((a, b) => b.rootUri.fsPath.length - a.rootUri.fsPath.length)[0];
+}
+
+// The commit of HEAD and the files with changes that are not committed, relative to the first folder of the project:
+// the base of the task at the gate "Accept the plan" (P17). undefined: no repository, or the Git extension of VS Code
+// is off. The files of Shotgun are not in the list
+export function headOf(root: string): { readonly commit?: string; readonly dirty: readonly string[] } | undefined {
+	const repository = repositoryOf(root);
+	if (!repository) {
+		return undefined;
+	}
+	const dirty = new Set<string>();
+	for (const change of [...repository.state.indexChanges, ...repository.state.workingTreeChanges]) {
+		const file = path.relative(root, change.uri.fsPath).split(path.sep).join('/');
+		if (file && !file.startsWith('..') && !file.startsWith('.shotgun/')) {
+			dirty.add(file);
+		}
+	}
+	const commit = repository.state.HEAD?.commit;
+	return { ...(commit ? { commit } : {}), dirty: [...dirty].sort() };
 }
 
 // The commit message of the project. undefined: no repository, or the Git extension of VS Code is off

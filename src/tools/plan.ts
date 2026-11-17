@@ -140,7 +140,7 @@ export function decisionsData(step: PlanStep, levels: LevelsFile | undefined): R
 }
 
 // The steps of a plan with their levels, for the result of a tool
-function stepsData(snapshot: Snapshot): Record<string, unknown>[] {
+export function stepsData(snapshot: Snapshot): Record<string, unknown>[] {
 	const { plan, risk, levels } = snapshot;
 	return (plan?.steps ?? []).map((s, i) => {
 		const l = levelOf(s, risk, levels);
@@ -197,7 +197,7 @@ export async function submitPlan(deps: SurveyDeps, args: Record<string, unknown>
 	}
 	if (task.isDone || task.stage !== 'plan') {
 		throw new Error(`The active task is in ${stageText(task.stage)}. The plan is only for stage 4. `
-			+ (task.stage === 'build' || task.isDone ? 'The user accepted the plan already.' : NO_PLAN));
+			+ (task.stage === 'build' || task.stage === 'review' || task.isDone ? 'The user accepted the plan already.' : NO_PLAN));
 	}
 	if (!survey) {
 		throw new Error('The active task has no survey of stage 2.');

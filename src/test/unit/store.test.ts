@@ -46,7 +46,7 @@ suite('Session store', () => {
 	test('Gates, a pause, a continue and a deny go into the ledger', () => {
 		const store = new SessionStore(root, clock());
 		store.newTask('Fix');
-		assert.throws(() => store.passGate('accept-order'), /is not the gate of stage 1 of 5/);
+		assert.throws(() => store.passGate('accept-order'), /is not the gate of stage 1 of 6/);
 		const next = store.passGate('brief-ready');
 		assert.strictEqual(next.stage, 'survey');
 		store.setPaused(true);

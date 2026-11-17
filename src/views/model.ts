@@ -15,14 +15,17 @@ import { absolutePath } from '../session/paths';
 import {
 	decisionsOf, levelOf, levelReasons, MAX_DECISION_ANSWER, MAX_DECISION_QUESTION, MAX_LEVEL_NOTE, MAX_USER_DECISIONS, openDecisions, placeName, PlanStep,
 } from '../session/plan';
+import {
+	AREA_INFO, areaOf, AREAS, DEFAULT_OPTIONS, EFFORT_INFO, EFFORTS, IssuePlace, MAX_FOCUS_TEXT, MAX_ISSUE_REASON, ReviewIssue, reviewPrompt,
+} from '../session/review';
 import { LEVEL_INFO } from '../session/risk';
 import { GATE_LABEL, returnStages, STAGE_INFO, STAGES, stageText } from '../session/stages';
 import type { Snapshot } from '../session/store';
 import { excerptOf, findHook, Lines } from '../session/survey';
 import type {
-	BriefView, BuildStepView, BuildView, CurrentStepView, DecisionView, GateView, HoleView, HookView, LedgerView, LooseEndView, LooseView, MessageView,
-	NavigatorView, OrderTaskView, OrderView, PlanPlaceView, PlanStepView, PlanView, ReceiptView, SetupRow, StageView, StepDecisionView, SurveyView, TaskView,
-	ViewModel,
+	BriefView, BuildStepView, BuildView, CurrentStepView, DecisionView, GateView, HoleView, HookView, IssuePlaceView, IssueView, LedgerView, LooseEndView,
+	LooseView, MessageView, NavigatorView, OrderTaskView, OrderView, PlanPlaceView, PlanStepView, PlanView, ReceiptView, ReviewView, SetupRow, StageView,
+	StepDecisionView, SurveyView, TaskView, ViewModel,
 } from './protocol';
 
 // The view model of the page and of the panel, from the session, the state of DataFlow and the connection to Claude
@@ -168,6 +171,16 @@ export function decisionText(decision: Decision): string {
 		case 'message-check':
 			return `Claude checked the commit message: ${decision.agrees ? 'it agrees with the diff' : 'it does not agree with the diff'}, `
 				+ `with ${decision.points} ${decision.points === 1 ? 'point' : 'points'}.`;
+		case 'review-options':
+			return `You selected the effort ${decision.effort} and the focus ${decision.areas.join(', ')} for the review`
+				+ `${decision.text ? `, with "${decision.text}"` : ''}.`;
+		case 'review':
+			return `Claude gave the review of round ${decision.round} at the effort ${decision.effort}: ${count(decision.issues, 'issue')}, `
+				+ `${count(decision.steps, 'step')} and ${decision.second} in the second list.`;
+		case 'issue-close':
+			return `You closed the issue ${decision.issue}, "${decision.title}": not a problem. Your reason: "${decision.reason}".`;
+		case 'issue-open':
+			return `You opened the issue ${decision.issue} again.`;
 	}
 }
 
@@ -497,7 +510,7 @@ function messageView(check: MessageCheck | undefined, commit: ModelInput['commit
 // The ledger of the task (phase 9): the decisions of the user and of Claude, the lines of each writer, and the commit message
 function ledgerView(snapshot: Snapshot, input: ModelInput): LedgerView | undefined {
 	const { task, build, root, decisions } = snapshot;
-	if (!task || task.stage !== 'build' || !root) {
+	if (!task || (task.stage !== 'build' && task.stage !== 'review') || !root) {
 		return undefined;
 	}
 	const rows = ledgerRows(input.ledgerLines ?? [], build);
@@ -643,11 +656,92 @@ function briefView(snapshot: Snapshot, brief: NonNullable<ModelInput['brief']>):
 	};
 }
 
-// The gate of stage 5: the gate of the current step, or "The task is done" after the last step
+// Stage 6: the effort and the focus of the next review, the prompt for a new session, and the 2 lists of the review (P22)
+function reviewView(snapshot: Snapshot, readLines: ModelInput['readLines']): ReviewView | undefined {
+	const { task, review, root } = snapshot;
+	if (!task || task.stage !== 'review' || !root) {
+		return undefined;
+	}
+	const options = review?.options ?? DEFAULT_OPTIONS;
+	const rounds = new Map((review?.rounds ?? []).map((r) => [r.n, r]));
+	const last = review?.rounds[review.rounds.length - 1];
+	const base = review?.base;
+	const placeView = (p: IssuePlace): IssuePlaceView => {
+		const file = absolutePath(p.file, root);
+		const text = readLines?.(file);
+		const lines = (text ? findHook(text, { lines: p.lines, code: p.code, codeLine: p.codeLine }) : undefined) ?? p.lines;
+		return { name: placeText(p.file, lines), path: file, line: lines[0], lines: [lines[0], lines[1]] };
+	};
+	const reasonOf = (i: ReviewIssue): string | undefined => {
+		switch (i.secondReason) {
+			case 'plausible':
+				return 'Plausible: the verify pass did not confirm the failure scenario.';
+			case 'pre-existing':
+				return 'Pre-existing: the problem was in the code before the task.';
+			case 'cap': {
+				const r = rounds.get(i.lastRound);
+				return `Above the cap of ${r ? count(r.cap, 'step') : 'the steps'}${r ? ` for ${count(r.changedLines, 'changed line')}` : ''}.`;
+			}
+		}
+		return undefined;
+	};
+	const issueView = (i: ReviewIssue): IssueView => {
+		const listReason = i.list === 'second' ? reasonOf(i) : undefined;
+		return {
+			id: i.id, title: i.title, summary: i.summary, scenario: { ...i.scenario }, category: i.category, areaName: AREA_INFO[areaOf(i.category)].name,
+			severity: i.severity, origin: i.origin, verdict: i.verdict, source: i.source, place: placeView(i.place), fixPlaces: (i.fixPlaces ?? []).map(placeView),
+			decisions: i.decisions.map((d) => ({ id: d.id, question: d.question, ...(d.options ? { options: [...d.options] } : {}) })), tools: [...i.tools],
+			list: i.list, ...(listReason ? { listReason } : {}), state: i.state, ...(i.closed ? { reason: i.closed.reason } : {}),
+			...(i.evidence ? { evidence: i.evidence } : {}), round: i.lastRound,
+		};
+	};
+	// the issues of the last round first
+	const issues = [...(review?.issues ?? [])].sort((a, b) => b.lastRound - a.lastRound);
+	return {
+		effort: options.effort,
+		areas: [...options.areas],
+		text: options.text ?? '',
+		efforts: EFFORTS.map((e) => ({ id: e, ...EFFORT_INFO[e] })),
+		allAreas: AREAS.map((a) => ({ id: a, name: AREA_INFO[a].name, looksFor: AREA_INFO[a].looksFor })),
+		maxText: MAX_FOCUS_TEXT,
+		maxReason: MAX_ISSUE_REASON,
+		prompt: reviewPrompt(task.title, options),
+		...(base?.commit ? {
+			base: `${base.commit.slice(0, 7)}${base.dirty.length > 0 ? `, ${count(base.dirty.length, 'file')} with changes that were not committed` : ''}`,
+		} : { baseError: base?.error ?? 'The gate "Accept the plan" recorded no base commit, so the review has no diff.' }),
+		...(last ? {
+			round: {
+				n: last.n, time: last.time, effortName: EFFORT_INFO[last.effort].name, areaNames: last.areas.map((a) => AREA_INFO[a].name), cap: last.cap,
+				changedLines: last.changedLines, ...(last.note ? { note: last.note } : {}),
+			},
+		} : {}),
+		steps: issues.filter((i) => i.list === 'steps').map(issueView),
+		second: issues.filter((i) => i.list === 'second').map(issueView),
+		open: issues.filter((i) => i.list === 'steps' && i.state === 'open').length,
+		closed: issues.filter((i) => i.state === 'closed').length,
+	};
+}
+
+// The gate of stage 6, "The task is done". It never waits (P16)
+function reviewGate(review: ReviewView): GateView {
+	const warnings = [
+		...(!review.round ? ['Claude did not review the task yet.'] : []),
+		...(review.open > 0 ? [`${count(review.open, 'issue')} of the list of steps ${review.open === 1 ? 'is' : 'are'} open. The ledger keeps them as open.`] : []),
+	];
+	return {
+		label: GATE_LABEL['task-done'], note: 'Your gate. It ends the task. Then you make the commit.', isEnabled: true,
+		...(warnings.length > 0 ? { warning: warnings.join(' ') } : {}),
+	};
+}
+
+// The gate of stage 5: the gate of the current step, or "The build is done" after the last step
 function buildGate(build: BuildView): GateView {
 	const current = build.current;
 	if (!current) {
-		return { label: GATE_LABEL['task-done'], note: 'Your gate. It ends the task. Then you make the commit.', isEnabled: true };
+		return {
+			label: GATE_LABEL['build-done'], isEnabled: true,
+			note: 'Your gate. After it, you select the effort and the focus of the review, and copy its prompt into a new session of Claude Code.',
+		};
 	}
 	if (current.writer === 'user') {
 		return {
@@ -709,9 +803,12 @@ function buildGate(build: BuildView): GateView {
 
 // The gate of the stage
 function gateView(task: TaskFile, brief: BriefView | undefined, survey: SurveyView | undefined, order: OrderView | undefined, plan: PlanView | undefined,
-	build: BuildView | undefined): GateView | undefined {
+	build: BuildView | undefined, review: ReviewView | undefined): GateView | undefined {
 	if (task.isDone) {
 		return undefined;
+	}
+	if (task.stage === 'review') {
+		return review ? reviewGate(review) : undefined;
 	}
 	if (task.stage === 'build') {
 		return build ? buildGate(build) : undefined;
@@ -879,15 +976,17 @@ function taskView(input: ModelInput): TaskView | null {
 	const brief = task.stage === 'brief' && !task.isDone && briefInput ? briefView(snapshot, briefInput) : undefined;
 	const survey = task.stage !== 'brief' ? surveyView(snapshot, readLines) : undefined;
 	const order = orderView(snapshot, survey);
-	const plan = task.stage === 'plan' || task.stage === 'build' ? planView(snapshot, readLines) : undefined;
+	const plan = task.stage === 'plan' || task.stage === 'build' || task.stage === 'review' ? planView(snapshot, readLines) : undefined;
 	const build = task.stage === 'build' && plan ? buildView(snapshot, plan, readLines, navigatorView(snapshot, voice, pauseSeconds)) : undefined;
-	const gate = gateView(task, brief, survey, order, plan, build);
+	const review = reviewView(snapshot, readLines);
+	const gate = gateView(task, brief, survey, order, plan, build, review);
 	const info = STAGE_INFO[task.stage];
 	const isActive = !task.isDone && !snapshot.isPaused;
 	const now = task.stage === 'build' ? buildNext(currentStep(snapshot.plan, snapshot.risk, snapshot.levels, snapshot.build)) : undefined;
 	let next = now?.next ?? info.next;
 	let guard = info.guard;
-	const request = now ? now.request : info.request;
+	// stage 6: the review runs in a new session of Claude Code, so the panel copies its prompt instead of a request
+	const request = now ? now.request : task.stage === 'review' ? undefined : info.request;
 	if (task.isDone) {
 		next = 'The task is done.';
 		guard = 'The task is done. The guard makes no decision.';
@@ -912,6 +1011,7 @@ function taskView(input: ModelInput): TaskView | null {
 		...(order ? { order } : {}),
 		...(plan ? { plan } : {}),
 		...(build ? { build } : {}),
+		...(review ? { review } : {}),
 		...(ledger ? { ledger } : {}),
 		...(gate ? { gate } : {}),
 		isDone: task.isDone,

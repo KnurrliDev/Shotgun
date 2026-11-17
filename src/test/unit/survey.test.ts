@@ -202,7 +202,7 @@ suite('Survey', () => {
 	test('submit_survey refuses a survey before stage 2 and a survey with problems, and writes no file', async () => {
 		await assert.rejects(submit(SURVEY, fakeEngine()), /No task is active/);
 		store.newTask('Fix');
-		await assert.rejects(submit(SURVEY, fakeEngine()), /The active task is in stage 1 of 5, the brief\. A survey is only for stage 2\. The user selects "The brief is ready" first\./);
+		await assert.rejects(submit(SURVEY, fakeEngine()), /The active task is in stage 1 of 6, the brief\. A survey is only for stage 2\. The user selects "The brief is ready" first\./);
 		store.passGate('brief-ready');
 		await assert.rejects(submit({ ...SURVEY, tasks: [] }, fakeEngine()),
 			(error: Error) => error.message === 'Shotgun did not take the survey. Correct these problems, and call the tool again:\n'
@@ -311,7 +311,7 @@ suite('Survey', () => {
 		store.passGate('order-tasks');
 		const order = model();
 		assert.deepStrictEqual([order.task!.stage, order.task!.survey?.isEditable, order.task!.gate?.label], ['order', false, 'Accept the order']);
-		assert.throws(() => store.passGate('order-tasks'), /is not the gate of stage 3 of 5/);
+		assert.throws(() => store.passGate('order-tasks'), /is not the gate of stage 3 of 6/);
 	});
 
 	test('The text editor shows the hooks of the survey in the stages 2 and 3, at their lines now', async () => {

@@ -2,7 +2,7 @@
 
 Shotgun works with Claude Code in 2 ways:
 
-- The plugin of Shotgun gives Claude Code 2 hooks and 7 skills. The hooks ask the guard before each file change, and give the context of the task with each prompt. The skills tell Claude how to do the work of each stage.
+- The plugin of Shotgun gives Claude Code 2 hooks and 8 skills. The hooks ask the guard before each file change, and give the context of the task with each prompt. The skills tell Claude how to do the work of each stage.
 - The tools of Shotgun are in the MCP server of DataFlow. Claude reads the task with the read tools, and gives its results with the tools that start with `submit_`. Shotgun checks the data of each call.
 
 [Install Shotgun](install.md#connect-to-claude-code) tells how to connect Shotgun to Claude Code.
@@ -37,18 +37,20 @@ You type each request in Claude Code. After each gate, the panel of Shotgun show
 | 5 Build | "Give me a frame for step 4." or "Give me a different frame for step 4." | `shotgun-frame` |
 | 5 Build | "Explain the callout on line 129." or "Does the lambda on line 95 copy charge?" | `shotgun-explain` |
 | 5 Build | "Do the loose ends." | `shotgun-errand` |
-| 5 Build, or after the end of the task | "Check my commit message." | `shotgun-commit` |
+| 6 Review | The review prompt that you copy from the panel into a new session, or "Review my Shotgun task." | `shotgun-review` |
+| 5 Build, 6 Review, or after the end of the task | "Check my commit message." | `shotgun-commit` |
 
 ## The skills
 
 | Skill | Work |
 | --- | --- |
-| `shotgun` | The contract of Shotgun: the active task, the 5 stages, the guard and the gates. Also a brief from the chat, and the questions about the brief. |
+| `shotgun` | The contract of Shotgun: the active task, the 6 stages, the guard and the gates. Also a brief from the chat, and the questions about the brief. |
 | `shotgun-survey` | The survey of the brief in stage 2: the tasks, the hooks, the facts and the questions. Also the survey of the changed tasks in stage 3. |
 | `shotgun-plan` | The steps of the plan in stage 4, in the sequence of your order, with the open decisions of each step. |
 | `shotgun-errand` | A step of Claude in stage 5: Claude opens the step, changes only the files of its scope, and gives the receipt. The receipt has its choice for each open decision. Also the fixes after a receipt, and the loose ends that you hand to Claude. |
 | `shotgun-frame` | The frame of a step in stage 5: all lines of the step, and a hole with 4 hints for each open decision. |
 | `shotgun-explain` | The words of Claude for a callout, and the answer to your question about a line. Claude changes no code. |
+| `shotgun-review` | The review of stage 6 in a new session. The finders and the verifiers are subagents, and each issue has a failure scenario and the evidence of DataFlow. Claude changes no file. |
 | `shotgun-commit` | The check of your commit message against the diff. Claude changes no message, and makes no commit. |
 
 The skills tell Claude that only you pass a gate and change a risk level. Claude does a stage again only when you ask.
@@ -92,6 +94,8 @@ The tools change no line of your code. They write only the files in the folder `
 | [`get_callouts`](#get_callouts) | 5 | Read | The callouts of the current step, and the answers on lines |
 | [`submit_explanation`](#submit_explanation) | 5 | Write | The words of Claude for a callout |
 | [`submit_line_answer`](#submit_line_answer) | 5 | Write | The answer to your question about a line |
+| [`get_review`](#get_review) | 6 | Read | The review data: the effort, the focus, the base commit, the changed files and the earlier issues |
+| [`submit_review`](#submit_review) | 6 | Write | The issues of the review |
 | [`get_commit_message`](#get_commit_message) | 5 and later | Read | Your commit message, the changed files and the data of the ledger |
 | [`submit_message_check`](#submit_message_check) | 5 and later | Write | The check of the commit message |
 | [`guard`](#guard) | All | Hook | The PreToolUse hook calls it. Claude does not call it. |
@@ -99,7 +103,7 @@ The tools change no line of your code. They write only the files in the folder `
 
 ### get_session
 
-Gives the active task: its title, its stage of 5 and your gates. It gives the brief with its parts and the open questions, and the survey with your answers. It also gives the rule of the guard, the next work, and the other tasks of the project. In stage 5, it gives the current step and the next request. Claude calls this tool first for each request about Shotgun.
+Gives the active task: its title, its stage of 6 and your gates. It gives the brief with its parts and the open questions, and the survey with your answers. It also gives the rule of the guard, the next work, and the other tasks of the project. In stage 5, it gives the current step and the next request. Claude calls this tool first for each request about Shotgun.
 
 This tool has no parameters.
 
@@ -248,9 +252,43 @@ Gives the answer of Claude to your question about a line, in stage 5. Shotgun ad
 | `question` | string | Your question, copied exactly from the prompt. |
 | `answer` | string | The answer: 1 to 4 sentences. |
 
+### get_review
+
+Gives the review data of stage 6. Claude calls it in the new session of the review. It gives your effort and your focus, the base commit of the task, and the changed files with their hunks, heat and writers. It also gives the ripple, the brief, the steps of the plan, the closed callouts, and the earlier issues with your reasons. For the text of the diff, Claude calls `get_diff` of DataFlow with the base commit.
+
+This tool has no parameters.
+
+### submit_review
+
+Gives the issues of the review after the verify pass. Shotgun checks each issue, and puts it into the list of steps or into the second list. A new review of the same round replaces the open issues of the round. Claude changes no file.
+
+| Parameter | Type | Function |
+| --- | --- | --- |
+| `issues` | array | 0 to 32 issues, the most severe first. |
+| `note` | string | Optional. A note for you, a maximum of 300 characters, for example the parts that the review did not read. |
+
+Each issue has these fields:
+
+| Field | Type | Function |
+| --- | --- | --- |
+| `title` | string | A short title, a maximum of 60 characters. |
+| `summary` | string | The defect in 1 sentence, a maximum of 300 characters. |
+| `scenario` | object | The failure scenario: `trigger`, `path` and `result`. A race also needs `interleave`: the 2 accesses and 1 interleave of the 2 threads. |
+| `category` | string | `correctness`, `race`, `deadlock`, `lifetime`, `spec`, `scope`, `test` or `cleanup`. |
+| `severity` | string | `important` or `minor`. |
+| `origin` | string | `new`: the task added the problem. `pre-existing`: it was in the code before the task. |
+| `verdict` | string | `confirmed` or `plausible`, from the verify pass. |
+| `source` | string | `engine`: the candidate came from a fact of DataFlow. `model`: from Claude alone. |
+| `place` | object | The `file`, the `lines` and the `code`. The place must be in the diff of the task or in its ripple. |
+| `fixPlaces` | array | Optional. Up to 4 more places of the fix, for example the other places of the same class of bug. |
+| `decisions` | array | Optional. 0 to 3 open decisions of the fix, each with a `question` and optional `options`. |
+| `tools` | array | 1 to 6 read tools of DataFlow that show the issue. Shotgun refuses a tool that nobody called in this stage. |
+| `repeats` | string | Optional. The id of the earlier issue that this issue repeats, for example `I3`. The issue keeps its id and its state. |
+| `evidence` | string | Necessary for an earlier issue that you closed: the new evidence. Such an issue needs the verdict `plausible`. |
+
 ### get_commit_message
 
-Gives the commit message from the input box of Source Control, in stage 5 or after the end of the task. It also gives the changed files, the steps of the plan, your decisions, the lines of each writer and the loose ends. Then Claude reads the diff, and gives its check.
+Gives the commit message from the input box of Source Control, in the stages 5 and 6, or after the end of the task. It also gives the changed files, the steps of the plan, your decisions, the lines of each writer and the loose ends. Then Claude reads the diff, and gives its check.
 
 This tool has no parameters.
 

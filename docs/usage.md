@@ -14,6 +14,7 @@ This document tells how to do a task with Shotgun and Claude Code. [Install Shot
 - [Callouts](#callouts)
 - [Loose ends](#loose-ends)
 - [The ledger and the commit message](#the-ledger-and-the-commit-message)
+- [The review](#the-review)
 - [Return to an earlier stage](#return-to-an-earlier-stage)
 - [The guard](#the-guard)
 - [Commands and keys](#commands-and-keys)
@@ -46,8 +47,11 @@ This document tells how to do a task with Shotgun and Claude Code. [Install Shot
 22. For a step of yours, write its code. Then select **The step is done**. At level 4, you can select **I want a frame** first.
 23. While you write a step, read the callouts of DataFlow on your lines. Tell Claude "Explain the callout on line N." for the words of Claude. Ask Claude about a line, for example "Does the lambda on line 95 copy charge?".
 24. At the gate of each step, Shotgun gets the loose ends of the step from DataFlow. Hand a mechanical loose end to Claude, and tell Claude "Do the loose ends.".
-25. After the last step, select **The task is done**.
-26. Write the commit message in Source Control. Tell Claude "Check my commit message.". Then commit in Source Control.
+25. After the last step, select **The build is done**. The task goes to stage 6, the review.
+26. In the panel, select the effort and the focus of the review. Select **Copy the review prompt**, start a new session of Claude Code, and paste the prompt.
+27. Work through the issues of the review. Close an issue that is not a problem with **Not a problem** and your reason.
+28. Select **The task is done**.
+29. Write the commit message in Source Control. Tell Claude "Check my commit message.". Then commit in Source Control.
 
 At any time, click an earlier stage in the stage bar of the panel or of the page to return the task to that stage. You can also run **Shotgun: Return to a Stage...**.
 
@@ -56,10 +60,10 @@ At any time, click an earlier stage in the stage bar of the panel or of the page
 Shotgun shows its data in 3 places:
 
 - The sidebar of Shotgun in the activity bar: the tasks of the project and the commands.
-- The panel of Shotgun in the secondary side bar: the stage, the next work, the gate, and the request for Claude Code. In stage 5, the panel has the tabs **Steps**, **Loose ends** and **Ledger**.
-- The page of Shotgun in the editor area: the survey, the order, the plan or the ledger of the active task.
+- The panel of Shotgun in the secondary side bar: the stage, the next work, the gate, and the request for Claude Code. In stage 5, the panel has the tabs **Steps**, **Loose ends** and **Ledger**. In stage 6, it has the tabs **Review** and **Ledger**.
+- The page of Shotgun in the editor area: the survey, the order, the plan, the review or the ledger of the active task.
 
-The panel and the page have a stage bar with the 5 stages. A stage with a check mark is done. A click on an earlier stage returns the task to that stage.
+The panel and the page have a stage bar with the 6 stages. A stage with a check mark is done. A click on an earlier stage returns the task to that stage.
 
 A badge shows the source of a text:
 
@@ -282,6 +286,53 @@ You write the commit message in the input box of Source Control. The tab **Ledge
 
 Shotgun makes no commit, and Claude changes no message. You commit in Source Control.
 
+## The review
+
+In stage 6, a new session of Claude Code reviews the whole diff of the task. A new session did not write the code, so it reviews with a fresh view. The diff starts at the commit of HEAD at the first gate **Accept the plan**. That gate also names the files with changes that were not committed then, because the review sees their changes too. The review needs a repository of git.
+
+1. After the last step, select **The build is done**. The task goes to stage 6.
+2. In the panel, select the effort and the focus of the review. You can also write a point of yours, for example "Look at the error paths.".
+3. Select **Copy the review prompt**. Start a new session of Claude Code in the folder of the project, and paste the prompt.
+4. Claude loads the skill `shotgun-review`. Its subagents find the candidates, and a verify pass checks each candidate. Then Claude gives the issues to Shotgun. Claude changes no file.
+5. Work through the issues in the panel or on the page.
+6. Select **The task is done**.
+
+The effort sets the finders, the context and the verify pass. It does not set the number of issues.
+
+| Effort | The review |
+| --- | --- |
+| Low | 1 finder. Claude gives a short verdict for each candidate, and drops the plausible candidates. |
+| Medium | 1 finder for each area of the focus, and 1 finder for all areas. The finders also read the ripple of each hunk. 1 verifier checks each candidate. This is the default. |
+| High | As medium. Each finder does a second pass with a different order of the hunks. |
+| Extra high | As high, with more passes and the callers of the hot changed functions. |
+| Max | As extra high, with up to 5 passes for races and lifetime. A second verifier comes only with new evidence, for example a sanitizer run that you agree to. |
+
+Above high, a review finds few more issues, but it uses much more time and many more tokens.
+
+The focus has these areas. The default focus is all areas except cleanups.
+
+| Area | The review looks for |
+| --- | --- |
+| Correctness | Code that does not do what the step or the brief needs, also a null pointer, a bound or an error path |
+| Threads and races | Data that 2 threads can use at the same time with no protection. The finder starts from the races of DataFlow. |
+| Lifetime | Data that a thread or a lambda uses after the end of its owner, a leak, or a double free |
+| The brief | A spec or a condition of done that the diff does not give, and a change that the brief puts out of scope |
+| Tests | A condition of done of the brief with no test |
+| Cleanups | Code that works, but repeats code or does more work than necessary |
+
+Each issue has a place, a severity, a verdict, an origin and a failure scenario. The severity is important or minor, and the verdict is confirmed or plausible. The origin is new or pre-existing. The failure scenario gives the trigger, the path and the wrong result. A race also gives the interleave of the 2 threads. The badge **Engine** marks an issue from a fact of DataFlow, and **Model** marks an issue of Claude alone. A click on an issue shows its place in the side view of DataFlow.
+
+Shotgun puts each issue into 1 of 2 lists:
+
+- The list of steps has the confirmed new issues, the important issues first. It has a cap of 3 issues, plus 1 for each 100 changed lines of the task, with a maximum of 10.
+- The second list has the plausible issues, the issues that were in the code before the task, and the issues above the cap.
+
+**Not a problem** closes an issue with your reason. The ledger keeps the reason, and the next review gets it. Claude names a closed issue again only with new evidence, and then the issue goes into the second list. **Open again** opens a closed issue. A new review replaces the open issues of the last review, and keeps the issues that you closed.
+
+In this version, you fix an issue yourself in the text editor, because the guard stops each change of Claude in stage 6. For a fix of Claude, return the task to stage 5.
+
+The gate **The task is done** never waits. With open issues in the list of steps, a modal message asks first, and the ledger keeps them as open.
+
 ## Return to an earlier stage
 
 You can return the active task to an earlier stage at any time, also a done task. Click the stage in the stage bar of the panel or of the page, or run **Shotgun: Return to a Stage...**. Shotgun asks first, and the ledger records the return.
@@ -290,11 +341,11 @@ You can return the active task to an earlier stage at any time, also a done task
 - A new survey of Claude starts a new order, because the old order was for the tasks of the old survey.
 - A new plan of Claude keeps the state of each step of the build with the same id and the same title. The other steps of the build start again.
 - An open step of the build goes back to todo. Its changes stay in the files. A step with a receipt or with the holes of a frame keeps its state.
-- In the stages 1 to 4, the guard denies each change of a file again.
+- In the stages 1 to 4 and in stage 6, the guard denies each change of a file again.
 
 ## The guard
 
-Before each file change of Claude Code, the plugin of Shotgun asks the guard. In the stages 1 to 4, the guard denies each change of a file of the project, and Claude gets the reason. In stage 5, the guard lets Claude change only the files of the scope of its open step. The ledger records each deny.
+Before each file change of Claude Code, the plugin of Shotgun asks the guard. In the stages 1 to 4 and in stage 6, the guard denies each change of a file of the project. Claude gets the reason. In stage 5, the guard lets Claude change only the files of the scope of its open step. The ledger records each deny.
 
 **Pause** stops the guard for work outside of the task, and **Continue** starts it again. The ledger records the pause.
 
@@ -371,6 +422,7 @@ The guard helps you, but it is not a security boundary:
 | `.shotgun/<task>/callouts.json` | The facts of DataFlow at the start of each step, the callouts with your reasons and the words of Claude, and the answers on lines. |
 | `.shotgun/<task>/loose.json` | The loose ends of the steps, with their state, your reasons and the steps of Claude for them. |
 | `.shotgun/<task>/message.json` | The last check of Claude of your commit message. |
+| `.shotgun/<task>/review.json` | The base commit of the task, your effort and focus, and the rounds and the issues of the review, with your reasons. |
 | `.shotgun/<task>/decisions.jsonl` | The ledger: 1 line for each decision of the user and for each deny of the guard. |
 | `~/.shotgun/claude` | The plugin of Shotgun for Claude Code, in a local marketplace. |
 | `.claude/settings.local.json` | The local settings of Claude Code in the project. The connection turns the plugin of Shotgun on there. |

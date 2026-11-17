@@ -37,13 +37,17 @@
 //    mechanical loose end to Claude, if the steps have one, and writes a commit message in Source Control. "Check my
 //    commit message." loads the skill shotgun-commit, and the ledger page shows the decisions, the lines of each writer
 //    and the check of the message (the condition of phase 9).
+// 12. "The build is done" takes the task to stage 6. The test selects the effort medium and the focus correctness and
+//    threads, and copies the review prompt. A new run of the CLI gets the prompt and loads the skill shotgun-review.
+//    Claude starts subagents, and gives the issues with shotgun_submit_review. The test checks a refusal through the
+//    bridge, closes an issue with "Not a problem", and ends the task (the condition of phase 12).
 // The commands write the settings of proposal P15, and the test checks these files. The CLI loads the 2 plugins with
 // --plugin-dir from the folders that the commands wrote. The CLI uses the login and thus the config folder of the user,
 // and a marketplace from settings would go into the plugin data of the user.
 // The settings of the user do not change: the test build has its own user data, MCP registry, folder for the settings
 // of Claude Code and Shotgun folder. The test records the plugin data of Claude Code of the user before the runs, and
 // checks it after them. It removes the empty folders that the CLI makes there.
-// The test uses the Claude subscription of the user for 12 runs of Claude Code, so it runs only on request.
+// The test uses the Claude subscription of the user for 13 runs of Claude Code, so it runs only on request.
 // Usage: node scripts/test-claude.mjs <new run folder>
 // Environment: DATAFLOW_REPO (default: ../DataFlow), CLAUDE_EXE (default: the CLI of the VS Code extension of Claude Code)
 import { execFileSync, spawn } from 'node:child_process';
@@ -78,11 +82,13 @@ const SUBMIT_EXPLANATION = 'mcp__plugin_dataflow_dataflow__shotgun_submit_explan
 const SUBMIT_LINE_ANSWER = 'mcp__plugin_dataflow_dataflow__shotgun_submit_line_answer';
 const GET_COMMIT_MESSAGE = 'mcp__plugin_dataflow_dataflow__shotgun_get_commit_message';
 const SUBMIT_MESSAGE_CHECK = 'mcp__plugin_dataflow_dataflow__shotgun_submit_message_check';
+const GET_REVIEW = 'mcp__plugin_dataflow_dataflow__shotgun_get_review';
+const SUBMIT_REVIEW = 'mcp__plugin_dataflow_dataflow__shotgun_submit_review';
 // The read tools of DataFlow for the survey
 const READ_TOOLS = ['list_functions', 'get_outline', 'get_place', 'get_callers', 'get_calls', 'get_threads', 'get_heat', 'get_flow', 'get_logic',
 	'get_structure', 'get_member_sites', 'get_includes', 'get_call_graph', 'get_hidden'].map((t) => `mcp__plugin_dataflow_dataflow__${t}`);
 // The number of the tools of Shotgun in the MCP server of DataFlow
-const SHOTGUN_TOOLS = 19;
+const SHOTGUN_TOOLS = 21;
 // The brief of task 1, as the user writes it in brief.md
 const BRIEF_1 = [
 	`# Brief: ${TITLE}`, '',
@@ -103,6 +109,7 @@ const { foreignLines, parseBrief } = createRequire(import.meta.url)(path.join(re
 // The rules of the levels with the open decisions, and the check of an obvious hole (phase 11)
 const { levelOf, openDecisions } = createRequire(import.meta.url)(path.join(repo, 'out', 'session', 'plan.js'));
 const { isObviousAnswer } = createRequire(import.meta.url)(path.join(repo, 'out', 'session', 'frame.js'));
+const { reviewPrompt } = createRequire(import.meta.url)(path.join(repo, 'out', 'session', 'review.js'));
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const newest = (dir, prefix) => fs.readdirSync(dir).filter((d) => d.startsWith(prefix))
@@ -534,6 +541,45 @@ function listenersOf(port) {
 	}
 }
 
+// Calls 1 tool of the MCP server of DataFlow through the bridge, as a client with no Claude. The result: the text of the
+// result and isError, or an error of the bridge
+function callBridgeTool(name, args) {
+	const server = readJson(path.join(dataflowPlugin, '.claude-plugin', 'plugin.json'))?.mcpServers?.dataflow;
+	if (!server) {
+		return Promise.resolve({ error: 'The plugin of DataFlow has no MCP server.' });
+	}
+	return new Promise((resolve) => {
+		const proc = spawn(server.command, server.args, { cwd: p.project, env: cleanEnv(server.env), stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+		let out = '';
+		const finish = (result) => {
+			clearTimeout(timer);
+			killTree(proc.pid);
+			resolve(result);
+		};
+		const timer = setTimeout(() => finish({ error: 'No answer of the bridge after 60 s.', out: out.slice(0, 1500) }), 60000);
+		proc.stdout.on('data', (chunk) => {
+			out += chunk.toString('utf8');
+			const answer = out.split('\n').filter((l) => l.trim()).map((l) => {
+				try {
+					return JSON.parse(l);
+				} catch {
+					return undefined;
+				}
+			}).find((m) => m?.id === 2);
+			if (answer) {
+				finish({
+					text: (answer.result?.content ?? []).map((c) => c.text ?? '').join('\n'), isError: answer.result?.isError === true || !!answer.error,
+					...(answer.error ? { error: answer.error.message } : {}),
+				});
+			}
+		});
+		const send = (message) => proc.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', ...message })}\n`);
+		send({ id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'shotgun-test', version: '0.2.0' } } });
+		send({ method: 'notifications/initialized' });
+		send({ id: 2, method: 'tools/call', params: { name, arguments: args } });
+	});
+}
+
 function checkBridge() {
 	const server = readJson(path.join(dataflowPlugin, '.claude-plugin', 'plugin.json'))?.mcpServers?.dataflow;
 	if (!server) {
@@ -772,8 +818,8 @@ async function main() {
 			+ 'Then tell me what happened, and quote each message that blocked the change.');
 		const guard = edit.hooks.find((h) => h.hook === 'PreToolUse:Edit');
 		check('The guard hook denies the edit with the reason of stage 1', String(guard?.output).includes('"permissionDecision":"deny"')
-			&& String(guard?.output).includes('stage 1 of 5, the brief'), guard);
-		check('Claude gets the reason of the deny', edit.toolResults.some((r) => r.isError && r.text.includes('stage 1 of 5, the brief')), edit.toolResults);
+			&& String(guard?.output).includes('stage 1 of 6, the brief'), guard);
+		check('Claude gets the reason of the deny', edit.toolResults.some((r) => r.isError && r.text.includes('stage 1 of 6, the brief')), edit.toolResults);
 		check('The file did not change', hashOf(file) === hash);
 		const deny = ledgerOf(TASK_1).find((d) => d.kind === 'deny');
 		check('The ledger records the deny', deny?.tool === 'Edit' && deny?.file === 'src/battery.cpp', deny);
@@ -1650,10 +1696,35 @@ async function main() {
 			&& kinds3.filter((k) => k === 'step-gate').length === 3, kinds3);
 		await wb.shot('panel-build-step-4.png');
 
+		// A step that the test does not build ends as a step of the user with no code: level 4, and "The step is done". The
+		// command lists only the steps that Claude did not start, so the current step is its first item
+		const endWithNoCode = async (step) => {
+			const b = () => buildOf()?.steps?.[step.id];
+			if (!(b()?.state === 'open' && b()?.writer === 'user')) {
+				await command(wb, 'Shotgun: Set Risk Level');
+				await quickPickNth(wb, 'Shotgun: Set Risk Level', 0);
+				await quickPickNth(wb, 'Shotgun: Set Risk Level of', 3);
+				await poll(() => (b()?.state === 'open' && b()?.writer === 'user') || undefined, 30);
+			}
+			await poll(() => inWebview('.panel', `() => {
+				const button = [...d.querySelectorAll('.gate button')].find((x) => x.textContent.includes('The step is done') && !x.disabled);
+				button?.click();
+				return !!button;
+			}`), 15);
+			return poll(() => b()?.state === 'done' || undefined, 30);
+		};
+
 		// 10: the callouts of a step of the user (phase 8). The test sets step 4 to level 4, writes a line in process() that
 		// writes charge.is_dirty, which the worker thread also uses, and waits for the pause. Then "Explain the callout" and a
-		// question about a line load the skill shotgun-explain
-		const s4 = steps[3];
+		// question about a line load the skill shotgun-explain. A line outside of the scope of the step is no line of the user,
+		// so the step of the race is the first step from step 4 with a place in src/battery.cpp. The plan of Claude can put
+		// a different step there. The steps before it end with no code
+		const raceAt = steps.findIndex((s, i) => i >= 3 && s.places.some((pl) => pl.file === 'src/battery.cpp'));
+		for (const skipped of steps.slice(3, Math.max(3, raceAt))) {
+			await endWithNoCode(skipped);
+		}
+		const s4 = steps[raceAt >= 3 ? raceAt : 3];
+		console.log(`INFO The step of the race: ${s4?.id} ${s4?.title}`);
 		await command(wb, 'Shotgun: Set Risk Level');
 		await quickPickNth(wb, 'Shotgun: Set Risk Level', 0);
 		await quickPickNth(wb, 'Shotgun: Set Risk Level of', 3);
@@ -1869,6 +1940,143 @@ async function main() {
 		const copied = await poll(() => wb.evaluate(`[...document.querySelectorAll('.statusbar-item')].map((e) => e.textContent).find((x) => /ledger is in the clipboard/.test(x))`), 10);
 		check('"Copy for the pull request" puts the ledger into the clipboard as Markdown', !!copied);
 
+		// 12: stage 6, the review (phase 12). The test does not build the last steps, so it ends them as steps of the user with
+		// no code: level 4, and "The step is done". Then "The build is done" takes the task to stage 6
+		const planNow = () => readJson(taskFile(TASK_1, 'plan.json'));
+		const buildNow = () => readJson(taskFile(TASK_1, 'build.json'));
+		for (let k = 0; k < 8; k++) {
+			const next = (planNow()?.steps ?? []).find((s) => buildNow()?.steps?.[s.id]?.state !== 'done');
+			if (!next) {
+				break;
+			}
+			await endWithNoCode(next);
+		}
+		const notDone = (planNow()?.steps ?? []).filter((s) => buildNow()?.steps?.[s.id]?.state !== 'done').map((s) => s.id);
+		check('The test ends the steps that it does not build as steps of the user with no code', notDone.length === 0, { notDone, build: buildNow() });
+		// "The build is done". The user selects the effort and the focus in the panel, and copies the prompt of the review into a
+		// new session of Claude Code: a new run of the CLI
+		await poll(async () => (await panelText())?.includes('The build is done') && true, 20);
+		await inWebview('.panel', `() => {
+			const b = [...d.querySelectorAll('.gate button')].find((x) => x.textContent.includes('The build is done'));
+			b?.click();
+			return !!b;
+		}`);
+		const inReview = await poll(() => (readJson(taskFile(TASK_1, 'task.json'))?.stage === 'review' ? readJson(taskFile(TASK_1, 'task.json')) : undefined), 20);
+		check('The gate "The build is done" takes task 1 to stage 6, the review', inReview?.gates?.at(-1)?.gate === 'build-done', readJson(taskFile(TASK_1, 'task.json')));
+		const reviewNow = () => readJson(taskFile(TASK_1, 'review.json'));
+		const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: p.project, encoding: 'utf8', windowsHide: true }).trim();
+		check('The first gate "Accept the plan" recorded the commit of HEAD as the base of the task', reviewNow()?.base?.commit === head, reviewNow()?.base);
+		// the focus: correctness and threads, with a point of the user
+		await poll(async () => (await panelText())?.includes('Copy the review prompt') && true, 15);
+		for (const area of ['Lifetime', 'The brief', 'Tests']) {
+			await inWebview('.panel', `() => {
+				const b = [...d.querySelectorAll('.review-options .chip')].find((x) => x.textContent.trim() === ${JSON.stringify(area)});
+				b?.click();
+				return !!b;
+			}`);
+			await sleep(700);
+		}
+		await inWebview('.panel', `() => {
+			const input = d.querySelector('.review-options input');
+			input.value = 'Look at the worker thread of the solver.';
+			input.dispatchEvent(new d.defaultView.Event('input', { bubbles: true }));
+			input.dispatchEvent(new d.defaultView.Event('change', { bubbles: true }));
+			return true;
+		}`);
+		const options = await poll(() => {
+			const o = reviewNow()?.options;
+			return o?.text && o.areas.length === 2 ? o : undefined;
+		}, 15);
+		check('The panel sets the effort and the focus of the review, and the ledger records them', options?.effort === 'medium'
+			&& JSON.stringify(options?.areas) === JSON.stringify(['correctness', 'threads']) && ledgerOf(TASK_1).some((d) => d.kind === 'review-options'), reviewNow()?.options);
+		await inWebview('.panel', `() => {
+			const b = [...d.querySelectorAll('.review-options button')].find((x) => x.textContent.includes('Copy the review prompt'));
+			b?.click();
+			return !!b;
+		}`);
+		const toast = await poll(() => wb.evaluate(`[...document.querySelectorAll('.notifications-toasts .notification-list-item-message')].map((e) => e.textContent)
+			.find((x) => /review prompt is in the clipboard/.test(x))`), 10);
+		check('"Copy the review prompt" tells the user to paste it into a new session of Claude Code', /new session of Claude Code/.test(toast ?? ''), toast);
+		await wb.shot('panel-review-options.png');
+
+		// "Review my Shotgun task ..." in a new session loads the skill shotgun-review. Claude starts the finders and the
+		// verifiers as subagents, and gives the issues with shotgun_submit_review
+		const prompt = reviewPrompt(TITLE, options ?? { effort: 'medium', areas: ['correctness', 'threads'] });
+		const changesBefore = gitChanges();
+		const reviewRun = await runClaude('review', prompt, {
+			tools: [GET_SESSION, GET_REVIEW, SUBMIT_REVIEW, 'Skill', 'Agent', 'Task', 'Read', 'Grep', 'Glob', ...READ_TOOLS,
+				'mcp__plugin_dataflow_dataflow__get_diff', 'mcp__plugin_dataflow_dataflow__get_ripple'],
+			maxTurns: 80, seconds: 2400,
+		});
+		const reviewNames = reviewRun.toolUses.map((t) => t.name);
+		check('The prompt loads the skill shotgun-review', reviewRun.toolUses.some((t) => t.name === 'Skill' && String(t.input?.skill).includes('shotgun-review')), reviewNames);
+		const subagents = reviewRun.toolUses.filter((t) => t.name === 'Agent' || t.name === 'Task');
+		check('Claude starts the finders and the verifiers as subagents', subagents.length >= 2, reviewNames);
+		const review = reviewNow();
+		const round = review?.rounds?.[0];
+		check('Claude gives the review with shotgun_submit_review, and changes no file', reviewNames.includes(SUBMIT_REVIEW) && !!round
+			&& !reviewNames.some((n) => ['Edit', 'Write', 'MultiEdit'].includes(n)) && JSON.stringify(gitChanges()) === JSON.stringify(changesBefore),
+		{ reviewNames, result: reviewRun.result, changes: gitChanges() });
+		const issues = review?.issues ?? [];
+		results.review = { round, issues: issues.map((i) => `${i.id} ${i.list} ${i.severity} ${i.category} ${i.verdict} ${i.source} ${i.place.file}:${i.place.lines[0]} ${i.title}`) };
+		console.log(`INFO The review: ${round ? `${round.changedLines} changed lines, a cap of ${round.cap}` : 'no round'}: ${JSON.stringify(results.review.issues)}`);
+		check('The review at the effort medium gives 1 issue or more, each with a severity, an origin, a verdict, a failure scenario and the evidence of DataFlow',
+			round?.effort === 'medium' && issues.length > 0 && issues.every((i) => i.severity && i.origin && i.verdict && i.scenario?.trigger && i.scenario?.result
+				&& i.tools.length > 0), review);
+		const races = issues.filter((i) => i.category === 'race');
+		check('Each race issue starts from a race of DataFlow', races.every((i) => i.source === 'engine' && i.tools.includes('get_threads')), races);
+		const closedRace = races.filter((i) => i.place.file === 'src/battery.cpp' && Math.abs(i.place.lines[0] - (problem?.line ?? 0)) <= 2);
+		console.log(`INFO The race of the callout that the user closed: ${closedRace.length === 0 ? 'not in the review' : JSON.stringify(closedRace.map((i) => `${i.id} ${i.verdict} ${i.list}`))}`);
+		// Shotgun refuses an issue outside of the diff of the task. The test calls the tool directly, as a client
+		const refusedOutside = await callBridgeTool('shotgun_submit_review', {
+			issues: [{
+				title: 'Outside', summary: 'A place outside of the task.', scenario: { trigger: 'x', path: 'y', result: 'z' }, category: 'correctness',
+				severity: 'minor', origin: 'pre-existing', verdict: 'plausible', source: 'model',
+				place: { file: 'include/battery/types.hpp', lines: [1, 1], code: fs.readFileSync(path.join(p.project, 'include', 'battery', 'types.hpp'), 'utf8').split(/\r?\n/)[0].trim() },
+				tools: ['get_place'],
+			}],
+		});
+		check('Shotgun refuses an issue outside of the diff of the task', refusedOutside.isError && /not in the diff of the task/.test(refusedOutside.text ?? '')
+			&& reviewNow()?.issues?.length === issues.length, refusedOutside);
+
+		// the 2 lists in the panel and on the page. "Not a problem" closes an issue with a reason
+		const steps6 = issues.filter((i) => i.list === 'steps' && i.state === 'open');
+		const first6 = steps6[0] ?? issues[0];
+		text = await poll(async () => {
+			const t = await panelText();
+			return t && /list of steps/i.test(t) && t.includes(first6?.title ?? '?') ? t : undefined;
+		}, 20);
+		check('The panel shows the list of steps of the review', !steps6.length || !!text, await panelText());
+		await wb.shot('panel-review.png');
+		await command(wb, 'Shotgun: Show Page');
+		text = await poll(async () => {
+			const t = await pageText();
+			return t && /second list/i.test(t) && t.includes(first6?.title ?? '?') ? t : undefined;
+		}, 20);
+		check('The page shows the 2 lists of the review', !!text, await pageText());
+		await wb.shot('page-review.png');
+		const reason6 = 'The test closes this issue on purpose.';
+		await inWebview('.page', `() => {
+			const card = [...d.querySelectorAll('.issue')].find((x) => x.querySelector('.id')?.textContent === ${JSON.stringify(first6?.id ?? '?')});
+			const b = card && [...card.querySelectorAll('button')].find((x) => x.textContent.includes('Not a problem'));
+			b?.click();
+			return !!b;
+		}`);
+		await quickInput(wb, reason6, 'Not a Problem');
+		const closed6 = await poll(() => reviewNow()?.issues?.find((i) => i.id === first6?.id && i.state === 'closed'), 15);
+		check('"Not a problem" closes an issue of the review, and the ledger keeps the reason of the user', closed6?.closed?.reason === reason6
+			&& ledgerOf(TASK_1).some((d) => d.kind === 'issue-close' && d.issue === first6?.id && d.reason === reason6), closed6);
+
+		// the gate "The task is done" never waits. With open issues of the list of steps, a modal message asks first
+		await inWebview('.page', `() => {
+			const b = [...d.querySelectorAll('.gate button')].find((x) => x.textContent.includes('The task is done'));
+			b?.click();
+			return !!b;
+		}`);
+		await poll(() => clickDialog(wb, 'Pass the Gate'), 5);
+		const done6 = await poll(() => (readJson(taskFile(TASK_1, 'task.json'))?.isDone ? readJson(taskFile(TASK_1, 'task.json')) : undefined), 20);
+		check('The gate "The task is done" ends the task in stage 6', done6?.stage === 'review' && done6?.gates?.at(-1)?.gate === 'task-done', readJson(taskFile(TASK_1, 'task.json')));
+
 		wb.ws.close();
 	} catch (error) {
 		check('The test runs to its end', false, String(error?.stack ?? error));
@@ -1891,12 +2099,14 @@ async function main() {
 			walk(path.join(p.project, '.shotgun'));
 		}
 		check('No temporary file is left in .shotgun', temps.length === 0, temps);
-		// the CLI makes empty folders in the data of the user: the folder of the project of the run in projects, and the
-		// data of the 2 plugins in plugins/data. The test removes them. A different new folder stays, but the check fails
+		// the CLI makes folders in the data of the user: the folder of the project of the run in projects, and the data of the
+		// 2 plugins in plugins/data. The test removes them. The folder of the project has the name of the run folder, and the
+		// subagents of the review write their data into it, so the test removes it with its content. The folders of the
+		// plugins go only when they are empty. A different new folder stays, but the check fails
 		const isOfRun = (name) => name.includes(path.basename(dir)) || ['dataflow-inline', 'shotgun-inline'].includes(name);
 		const after = userState();
 		userFolders.forEach((folder, i) => after.folders[i].filter((n) => !before.folders[i].includes(n) && isOfRun(n))
-			.forEach((n) => removeIfEmpty(path.join(folder, n))));
+			.forEach((n) => (n.includes(path.basename(dir)) ? fs.rmSync(path.join(folder, n), { recursive: true, force: true }) : removeIfEmpty(path.join(folder, n)))));
 		const added = userFolders.flatMap((folder, i) => listOf(folder).filter((n) => !before.folders[i].includes(n)));
 		check('The data of Claude Code of the user did not change', JSON.stringify(after.files) === JSON.stringify(before.files) && added.length === 0, added);
 	}

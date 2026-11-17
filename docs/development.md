@@ -15,7 +15,7 @@ This document tells how to change, run, test and release the code of Shotgun. [I
 | --- | --- |
 | `package.json` | The extension manifest: the commands, the views, the settings, the keys and the npm scripts |
 | `src/extension.ts` | The start of the extension. VS Code calls `activate()`. The class `Shotgun` connects the stage files, the views, the text editor, DataFlow and Claude Code. |
-| `src/session/` | The tasks, the stages, the gates, the stage files and the decisions. `store.ts` reads and writes the folder `.shotgun`. `risk.ts` has the rules of the risk levels. |
+| `src/session/` | The tasks, the stages, the gates, the stage files and the decisions. `store.ts` reads and writes the folder `.shotgun`. `risk.ts` has the rules of the risk levels, and `review.ts` the rules of the review of stage 6. |
 | `src/tools/` | The tools of Shotgun for the MCP server of DataFlow, and their checks. `tools.ts` has the names, the descriptions and the parameters of the tools. `guard.ts` has the rules of the guard. |
 | `src/claude/` | The plugin of Shotgun for Claude Code, and the settings of the connection. `plugin.ts` makes `plugin.json` and the hooks. |
 | `src/dataflow/` | The copy of `dataflow-api.d.ts` of DataFlow, the link to DataFlow and the check of its version |
@@ -59,7 +59,7 @@ The window uses the DataFlow extension of VS Code. To use DataFlow from its repo
 | `npm test` | The unit tests in a test build of VS Code. The tests load DataFlow from `../DataFlow`, or from the folder of the environment variable `DATAFLOW_REPO`. If the environment variable `CLAUDE_EXE` gives the CLI of Claude Code, a test also checks the plugin with `claude plugin validate`. |
 | `node scripts/test-claude.mjs <run folder>` | The test with Claude Code. Type `npm run compile` first. Use a new run folder outside of the repository. |
 
-`scripts/test-claude.mjs` does 1 full task in a copy of the fixture `battery` of DataFlow, from the brief to the check of the commit message:
+`scripts/test-claude.mjs` does 1 full task in a copy of the fixture `battery` of DataFlow, from the brief to the end of the review:
 
 - 2 tasks go from the brief to stage 2. The gate of the empty brief is on, and the sidebar shows the task. Task 1 has a brief in a file, and task 2 has a brief from the chat. The guard denies a change in stage 1.
 - Claude makes the survey of task 1. A click on a hook shows it in DataFlow. Task 1 returns to stage 1 and comes back with the same survey, and then goes to stage 3.
@@ -69,8 +69,9 @@ The window uses the DataFlow extension of VS Code. To use DataFlow from its repo
 - The test sets step 3 to level 4, and asks for a frame. Claude gives the frame, and the test fills the holes with Tab and the hints.
 - In step 4, the test writes a line with a race. The race shows as a callout, and Claude explains it and answers a question about a line.
 - The test ends step 4, hands a loose end to Claude, and writes a commit message. Claude checks the message.
+- The test passes "The build is done", selects the effort and the focus of the review, and copies the review prompt. A new run of Claude Code reviews the task with subagents. The test checks a refusal of Shotgun through the bridge, closes an issue with "Not a problem", and ends the task.
 
-NOTE: `scripts/test-claude.mjs` uses the Claude subscription of the user for 12 runs of Claude Code. It does not change the settings of the user.
+NOTE: `scripts/test-claude.mjs` uses the Claude subscription of the user for 13 runs of Claude Code. It does not change the settings of the user.
 
 ## Make a release
 

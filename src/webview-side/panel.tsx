@@ -3,6 +3,7 @@ import { BuildSummary } from './build';
 import { CommandButton, Decisions, NoTask, Problems, SetupList, StageBar, TaskSummary, useModel } from './common';
 import { OrderSummary } from './order';
 import { PlanSummary } from './plan';
+import { ReviewSummary } from './review';
 import { applyStyles } from './styles';
 import { SurveySummary } from './survey';
 
@@ -30,6 +31,7 @@ function Panel() {
 			)}
 			<section class="section">
 				{!task ? <NoTask hasTasks={canOpen} />
+					: task.review ? <ReviewSummary task={task} />
 					: task.isDone ? (task.build ? <BuildSummary task={task} /> : <TaskSummary task={task} />)
 						: task.stage === 'survey' ? <SurveySummary task={task} />
 							: task.stage === 'order' ? <OrderSummary task={task} />

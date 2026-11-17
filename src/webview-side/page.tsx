@@ -1,10 +1,11 @@
 import { render } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import type { TaskView, ToView, ViewModel } from '../views/protocol';
 import { CommandButton, Decisions, NoTask, Problems, SetupList, StageBar, TaskList, TaskSummary, useModel } from './common';
 import { LedgerPage } from './ledger';
 import { OrderPage } from './order';
 import { PlanPage } from './plan';
+import { ReviewLedger, ReviewPage } from './review';
 import { applyStyles } from './styles';
 import { SurveyPage } from './survey';
 
@@ -34,7 +35,7 @@ function LedgerScreen({ task, model }: { task: TaskView; model: ViewModel }) {
 
 function Page() {
 	const model = useModel();
-	const [tab, setTab] = useState<'plan' | 'ledger' | undefined>(undefined);
+	const [tab, setTab] = useState<'review' | 'plan' | 'ledger' | undefined>(undefined);
 	// "Show the ledger" of the panel, and a click on a CodeLens line in the text editor
 	useEffect(() => {
 		const listener = (event: MessageEvent<ToView>) => {
@@ -47,10 +48,39 @@ function Page() {
 		window.addEventListener('message', listener);
 		return () => window.removeEventListener('message', listener);
 	}, []);
+	// a new stage or a different task starts with the default tab of its page, for example the review in stage 6. The first
+	// model is no change: "Show the ledger" can come before it
+	const shownStage = useRef<string | undefined>(undefined);
+	const stageKey = model?.task ? `${model.task.id}:${model.task.stage}` : undefined;
+	useEffect(() => {
+		if (stageKey !== undefined && shownStage.current !== undefined && stageKey !== shownStage.current) {
+			setTab(undefined);
+		}
+		if (stageKey !== undefined) {
+			shownStage.current = stageKey;
+		}
+	}, [stageKey]);
 	if (!model) {
 		return <div class="page"><p class="muted">Shotgun starts.</p></div>;
 	}
 	const { task } = model;
+	// stage 6: the review, the plan and the ledger. The review comes first
+	if (task?.review) {
+		const shown = tab ?? 'review';
+		const tabs: ['review' | 'plan' | 'ledger', string][] = [['review', 'Review'], ...(task.plan ? [['plan', 'Plan'] as ['plan', string]] : []),
+			...(task.ledger ? [['ledger', 'Ledger'] as ['ledger', string]] : [])];
+		return (
+			<>
+				<div class="tabs page-tabs" role="tablist" aria-label="The pages of stage 6">
+					{tabs.map(([id, label]) => (
+						<button type="button" role="tab" class={`tab${shown === id ? ' on' : ''}`} aria-selected={shown === id} onClick={() => setTab(id)}>{label}</button>
+					))}
+				</div>
+				{shown === 'ledger' && task.ledger ? <ReviewLedger task={task} model={model} />
+					: shown === 'plan' && task.plan ? <PlanPage task={task} model={model} /> : <ReviewPage task={task} model={model} />}
+			</>
+		);
+	}
 	// stage 5: the plan and the ledger. After the last step, the ledger comes first
 	if (task?.plan && task.ledger) {
 		const shown = tab ?? (task.isDone || !task.build?.current ? 'ledger' : 'plan');
