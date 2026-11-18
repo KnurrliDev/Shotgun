@@ -1,6 +1,16 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
+
+Shotgun 0.3.0 needs DataFlow 0.6.2 or later. A task has 6 stages: the new stage 6 is the review of the whole diff of the task. A new session of Claude Code reviews the diff, and each issue of the list of steps is a step of the user.
+
+- In stage 6, the user selects the effort and the focus of the review, and copies the review prompt into a new session of Claude Code. The new skill `shotgun-review` finds and checks the issues with subagents.
+- Shotgun puts the confirmed new issues into the list of steps, and the other issues into the second list. The user writes the fix of a step at level 4, or gives the step to Claude at level 1 or 2.
+- After the fixes, the next round of the review checks each fixed issue. "Not a problem" closes an issue with a reason, and the next review gets it.
+- The gate "The task is done" ends a task in stage 6. A task of Shotgun 0.2.0 or earlier that is done in stage 5 stays done.
+- After the update, start a new session of Claude Code, so that it loads the new skills of Shotgun.
+
+The sections below give the changes of the phases 12 and 13.
 
 ### Phase 13: the steps of the issues
 

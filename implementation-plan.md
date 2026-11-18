@@ -931,6 +931,15 @@ Open items of the measurement:
 - In a session of the user, only the rule of the skill stops a wakeup. No measurement tested this rule, because the harness blocks the tools.
 - The runs found faults in 4 cases. The brief of H3 asks for a log line, but `log_info()` is a stub. The condition of done of HC2 is not true for each run. H2 and H5 have the real problems in the table. A fix of these cases changes the results of later runs.
 
+**Release 0.3.0, 18 November 2026:** Shotgun 0.3.0 has the phases 12 and 13: the review in stage 6, and the steps of its issues. It needs DataFlow 0.6.2 or later.
+
+- Tests: run 3 of `scripts/test-claude.mjs` passed all 195 checks with DataFlow 0.6.2 on 17 November. After this run, the code of the extension changed only in 1 comment. The skill `shotgun-review` got the rule to wait for its subagents. 153 unit tests passed, with the check of the plugin by `claude plugin validate`.
+- Package: `npm run package` makes `shotgun-0.3.0.vsix`: 63 files and 295 KB. The first package also had the research report and its notes. Thus `.vscodeignore` now removes the folders `reports` and `research_notes`.
+- A check of the package: a script installed the VSIX packages of DataFlow 0.7.0 and Shotgun 0.3.0 into a test build of VS Code 1.147.0. All 16 checks passed. DataFlow got the 21 tools of Shotgun, and the connection wrote the plugin of version 0.3.0 with 8 skills.
+- The same check with DataFlow 0.6.2 also passed all 16 checks. VS Code loaded DataFlow 0.6.2 from the folder of its released package, instead of the installed DataFlow 0.7.0.
+- The description of the package now names the 6 stages.
+- Full test: as for the earlier releases, the user does the full test in a real project with the VSIX before the push of the release.
+
 ## 9. Tests
 
 | Kind | Tests |

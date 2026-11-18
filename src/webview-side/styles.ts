@@ -20,7 +20,7 @@ h1, h2 { margin: 0; font-weight: 600; }
 .label { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--vscode-descriptionForeground); }
 .name { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--vscode-descriptionForeground); }
 
-/* the bar of the 5 stages. A dot shows the writer of a stage */
+/* the bar of the 6 stages. A dot shows the writer of a stage */
 .stages { display: flex; flex-wrap: wrap; gap: 3px; margin: 6px 0 0; padding: 0; list-style: none; }
 .stage { display: inline-flex; align-items: center; gap: 4px; padding: 0 5px; border: 1px solid var(--sg-border); border-radius: 4px;
   font-size: 11px; white-space: nowrap; color: var(--vscode-descriptionForeground); }
