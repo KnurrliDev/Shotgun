@@ -418,6 +418,7 @@ The guard helps you, but it is not a security boundary:
 | Shotgun: Continue | Starts the guard again. |
 | Shotgun: Connect to Claude Code | Adds the plugin of Shotgun to Claude Code. |
 | Shotgun: Disconnect from Claude Code | Removes the plugin of Shotgun from Claude Code. |
+| Shotgun: Check for Updates | Looks for a new release of Shotgun on GitHub. See [Update Shotgun](install.md#update-shotgun). |
 
 | Key | Function |
 | --- | --- |
@@ -431,6 +432,7 @@ The guard helps you, but it is not a security boundary:
 | `shotgun.voice` | The voice of the callouts: `quiet`, `normal` or `talkative`. Default: `normal`. |
 | `shotgun.pauseSeconds` | The time in seconds with no edit that makes a pause. Callouts come only at a pause. Default: 2. |
 | `shotgun.steOutput` | While a task is active and not paused, Claude writes all text in ASD-STE100 Simplified Technical English (STE). Default: off. |
+| `shotgun.update.mode` | How Shotgun gets a new version from its releases on GitHub: `auto` installs it and offers a reload, `ask` asks first, and `off` does not look for new versions. Default: `auto`. See [Update Shotgun](install.md#update-shotgun). |
 
 The check box at the top of the Shotgun page changes `shotgun.steOutput`. The setting applies to all of your projects.
 

@@ -21,11 +21,12 @@ This document tells how to change, run, test and release the code of Shotgun. [I
 | `src/dataflow/` | The copy of `dataflow-api.d.ts` of DataFlow, the link to DataFlow and the check of its version |
 | `src/editor/` | The text editor: the hooks, the steps, the holes, the writers of the lines and the callouts |
 | `src/git/` | The commit message from Source Control |
+| `src/update/` | The updates of an installed package from the releases on GitHub. `release.ts`: the data of a release and the check of a signature. `updater.ts`: the checks, the download and the install. `start.ts`: the command, the timer and the notifications. |
 | `src/views/` | The extension side of the sidebar, the panel and the page. `protocol.d.ts` has the messages between the extension and the webviews. |
 | `src/webview-side/` | The code of the panel and the page in the webview, with Preact |
 | `src/test/unit/` | The unit tests |
 | `plugin/skills/` | The skills of the plugin for Claude Code |
-| `scripts/` | `build-webviews.mjs` bundles the panel and the page with esbuild. `package-vsix.mjs` makes the VSIX package. `test-claude.mjs` is the test with Claude Code. `measure-review.mjs` measures the review skill on the cases of `review-cases.mjs` and `review-cases-hard.mjs`. `harness.mjs` has the shared parts of these 2 scripts. |
+| `scripts/` | `build-webviews.mjs` bundles the panel and the page with esbuild. `package-vsix.mjs` makes the VSIX package and its signature. `sign-vsix.mjs` signs a package. `make-signing-key.mjs` makes the key pair of the signatures. `test-claude.mjs` is the test with Claude Code. `measure-review.mjs` measures the review skill on the cases of `review-cases.mjs` and `review-cases-hard.mjs`. `test-update.mjs` is the test of the updates. `harness.mjs` has the shared parts of these 3 scripts. |
 | `media/` | The icon of Shotgun |
 | `spikes/` | The tests of phase 0 |
 | `docs/` | The documents of Shotgun |
@@ -60,6 +61,7 @@ The window uses the DataFlow extension of VS Code. To use DataFlow from its repo
 | `node scripts/test-claude.mjs <run folder>` | The test with Claude Code. Type `npm run compile` first. Use a new run folder outside of the repository. |
 | `node scripts/measure-review.mjs <run folder>` | The measurement of the review skill (P36). Type `npm run compile` first. Options: `--efforts low,medium,high`, `--runs 3`, `--group basic`, `--group hard`, `--cases B1,C1` and `--model sonnet`. With `--report`, the script makes the results again from the runs in the run folder, with no new run. The script uses the test build and the fixture of `../DataFlow`, or of the folder of `DATAFLOW_REPO`. Set `DATAFLOW_EXTENSION` to use a different extension of DataFlow, for example an extracted VSIX. |
 | `node scripts/measure-review.mjs --check` | Tests the cases with no run of Claude Code. Each case must apply to the fixture, and each place of a bug must be there. The project must compile. The options `--group` and `--cases` select the cases. Clang 20 or later is necessary. If `clang++` is older, set `CLANG_EXE` to a newer Clang. |
+| `node scripts/test-update.mjs <run folder>` | The test of the updates in the test build of `../DataFlow`, or of the folder of `DATAFLOW_REPO`. Use a new run folder outside of the repository. The script needs a VSIX package of DataFlow in the root folder of DataFlow, or in the file of the environment variable `DATAFLOW_VSIX`. It takes about 2 minutes. |
 
 `scripts/test-claude.mjs` does 1 full task in a copy of the fixture `battery` of DataFlow, from the brief to the end of the review:
 
@@ -87,6 +89,15 @@ The run folder gets `results.jsonl`, `results.md` and `summary.json`. They give 
 
 NOTE: `scripts/measure-review.mjs` uses the Claude subscription of the user for each run: 198 runs with the default options, about 5 hours. The option `--group hard` has 90 runs. It does not change the settings of the user.
 
+`scripts/test-update.mjs` tests a real update of an installed package (decision 42):
+
+- The script makes the VSIX package of the repository with `package-vsix.mjs` in the run folder, with no signature. From this package, it makes the packages of 2 versions. It replaces the address of the releases, the public key and the delay of the first check only in the copy of the package. The packages use a key pair of the run, not the private key of the releases.
+- A release server on the computer gives the releases. The updater gets the releases from this server, not from GitHub.
+- The script installs DataFlow and the old version of Shotgun in a VS Code with its own user data and extensions. Shotgun installs the new version by itself, and a notification offers the reload. After the reload, the new version runs.
+- Then the server gives the signed package of the new version as a higher version. **Shotgun: Check for Updates** finds it, and Shotgun refuses it, because the signature is for a different version.
+
+The script writes `result.json` and the screenshots into the run folder, and it stops each process of the run. Do not use the mouse or the keyboard in the window of the test.
+
 ## Make a release
 
 A release is a VSIX package on the GitHub page of the releases. The package is for all systems, because Shotgun has no program of its own. But Shotgun needs DataFlow, and the package of DataFlow is only for Windows x64.
@@ -94,7 +105,8 @@ A release is a VSIX package on the GitHub page of the releases. The package is f
 1. Change the version in `package.json`, and write the changes of the version in `CHANGELOG.md`.
 2. Type `npm run package`. The script `scripts/package-vsix.mjs` does these steps:
    - It removes the folder `out`. Thus the package has no files of an old build.
-   - It runs `vsce package --no-dependencies`. vsce compiles the extension, and it writes `shotgun-<version>.vsix` into the root folder of the repository.
+   - It runs `vsce package --no-dependencies`. vsce compiles the extension, and it writes `shotgun-<version>.vsix` into the root folder of the repository. To write the package into a different folder, give the folder as an argument: `node scripts/package-vsix.mjs <folder>`.
+   - It writes the signature `shotgun-<version>.vsix.sig` with the private key. See [The signing key](#the-signing-key).
 3. Install the VSIX in VS Code with DataFlow, and open a C or C++ project. Make sure that the log of Shotgun names the tools of Shotgun.
 4. Do 1 full task with Claude Code in a real project, from the brief to the check of the commit message.
 5. Commit the changes, and push them.
@@ -105,11 +117,26 @@ A release is a VSIX package on the GitHub page of the releases. The package is f
    git push origin v0.1.0
    ```
 
-7. On GitHub, open the releases of the repository, and click **Draft a new release**. Select the tag, write the changes of `CHANGELOG.md` as the notes, and attach the VSIX file. Then click **Publish release**.
+7. On GitHub, open the releases of the repository, and click **Draft a new release**. Select the tag, write the changes of `CHANGELOG.md` as the notes, and attach the VSIX file and its `.sig` file. Then click **Publish release**.
+
+The installed versions of Shotgun look for the latest published release. They install it only if the tag is `v<version>`, and if the release has the two files with the names of step 2. A release with no `.sig` file does not update Shotgun.
 
 The package has no `node_modules` folder, because the extension has no runtime dependencies. If you add a runtime dependency, remove the option `--no-dependencies` from the script, or bundle the dependency.
 
 vsce changes the relative links of `README.md` in the package to links to the repository on GitHub, for example the links to the screenshots. Thus the files of these links must be on the branch `master` on GitHub.
+
+### The signing key
+
+The updater of Shotgun installs a package only with a correct signature. Thus a person who gets access to the GitHub account cannot send a package to the users of Shotgun through the updater.
+
+- The private key is the file `.shotgun\update-signing-key.pem` in your user folder. The environment variable `SHOTGUN_SIGNING_KEY` can name a different file. Do not put this file into the repository. **Shotgun: Disconnect from Claude Code** removes only the folder `.shotgun\claude`, so the key stays.
+- Keep a safe copy of the private key. Without the key, you cannot sign a release, and each user must install the next version by hand.
+- The public key is the value `UPDATE_PUBLIC_KEY` in `src/update/release.ts`.
+- `node scripts/make-signing-key.mjs` makes a new key pair, and writes the public key to the console. The script does not replace a key.
+- To change the key, put the new public key into `UPDATE_PUBLIC_KEY`, and sign this release with the old key. Sign the next releases with the new key.
+- Shotgun and DataFlow have different keys. The text that a signature of Shotgun signs starts with `shotgun-update-1`, so a signature of DataFlow cannot install a package of Shotgun.
+
+Without the private key, `npm run package` makes a package with no signature. The updater does not install such a package.
 
 ## Publisher ID
 

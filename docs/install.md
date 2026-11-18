@@ -9,6 +9,7 @@ Shotgun is not in the Visual Studio Marketplace. Shotgun needs DataFlow, and Dat
 
 - [What you need](#what-you-need)
 - [Install the VSIX](#install-the-vsix)
+- [Update Shotgun](#update-shotgun)
 - [Connect to Claude Code](#connect-to-claude-code)
 - [Build from the source code](#build-from-the-source-code)
 - [Remove Shotgun](#remove-shotgun)
@@ -34,9 +35,37 @@ Shotgun is not in the Visual Studio Marketplace. Shotgun needs DataFlow, and Dat
 
 5. Click the icon of Shotgun in the activity bar. The sidebar of Shotgun opens.
 
-To update Shotgun, install the VSIX of the new release. VS Code replaces the old version.
+After this install, Shotgun updates itself. See [Update Shotgun](#update-shotgun).
 
 If DataFlow is older than 0.6.2, the panel of Shotgun tells it, and Claude Code gets no tools of Shotgun. Install a new release of DataFlow.
+
+## Update Shotgun
+
+Shotgun gets new versions from its [releases on GitHub](https://github.com/KnurrliDev/Shotgun/releases):
+
+1. Shotgun looks for a new release 1 minute after it starts in a window, and then each 6 hours.
+2. Shotgun downloads the package of the new release and its signature. It installs the package only if the signature is correct.
+3. A notification tells you that the new version is installed. Click **Reload**. The old version runs until the window reloads.
+
+To look for a new version now, run **Shotgun: Check for Updates**.
+
+The setting `shotgun.update.mode` controls the updates:
+
+| Value | Function |
+| --- | --- |
+| `auto` | Shotgun installs a new version, and then offers a reload. This is the default value. |
+| `ask` | Shotgun asks before it downloads a new version. You can skip a version. |
+| `off` | Shotgun does not look for new versions. The command **Shotgun: Check for Updates** still works. |
+
+If the setting `extensions.autoUpdate` of VS Code is `false`, the value `auto` also asks first.
+
+For an update, Shotgun connects only to GitHub. It sends no data of your project.
+
+After the reload, a connected Shotgun writes the plugin of the new version for Claude Code. Start a new session of Claude Code, so that it loads the new hooks and skills.
+
+A new release of Shotgun can need a new release of DataFlow. DataFlow 0.7.0 and later update themselves in the same way. If DataFlow is too old, the panel of Shotgun tells it.
+
+Shotgun 0.3.0 and earlier do not update themselves. To get the updates, install the VSIX of a later release one time. A window that runs Shotgun from the source code also does not update itself.
 
 ## Connect to Claude Code
 

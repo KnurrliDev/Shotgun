@@ -226,6 +226,11 @@
 				"command": "shotgun.disconnectClaude",
 				"title": "Disconnect from Claude Code",
 				"category": "Shotgun"
+			},
+			{
+				"command": "shotgun.checkForUpdates",
+				"title": "Check for Updates",
+				"category": "Shotgun"
 			}
 		],
 		"configuration": {
@@ -258,6 +263,22 @@
 					"minimum": 0.5,
 					"maximum": 60,
 					"description": "The time in seconds with no edit that makes a pause. Callouts come only at a pause, with a maximum of 3 for each pause."
+				},
+				"shotgun.update.mode": {
+					"type": "string",
+					"enum": [
+						"auto",
+						"ask",
+						"off"
+					],
+					"enumDescriptions": [
+						"Install a new version, then offer a reload of the window.",
+						"Ask before Shotgun installs a new version.",
+						"Do not look for new versions. The command Shotgun: Check for Updates still works."
+					],
+					"default": "auto",
+					"scope": "application",
+					"description": "How Shotgun gets a new version from its releases on GitHub. Shotgun installs only a package with a correct signature. If the setting extensions.autoUpdate is false, Shotgun asks first."
 				}
 			}
 		},

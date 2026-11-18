@@ -15,6 +15,7 @@ tsconfig.webview.json
 **/*.map
 **/*.ts
 **/.vscode-test.*
+*.vsix.sig
 implementation-plan.md
 dataflow-gaps*.md
 reports/**

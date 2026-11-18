@@ -36,6 +36,7 @@ import { planRisk } from './tools/plan';
 import { EngineApi, engineFacts } from './tools/survey';
 import type { ReviewApi } from './tools/review';
 import { shotgunTools } from './tools/tools';
+import { startUpdater } from './update/start';
 import { claudeText, HOME_ID, HomeState, HomeView, parseRecent, Project, RECENT_KEY, withRecent } from './views/home';
 import { buildModel, DataFlowView, statusOf } from './views/model';
 import type { FromView, ViewCommand, ViewModel } from './views/protocol';
@@ -151,6 +152,8 @@ class Shotgun implements vscode.Disposable {
 			new vscode.Disposable(() => this.lines.dispose()),
 			this.store.onDidChange(() => this.update()),
 			...this.commands(),
+			// an installed package gets new versions from the releases on GitHub (decision 42)
+			startUpdater(context, this.log),
 			this.watchFiles(),
 			this.watchProject(),
 			this.watchCommitMessage(),

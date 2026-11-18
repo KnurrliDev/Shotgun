@@ -5,6 +5,10 @@
 - GUI code gets lower levels (decision 40). DataFlow can take a function as GUI code, and then all its heat points count half, except the points of data that threads share. In GUI code, callers that the call graph cannot see do not give level 3 or higher. The plan page shows the reason of GUI code first. This needs a release of DataFlow with the GUI facts. With DataFlow 0.7.0 or earlier, the levels do not change.
 - `src/dataflow/dataflow-api.d.ts` has the GUI facts of the API of DataFlow.
 - The Shotgun page has a check box for the STE output (decision 41). While a task is active and not paused, the prompt hook gives Claude the rules of ASD-STE100 Simplified Technical English (STE) with each prompt. The new setting `shotgun.steOutput` keeps the choice for all projects. The default is off.
+- Shotgun updates itself from its releases on GitHub, as DataFlow does (decision 42). It looks for a new release 1 minute after it starts in a window, and then each 6 hours. It installs the new version in the background, and a notification offers a reload of the window. The old version runs until the reload. The new command **Shotgun: Check for Updates** looks for a new version at once.
+- The new setting `shotgun.update.mode` controls the updates: `auto` installs a new version, `ask` asks first, and `off` does not look for new versions. If the setting `extensions.autoUpdate` of VS Code is `false`, `auto` also asks first.
+- Shotgun installs only a package with a correct signature. `npm run package` writes the signature `<package>.sig` with a private key that is not in the repository, and each release has the package and its signature. The signature contains the version, so an old package cannot come back as a new version. Shotgun has its own key, not the key of DataFlow.
+- `scripts/test-update.mjs` tests a real update in the test build of VS Code, with a release server on the computer.
 
 ## 0.3.0
 
