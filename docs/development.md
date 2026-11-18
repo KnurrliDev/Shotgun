@@ -25,7 +25,7 @@ This document tells how to change, run, test and release the code of Shotgun. [I
 | `src/webview-side/` | The code of the panel and the page in the webview, with Preact |
 | `src/test/unit/` | The unit tests |
 | `plugin/skills/` | The skills of the plugin for Claude Code |
-| `scripts/` | `build-webviews.mjs` bundles the panel and the page with esbuild. `package-vsix.mjs` makes the VSIX package. `test-claude.mjs` is the test with Claude Code. `measure-review.mjs` measures the review skill on the cases of `review-cases.mjs`. `harness.mjs` has the shared parts of these 2 scripts. |
+| `scripts/` | `build-webviews.mjs` bundles the panel and the page with esbuild. `package-vsix.mjs` makes the VSIX package. `test-claude.mjs` is the test with Claude Code. `measure-review.mjs` measures the review skill on the cases of `review-cases.mjs` and `review-cases-hard.mjs`. `harness.mjs` has the shared parts of these 2 scripts. |
 | `media/` | The icon of Shotgun |
 | `spikes/` | The tests of phase 0 |
 | `docs/` | The documents of Shotgun |
@@ -58,7 +58,8 @@ The window uses the DataFlow extension of VS Code. To use DataFlow from its repo
 | --- | --- |
 | `npm test` | The unit tests in a test build of VS Code. The tests load DataFlow from `../DataFlow`, or from the folder of the environment variable `DATAFLOW_REPO`. If the environment variable `CLAUDE_EXE` gives the CLI of Claude Code, a test also checks the plugin with `claude plugin validate`. |
 | `node scripts/test-claude.mjs <run folder>` | The test with Claude Code. Type `npm run compile` first. Use a new run folder outside of the repository. |
-| `node scripts/measure-review.mjs <run folder>` | The measurement of the review skill (P36). Type `npm run compile` first. Options: `--efforts low,medium,high`, `--runs 3`, `--cases B1,C1` and `--model sonnet`. With `--report`, the script makes the results again from the runs in the run folder, with no new run. |
+| `node scripts/measure-review.mjs <run folder>` | The measurement of the review skill (P36). Type `npm run compile` first. Options: `--efforts low,medium,high`, `--runs 3`, `--group basic`, `--group hard`, `--cases B1,C1` and `--model sonnet`. With `--report`, the script makes the results again from the runs in the run folder, with no new run. The script uses the test build and the fixture of `../DataFlow`, or of the folder of `DATAFLOW_REPO`. Set `DATAFLOW_EXTENSION` to use a different extension of DataFlow, for example an extracted VSIX. |
+| `node scripts/measure-review.mjs --check` | Tests the cases with no run of Claude Code. Each case must apply to the fixture, and each place of a bug must be there. The project must compile. The options `--group` and `--cases` select the cases. Clang 20 or later is necessary. If `clang++` is older, set `CLANG_EXE` to a newer Clang. |
 
 `scripts/test-claude.mjs` does 1 full task in a copy of the fixture `battery` of DataFlow, from the brief to the end of the review:
 
@@ -76,13 +77,15 @@ The window uses the DataFlow extension of VS Code. To use DataFlow from its repo
 
 NOTE: `scripts/test-claude.mjs` uses the Claude subscription of the user for 17 runs of Claude Code. It does not change the settings of the user.
 
-`scripts/measure-review.mjs` measures the review skill on the 12 cases of `scripts/review-cases.mjs` in a copy of the fixture `battery`. Of these cases, 8 have 1 known bug each, and 4 have no bug. For each case, effort and run, it makes a task in stage 6 and runs the review prompt in a new run of Claude Code. An issue finds the bug if its place is in the file of the bug, near the line of the bug.
+`scripts/measure-review.mjs` measures the review skill on the 22 cases of `scripts/review-cases.mjs` and `scripts/review-cases-hard.mjs` in a copy of the fixture `battery`. The group `basic` has 8 cases with 1 known bug each, and 4 cases with no bug. The group `hard` has 7 cases with known bugs, and 3 clean cases that look wrong. For each case, effort and run, it makes a task in stage 6 and runs the review prompt in a new run of Claude Code.
 
-Each other issue is a test gap, a pre-existing problem, or an issue of the kind other. Each brief asks for a test, and no change has a test, so a test gap is a correct issue. An issue of the kind other is a false alarm, or a real problem that the case did not plan. The precision is the issues of the bug, divided by the issues of the bug and of the kind other.
+An issue finds a bug if 2 conditions are true. Its place must be near a line of the bug, and its title or summary must name the defect. A test gap never finds a bug. The score does not count a case with the field `invalid`.
 
-The run folder gets `results.jsonl`, `results.md` and `summary.json`. They give the recall, the precision, the time, the subagents and the cost of each effort. They also list each issue of the kind other, so that you can examine it. With a run folder that has `results.jsonl`, the script continues with the runs that are not done.
+Each other issue is a test gap, a pre-existing problem, or an issue of the kind other. Each brief asks for a test, and no change has a test, so a test gap is a correct issue. An issue of the kind other is a false alarm, or a real problem that the case did not plan. The precision is the issues of the known bugs, divided by the issues of the known bugs and of the kind other.
 
-NOTE: `scripts/measure-review.mjs` uses the Claude subscription of the user for each run: 108 runs with the default options, about 3 hours. It does not change the settings of the user.
+The run folder gets `results.jsonl`, `results.md` and `summary.json`. They give the recall, the precision, the time, the subagents and the cost of each effort. They also list each issue of the kind other, and each issue at the place of a known bug that names a different defect, so that you can examine them. With a run folder that has `results.jsonl`, the script continues with the runs that are not done.
+
+NOTE: `scripts/measure-review.mjs` uses the Claude subscription of the user for each run: 198 runs with the default options, about 5 hours. The option `--group hard` has 90 runs. It does not change the settings of the user.
 
 ## Make a release
 

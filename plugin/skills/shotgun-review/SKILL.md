@@ -35,9 +35,9 @@ Load the tools with 1 call of `ToolSearch`, with `select:` and the full names. E
 1. Call `shotgun_get_session`. Make sure that the stage is 6. If the stage is 5, stop, and tell the user to select "The build is done" in the panel of Shotgun.
 2. Call `shotgun_get_review`. Its effort and its focus are the choice of the user. Use them, also if the prompt gives a different effort or focus.
 3. Plan the finders from the effort. The table in the section "The effort" gives them. From round 2, also obey the section "A later round".
-4. Start the finders as subagents with the tool Agent, all in 1 message, so that they run in parallel. Give each finder the prompt in the section "The prompt of a finder".
+4. Start the finders as subagents with the tool Agent, all in 1 message, so that they run in parallel. Give each finder the prompt in the section "The prompt of a finder". Each subagent gives its result to you when it ends. Wait for these results. Do not use `ScheduleWakeup`, `CronCreate` or a `sleep` command to wait, because a scheduled task can start a new turn after the end of the review.
 5. Collect the candidates of all finders. 2 candidates at the same place with the same defect are 1 candidate. 2 candidates with the same cause are also 1 candidate, if 1 fix removes the 2 failure scenarios. Give the place of the cause, and put the second result into the summary. Do not vote: a candidate of only 1 finder stays.
-6. Check each candidate. At the effort low, give each candidate a short verdict yourself. From the effort medium, start 1 verifier subagent for each candidate, all in 1 message. Give each verifier the prompt in the section "The prompt of a verifier".
+6. Check each candidate. At the effort low, give each candidate a short verdict yourself. From the effort medium, start 1 verifier subagent for each candidate, all in 1 message. Give each verifier the prompt in the section "The prompt of a verifier". Wait for their results as in step 4.
 7. Remove each rejected candidate. Keep each confirmed candidate. Keep a plausible candidate with the verdict `plausible`, except at the effort low.
 8. Put the issues in sequence: the important issues first, then the minor issues.
 9. Call `shotgun_submit_review` with the issues, a maximum of 32. Shotgun puts each issue into the list of steps or into the second list.

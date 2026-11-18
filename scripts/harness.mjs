@@ -370,6 +370,8 @@ export function runClaude({ name, prompt, cwd, logDir, pluginDirs = [], tools, m
 		'--setting-sources', 'project', ...pluginDirs.flatMap((d) => ['--plugin-dir', d]),
 		'--permission-mode', 'acceptEdits', '--permission-prompts', 'none',
 		'--allowedTools', tools.join(','),
+		// no wakeup and no cron task: print mode waits for each scheduled task, so 1 wakeup kept a review open for 20 minutes
+		'--disallowedTools', 'ScheduleWakeup,CronCreate',
 		'--max-turns', String(maxTurns), '--no-session-persistence',
 		'--debug-file', path.join(logDir, `claude-${name}.debug.log`),
 	];

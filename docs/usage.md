@@ -311,7 +311,11 @@ The effort sets the finders, the context and the verify pass. It does not set th
 
 Above high, a review finds few more issues, but it uses much more time and many more tokens.
 
-A measurement of Shotgun tested the efforts low, medium and high on 12 small changes of 1 to 4 hunks. Of these changes, 8 had 1 known bug each. Each effort found each of these bugs. A review at low took about 1 minute. A review at medium or high took about 2 minutes, and the CLI gave about 3.5 times the cost of low. Thus for a small change, low can be enough. The measurement did not compare the efforts on large changes.
+A measurement of Shotgun tested the efforts low, medium and high on 11 small changes of 1 to 4 hunks. Of these changes, 7 had 1 known bug each. Each effort found each of these bugs. Low and high put each find into the list of steps. Medium put 2 of its 21 finds into the second list. Medium and high also gave more issues that the test did not plan. A review at low took about 1 minute. A review at medium or high took about 2 minutes, and the CLI gave about 3.7 times the cost of low.
+
+A second measurement used 10 harder changes: bugs across 2 files, bugs in code that the change did not touch, and changes of 135 and 212 lines. Again, each effort found each of the 12 known bugs. Medium and high also found more small real problems that the test did not plan, and more problems that were in the code before the change. They gave no more false alarms in the list of steps than low. A review at medium took about 2 minutes, and the CLI gave about 4 times the cost of low. High gave no more than medium.
+
+Thus low can be enough for a fast check of a change. Medium finds more of the small problems. The 2 measurements used a small project of 543 lines, and did not test a large project.
 
 The focus has these areas. The default focus is all areas except cleanups.
 

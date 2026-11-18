@@ -828,7 +828,7 @@ Open items:
 - **Feedback:** the next review gets the reasons of **Not a problem**. The page shows the rate of issues with no action for each area, and proposes to turn off an area above 10% (P35).
 - **Rounds:** "Review the fixes." reviews the new and the changed hunks with their ripple, and checks each fixed issue. Each issue names the earlier issue that it repeats. After 3 rounds, the panel asks first (P23).
 - **Commit message and ledger:** the check of the commit message works in stage 6. **Copy for the pull request** adds the issues (P24).
-- **Measurement:** `scripts/measure-review.mjs` measures the skill on 12 cases in the fixture: 8 changes with 1 known bug each, and 4 changes with no bug (P36). The user selected these cases instead of a bug history, and the efforts low, medium and high. The script runs each case at each effort 3 times.
+- **Measurement:** `scripts/measure-review.mjs` measures the skill on 22 cases in the fixture (P36). The group `basic` has 8 changes with 1 known bug each, and 4 changes with no bug. The group `hard` has 7 changes with known bugs, and 3 clean changes that look wrong. The user selected cases in the fixture instead of a bug history, and the efforts low, medium and high. The script runs each case at each effort 3 times.
 - **Full test:** `scripts/test-claude.mjs` adds stage 6. The test selects an effort and a focus, and Claude reviews the fixture task. The test writes the fix of 1 issue, sets 1 issue to level 2 for Claude, and closes 1 issue with **Not a problem**. "Review the fixes." checks the fixes. Then the test ends the task, and Claude checks the commit message.
 - **Release:** the documents and the skills name 6 stages, and the changelog gives version 0.3.0.
 - **Done when:** a fix of the user and a fix of Claude go through stage 6, with callouts and with a receipt. The second round checks each fixed issue. A correct fix stays fixed, and an issue with a wrong fix comes again with its id. The second round repeats no closed issue. The measurement gives the recall, the precision and the cost of each effort on the cases of the fixture.
@@ -854,30 +854,82 @@ Open items:
 - The full test in a real project of the user, with the VSIX, before the push of release 0.3.0.
 - The skill can give the source model to a race that `get_threads` gives, for example I2 of run 2. Shotgun does not check the source.
 - Shotgun gets the heat of the places of the steps of the issues only in `submit_review`. An issue that "Make it a step" adds later gets no heat hint.
-- The cases of the measurement are easy, so they show no difference between the efforts. The next paragraph gives the results.
+- On the known bugs of the fixture, the efforts low, medium and high have the same recall. Cases from a real project are not done. The next paragraphs give the results.
 
 **Measurement, 17 November 2026:** `scripts/measure-review.mjs` ran 108 reviews with the model Sonnet, in about 2 hours and 45 minutes. No run failed. The runs used the Claude subscription of the user, and the CLI gave a cost of $68 for all runs.
 
-| Effort | Recall | Precision, list of steps | Precision, both lists | Pre-existing issues, each run | Minutes (median) | Subagents, each run | Cost of a run (CLI) |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| Low | 100% | 100% | 100% | 0.03 | 0.7 | 1.0 | $0.23 |
-| Medium | 100% | 100% | 93% | 0.22 | 1.6 | 8.3 | $0.82 |
-| High | 100% | 96% | 96% | 0.25 | 1.6 | 8.4 | $0.84 |
+**Correction of the score, 18 November 2026:** the first score of these runs was too high, for 2 reasons. The table gives the new score. The option `--report` made it from the same 108 runs.
 
-- Each effort found the bug of each of the 8 bug cases in all 3 runs, each time in the list of steps. The cases are too easy to show a difference between the efforts. Each case is a small change in 1 or 2 files, and each bug is in the changed code.
-- No issue was a clear false alarm. The 8 issues of the kind other came from 3 cases:
-  - In case C3, 5 issues found that `is_idle()` is true while a worker still runs a job. The spec of the brief permits this, but its goal "the pool has no work" does not.
-  - In case C1, 2 issues in the second list found that the old log line "used preset" comes before the code picks the start.
-  - In case B2, 1 plausible issue found other runs of the solver with no log line.
+- The first score counted each issue near the place of the bug as a find. Thus a test gap or a different defect at that line counted. Now an issue must also name the defect in its title or summary.
+- Case B1 has no real bug. `process()` reads `solve_runs` after `get()` of the future, and `get()` waits for the end of the task. The issues at its place named a different defect: the count is never reset. The score does not count B1 now.
+
+| Effort | Recall, list of steps | Recall, both lists | Precision, list of steps | Precision, both lists | Pre-existing issues, each run | Minutes (median) | Subagents, each run | Cost of a run (CLI) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Low | 100% | 100% | 100% | 100% | 0.03 | 0.7 | 1.0 | $0.22 |
+| Medium | 90% | 100% | 90% | 54% | 0.45 | 1.5 | 8.2 | $0.82 |
+| High | 100% | 100% | 78% | 62% | 0.61 | 1.6 | 8.3 | $0.82 |
+
+- Each effort found each of the 7 known bugs in all 3 runs. At medium, 2 of the 21 finds were only in the second list, because a verifier gave the real bugs of B2 and B4 the verdict plausible.
+- On these small changes, low had the best result. More finders and verifiers gave more issues, but they found no more known bugs.
+- The list of steps had 8 issues of the kind other. They are real problems that the cases did not plan. For example, `is_idle()` is true while a worker still runs a job (case C3).
+- The second list had 23 issues of the kind other, all with the verdict plausible. Most of them are small real problems, and some are speculation, for example "No newline after the log text" (case B7). Thus the precision is a lower limit.
 - Medium and high found more pre-existing problems than low, all in the second list.
 - High is almost the same as medium. Its second pass only changes the order of the hunks, and 7 of the 12 cases change only 1 place. Only 2 runs of case B7 started a second pass, with 15 subagents.
 - In 2 of the 72 runs at medium and high, Claude started no subagent, and reviewed the change itself. Both runs were the clean case C2 with 2 small changes. The skill does not permit this.
-- Each brief asks for a test, and no change has a test. Thus each effort gave about 0.4 test gaps in each run.
+- Each brief asks for a test, and no change has a test. Thus each effort gave about 0.9 test gaps in each run.
+
+**Harder cases, 18 November 2026:** the new file `scripts/review-cases-hard.mjs` adds the group `hard` with 10 cases. The option `--group hard` runs only these cases. The option `--check` tests each case with no run of Claude Code. Each case must apply to the fixture, and each place of a bug must be there. The project must compile.
+
+| Cases | What the case tests | Changed lines | Known bugs |
+| --- | --- | --- | --- |
+| H1, H2 | A bug across 2 files: a lost wakeup, and a `string_view` of a local string | 12, 5 | 1 each |
+| H3, H4, H5 | A bug in code that did not change: a new meaning of a result, a cost of NaN, and a static map on 2 threads | 5, 6, 12 | 1 each |
+| H6 | A rename that lost 1 line | 135 | 1 |
+| H7 | A new class with more known bugs than the cap of 5 steps | 212 | 6 |
+| HC1, HC2, HC3 | Clean changes that look wrong: the rename of H6 with no lost line, a read after `get()`, and reference captures with `get()` before the return | 136, 9, 12 | 0 |
+
+The trial runs of H7 found 2 faults that the case did not plan. The export could skip a multiple of 100, and the brief did not permit 2 lines of the file. The case has the fixes.
+
+**Measurement of the hard cases, 18 November 2026:** the option `--group hard` ran 90 reviews with the model Sonnet, in about 3 hours and 15 minutes. No run failed. The CLI gave a cost of $75 for all runs. Other work changed the DataFlow repository at the same time. Thus the test build used the released DataFlow 0.6.2 through the environment variable `DATAFLOW_EXTENSION`.
+
+| Effort | Recall, list of steps | Recall, both lists | Precision, list of steps | Precision, both lists | Pre-existing issues, each run | Minutes (median) | Subagents, each run | Cost of a run (CLI) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Low | 92% | 100% | 97% | 95% | 0.03 | 0.9 | 1.0 | $0.27 |
+| Medium | 92% | 100% | 89% | 70% | 1.07 | 2.1 | 9.7 | $1.12 |
+| High | 92% | 100% | 80% | 68% | 1.03 | 2.3 | 9.8 | $1.12 |
+
+- Each effort found each of the 12 known bugs in all 3 runs. Thus the hard cases also show no difference between the efforts in the recall of the known bugs.
+- Bug E of H7 was never in the list of steps. In 7 of the 9 runs of H7, the cap of 5 steps moved it to the second list. In the other 2 runs, the verifier gave it the verdict plausible.
+- The table counts each issue of the kind other against the precision. An examination by hand found that 31 of the 37 issues of the kind other are real problems or clear false alarms. The table after this list gives them.
+- Low found 1 of these real problems in 30 runs, medium found 10, and high found 12. The problems are small, but only medium and high found most of them.
+- Medium and high also gave about 1 pre-existing problem in each run, all in the second list. Low gave 1 in 30 runs.
+- Each effort gave 1 clear false alarm in the list of steps in 30 runs. Thus by hand, the precision of the list of steps is about 97% at each effort.
+- High is again almost the same as medium. It used the same number of subagents, and it had the same cost.
+- In 3 of the 198 runs of the 2 measurements, Claude called `ScheduleWakeup` with 1200 seconds while its finders ran. The review ended after about 2 minutes, but the CLI waited for the wakeup. These runs took about 21 minutes. Their issues are correct. Now the harness blocks `ScheduleWakeup` and `CronCreate`. The skill tells Claude to wait for the results of its subagents, with no wakeup, no cron task and no `sleep`.
+
+The issues of the kind other, examined by hand:
+
+| Case | Issue | Kind | Runs | In the list of steps |
+| --- | --- | --- | --- | --- |
+| H7 | The job of the export reads the log when the job runs, not at the 100th reading. Thus the rows and the line of the total can disagree. | Real | Low 1, medium 2, high 2 | 0 |
+| H2 | If the active plan is missing, the label is "tariff plan -1". | Real | Medium 2, high 2 | 4 |
+| H5 | The task captures the parameter `settle_ms` by reference. If the first read throws an exception, the task can use it after the end of the function. | Real | Medium 1, high 3 | 3 |
+| HC2 | The condition of done needs 1 log line for each finished run. A run that ends outside the state of planning gives no line. | Real | Medium 3, high 3 | 2 |
+| HC2 | The task writes the controller, and `main()` can destroy the controller first. The problem was there before the change, and the change adds 1 write. | Real, pre-existing | Medium 2, high 2 | 1 |
+| H3 | The log line of the cost writes nothing, because `log_info()` of the fixture is an empty stub. | False alarm | Medium 1, high 1 | 2 |
+| HC2 | A solver that throws an exception gives no log line. | False alarm | Low 1, high 1 | 1 |
+| HC2 | A race on `last_solve_ms`. `get()` of the future makes the read safe. | False alarm | Medium 2 | 0 |
+| HC3 | The second task has no join if the first `get()` throws. `evaluate()` cannot throw. | False alarm | Medium 1, high 1 | 0 |
+
+The other 6 issues of the kind other are small or speculative. Each had the verdict plausible and was in the second list.
 
 Open items of the measurement:
 
-- Harder cases must compare the efforts: a bug across 2 files, a bug in the ripple of a change, a large diff, and the bug-fix commits of a project of the user.
-- The default effort stays medium until these cases give data. On small changes, low was enough.
+- Cases from the bug-fix commits of a real project are not done. The user must select the project. The fixture has 543 lines, so 1 finder can read all of it.
+- Case B1 needs a real bug. Until then, the score does not count it.
+- The user must decide the default effort. Low found each known bug for about a quarter of the cost of medium. Medium found more small real problems and more pre-existing problems, with the same number of false alarms in the list of steps. High gave no more than medium.
+- In a session of the user, only the rule of the skill stops a wakeup. No measurement tested this rule, because the harness blocks the tools.
+- The runs found faults in 4 cases. The brief of H3 asks for a log line, but `log_info()` is a stub. The condition of done of HC2 is not true for each run. H2 and H5 have the real problems in the table. A fix of these cases changes the results of later runs.
 
 ## 9. Tests
 
@@ -888,9 +940,9 @@ Open items of the measurement:
 | Fixture tests | The real DataFlow with its fixture `battery`: the hooks, the levels, the bases and the receipts. |
 | UI tests | Snapshots of the page and of the panel, as `spikes/ui` of DataFlow does. |
 | Plugin tests | `claude plugin validate` on the plugin folder. |
-| Hook tests | `scripts/test-claude.mjs`: `claude -p` with `--plugin-dir`, `--setting-sources project`, `--include-hook-events` and `--no-session-persistence`. Not `--strict-mcp-config`, because it also removes the MCP servers of plugins. These tests use the Claude subscription of the user, so they run only on request. |
+| Hook tests | `scripts/test-claude.mjs`: `claude -p` with `--plugin-dir`, `--setting-sources project`, `--include-hook-events`, `--no-session-persistence` and `--disallowedTools ScheduleWakeup,CronCreate`. Not `--strict-mcp-config`, because it also removes the MCP servers of plugins. These tests use the Claude subscription of the user, so they run only on request. |
 | Rule for the hook tests | The CLI uses the login and thus the config folder of the user. A marketplace from the settings of a run goes into the plugin data of the user, so a test loads each plugin with `--plugin-dir`. The test records the plugin data of the user before the runs, removes the empty folders of the runs, and checks the data after them. |
-| Measurement | `scripts/measure-review.mjs` runs the review skill on the 12 cases of `scripts/review-cases.mjs`, at each effort, 3 times (P36). It gives the recall, the precision, the issues of the clean cases and the cost. It uses the Claude subscription of the user, so it runs only on request. |
+| Measurement | `scripts/measure-review.mjs` runs the review skill on the 22 cases of `scripts/review-cases.mjs` and `scripts/review-cases-hard.mjs`, at each effort, 3 times (P36). It gives the recall, the precision, the issues of the clean cases and the cost. It uses the Claude subscription of the user, so it runs only on request. |
 | Skill tests | Cases of `claude plugin eval` for the requests that must load each skill. These tests use the Claude subscription of the user, so they run only on request. |
 | Manual tests | 1 full task with Claude Code before each release. |
 

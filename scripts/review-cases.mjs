@@ -1,8 +1,13 @@
-// The cases of the measurement of the review skill (P36), for the fixture battery of DataFlow. Each case is a small
-// change of a task with its brief. A bug case has 1 known bug, and a clean case has no bug. The edits replace a text of
-// the fixture that is there exactly 1 time. A place of a bug is a short text of a line in the file after the change. An
-// issue of the review finds the bug if its place or a fix place is near that line. areas: the areas of the focus that
-// agree with the bug.
+// The cases of the measurement of the review skill (P36), for the fixture battery of DataFlow. Each case is a change of a
+// task with its brief. A bug case has known bugs, and a clean case has no bug. The group basic has small changes. The
+// group hard has a bug across 2 files, a bug in the ripple of a change, a large diff, and clean changes that look wrong.
+//
+// An edit replaces a text of the fixture that is there exactly 1 time. With all: true, it replaces each occurrence of the
+// text. An edit with text and no find makes a new file. A place of a bug is a short text of a line in the file after the
+// change. An issue of the review finds a bug if 2 conditions are true: its place or a fix place is near that line, and
+// its title or summary agrees with names. A test gap never finds a bug. areas: the areas of the focus that agree with the
+// bug. invalid: the reason why the measurement does not count the case.
+import { HARD_CASES } from './review-cases-hard.mjs';
 
 const brief = (title, { goal, facts = [], specs, notInScope = [], doneWhen }) => [
 	`# Brief: ${title}`, '',
@@ -21,6 +26,7 @@ export const CASES = [
 		id: 'B1',
 		title: 'Count the runs of the solver',
 		kind: 'bug',
+		invalid: 'The known bug is not a race. process() reads solve_runs after get() of the future, and get() waits for the end of the task.',
 		brief: {
 			goal: 'The log tells how many runs of the solver a schedule needed.',
 			facts: ['The solver runs on a worker thread of the executor.', 'process() runs 1 time in each cycle of the main loop.'],
@@ -41,6 +47,7 @@ export const CASES = [
 		bug: {
 			text: 'The worker thread writes solve_runs, and process() reads it on the main thread with no lock: a data race.',
 			areas: ['threads'],
+			names: /solve_runs.*(race|shared|lock|atomic)|(race|lock|atomic).*solve_runs/i,
 			places: [{ file: 'src/battery.cpp', code: '++home_battery_ctl.solve_runs;' }, { file: 'src/battery.cpp', code: 'the schedule converged after {} runs' }],
 		},
 	},
@@ -67,6 +74,7 @@ export const CASES = [
 		bug: {
 			text: 'The task of the executor keeps a reference to the local plan_name of process(). The task can run after process() returns: a use after the end of its lifetime.',
 			areas: ['lifetime'],
+			names: /plan_name|dangl/i,
 			places: [{ file: 'src/battery.cpp', code: 'executor.async([&plan_name, &charge]() {' }, { file: 'src/battery.cpp', code: 'log_info(std::format("solve for {}", plan_name));' }],
 		},
 	},
@@ -90,6 +98,7 @@ export const CASES = [
 		bug: {
 			text: 'The index size() is 1 past the last reading: a read out of bounds.',
 			areas: ['correctness'],
+			names: /size()|past the (end|last)|out of (bounds|range)/i,
 			places: [{ file: 'src/battery.cpp', code: 'reading_db[home_battery_ctl.reading_db.size()]' }],
 		},
 	},
@@ -114,6 +123,7 @@ export const CASES = [
 		bug: {
 			text: 'The change removed the check of an empty preset database. With no preset, *best reads end().',
 			areas: ['correctness', 'brief'],
+			names: /end()|empty preset/i,
 			places: [{ file: 'src/battery.cpp', code: 'return *best;' }, { file: 'src/battery.cpp', code: 'if (filter.contains("skip"))' }],
 		},
 	},
@@ -140,6 +150,7 @@ export const CASES = [
 			text: 'The brief needs the log line "no tariff plan", and the change does not write it: a gap in the specs.',
 			areas: ['brief'],
 			margin: 5,
+			names: /no tariff plan|log line/i,
 			places: [{ file: 'src/battery.cpp', code: 'if (!cur_tariff_plan) {' }],
 		},
 	},
@@ -166,6 +177,7 @@ export const CASES = [
 		bug: {
 			text: 'The workers write done_ after the job with no lock. 2 workers, and done(), use it at the same time: a data race.',
 			areas: ['threads'],
+			names: /race|lock|unprotected|atomic/i,
 			places: [{ file: 'src/worker_pool.cpp', code: '++done_;' }],
 		},
 	},
@@ -196,6 +208,7 @@ export const CASES = [
 		bug: {
 			text: 'The job keeps a reference to the local line of post_log(). The job runs after post_log() returns: a use after the end of its lifetime.',
 			areas: ['lifetime'],
+			names: /by reference|dangl/i,
 			places: [{ file: 'src/worker_pool.cpp', code: 'post([&line]() { std::fputs(line.c_str(), stderr); });' }],
 		},
 	},
@@ -220,6 +233,7 @@ export const CASES = [
 		bug: {
 			text: 'destroy() joins the workers before it sets isStopping_. A worker with no job waits on cv_ for ever, so join() never returns: destroy() hangs.',
 			areas: ['correctness', 'threads'],
+			names: /join|hang|stop flag|isStopping/i,
 			places: [{ file: 'src/worker_pool.cpp', code: '      t.join();' }, { file: 'src/worker_pool.cpp', code: '// the workers finish the queued jobs first' }],
 		},
 	},
@@ -292,4 +306,8 @@ export const CASES = [
 			},
 		],
 	},
-].map((c) => ({ ...c, briefText: brief(c.title, c.brief) }));
+	...HARD_CASES,
+].map((c) => ({ group: 'basic', ...c, briefText: brief(c.title, c.brief) }));
+
+// The known bugs of a case. The 1 bug of a case has the id A
+export const bugsOf = (c) => c.bugs ?? (c.bug ? [{ id: 'A', ...c.bug }] : []);
