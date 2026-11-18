@@ -51,7 +51,8 @@ suite('Survey', () => {
 		assert.ok(isInside(path.join(root, 'SRC').toUpperCase(), root, false));
 		assert.strictEqual(projectPath(path.join(root, 'src', 'a.cpp'), root, true), 'src/a.cpp');
 		assert.strictEqual(projectPath(path.join(os.tmpdir(), 'elsewhere.cpp'), root, true), path.join(os.tmpdir(), 'elsewhere.cpp'));
-		assert.deepStrictEqual(['a.cpp', 'a.H', 'a.inl', 'a.c++', 'a.md', 'a.cs', 'cpp'].map(isCppFile), [true, true, true, true, false, false, false]);
+		assert.deepStrictEqual(['a.cpp', 'a.H', 'a.inl', 'a.c++', 'a.inc', 'a.cu', 'a.cuh', 'a.md', 'a.cs', 'cpp', 'a.incl'].map(isCppFile),
+			[true, true, true, true, true, true, true, false, false, false, false]);
 	});
 
 	test('With the tool calls of DataFlow, a fact needs a call of its tool in this stage (decision 13)', async () => {

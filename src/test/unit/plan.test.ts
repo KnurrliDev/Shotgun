@@ -199,6 +199,16 @@ suite('Plan', () => {
 		});
 	});
 
+	test('A place in an .inc file gets the facts of DataFlow. A place in a file of a different language gets none', async () => {
+		// a unity build includes the .inc file in a .cpp file, and DataFlow reads it with the context of that file
+		const calls: string[] = [];
+		const inc = await placeRisk(fakeEngine(calls), root, { file: 'src/table.inc', lines: [5, 7] });
+		assert.deepStrictEqual([inc.kind, calls], ['function', ['place table.inc:5', 'heat table.inc:5-7']]);
+		assert.notStrictEqual(placeLevel(inc, 'ready').level, null);
+		assert.deepStrictEqual(await placeRisk(fakeEngine(calls), root, { file: 'CMakeLists.txt', lines: [5, 7] }), { kind: 'other' });
+		assert.strictEqual(calls.length, 2);
+	});
+
 	test('The open decisions: the checks, the level from the heat and the decisions, and the answers and the decisions of the user', async () => {
 		await planStage();
 		// the checks of the decisions and of insert (P26, P27)

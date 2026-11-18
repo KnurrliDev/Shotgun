@@ -8,9 +8,14 @@ Shotgun 0.3.0 needs DataFlow 0.6.2 or later. A task has 6 stages: the new stage 
 - Shotgun puts the confirmed new issues into the list of steps, and the other issues into the second list. The user writes the fix of a step at level 4, or gives the step to Claude at level 1 or 2.
 - After the fixes, the next round of the review checks each fixed issue. "Not a problem" closes an issue with a reason, and the next review gets it.
 - The gate "The task is done" ends a task in stage 6. A task of Shotgun 0.2.0 or earlier that is done in stage 5 stays done.
+- Shotgun gets the facts of DataFlow for an .inc file, for example in a unity build, and for the CUDA files .cu and .cuh.
 - After the update, start a new session of Claude Code, so that it loads the new skills of Shotgun.
 
-The sections below give the changes of the phases 12 and 13.
+The sections below give the changes of the phases 12 and 13, and the changes after them.
+
+### After phase 13: .inc files
+
+- Shotgun now gets the facts of DataFlow for an .inc file, as for a .cpp file. Before, the plan gave each place in an .inc file the level 2 with no facts. The survey, the frames, the callouts and the loose ends also skipped the file. DataFlow reads an .inc file with the context of the .cpp file that includes it, for example in a unity build. Shotgun also accepts the CUDA files .cu and .cuh, as DataFlow does.
 
 ### Phase 13: the steps of the issues
 

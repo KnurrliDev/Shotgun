@@ -21,6 +21,7 @@ export function projectPath(file: string, root: string, isCaseSensitive = IS_CAS
 // The absolute path of a path of the stage files
 export const absolutePath = (file: string, root: string): string => path.resolve(root, file);
 
-// The files with C or C++ code. DataFlow has facts only for them
-const CPP = /\.(c|cc|cpp|cxx|c\+\+|h|hh|hpp|hxx|h\+\+|inl|ipp|tpp|ixx|cppm)$/i;
+// The files with C, C++ or CUDA code, as in the list of DataFlow. DataFlow has facts only for them. It reads an .inc file
+// with the context of the .cpp file that includes it
+const CPP = /\.(c|cc|cpp|cxx|c\+\+|cu|h|hh|hpp|hxx|h\+\+|cuh|inl|ipp|tpp|ixx|cppm|inc)$/i;
 export const isCppFile = (file: string): boolean => CPP.test(file);

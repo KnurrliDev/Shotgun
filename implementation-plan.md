@@ -933,11 +933,12 @@ Open items of the measurement:
 
 **Release 0.3.0, 18 November 2026:** Shotgun 0.3.0 has the phases 12 and 13: the review in stage 6, and the steps of its issues. It needs DataFlow 0.6.2 or later.
 
-- Tests: run 3 of `scripts/test-claude.mjs` passed all 195 checks with DataFlow 0.6.2 on 17 November. After this run, the code of the extension changed only in 1 comment. The skill `shotgun-review` got the rule to wait for its subagents. 153 unit tests passed, with the check of the plugin by `claude plugin validate`.
+- Tests: run 3 of `scripts/test-claude.mjs` passed all 195 checks with DataFlow 0.6.2 on 17 November. After this run, the code of the extension changed only in 1 comment and in the list of the C and C++ files. The skill `shotgun-review` got the rule to wait for its subagents. 154 unit tests passed, with the check of the plugin by `claude plugin validate`.
 - Package: `npm run package` makes `shotgun-0.3.0.vsix`: 63 files and 295 KB. The first package also had the research report and its notes. Thus `.vscodeignore` now removes the folders `reports` and `research_notes`.
-- A check of the package: a script installed the VSIX packages of DataFlow 0.7.0 and Shotgun 0.3.0 into a test build of VS Code 1.147.0. All 16 checks passed. DataFlow got the 21 tools of Shotgun, and the connection wrote the plugin of version 0.3.0 with 8 skills.
-- The same check with DataFlow 0.6.2 also passed all 16 checks. VS Code loaded DataFlow 0.6.2 from the folder of its released package, instead of the installed DataFlow 0.7.0.
+- A check of the package: a script installed the VSIX packages of DataFlow 0.7.0 and Shotgun 0.3.0 into a test build of VS Code 1.147.0. All 17 checks passed. DataFlow got the 21 tools of Shotgun, and the connection wrote the plugin of version 0.3.0 with 8 skills.
+- The same check with DataFlow 0.6.2 also passed all 17 checks. VS Code loaded DataFlow 0.6.2 from the folder of its released package, instead of the installed DataFlow 0.7.0.
 - The description of the package now names the 6 stages.
+- After the first commit of the release, the session of DataFlow found that Shotgun gave no facts for .inc files. Now the list of the C and C++ files has .inc, .cu and .cuh, as the list of DataFlow has. Since DataFlow 0.4.0, DataFlow reads an .inc file with the context of the .cpp file that includes it. The user put this fix into release 0.3.0.
 - Full test: as for the earlier releases, the user does the full test in a real project with the VSIX before the push of the release.
 
 ## 9. Tests
