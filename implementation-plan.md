@@ -944,6 +944,13 @@ Open items of the measurement:
 - After the first commit of the release, the session of DataFlow found that Shotgun gave no facts for .inc files. Now the list of the C and C++ files has .inc, .cu and .cuh, as the list of DataFlow has. Since DataFlow 0.4.0, DataFlow reads an .inc file with the context of the .cpp file that includes it. The user put this fix into release 0.3.0.
 - Full test: as for the earlier releases, the user does the full test in a real project with the VSIX before the push of the release.
 
+**Release 0.4.0, 18 November 2026:** Shotgun 0.4.0 has the decisions 40, 41 and 42: lower levels for GUI code, the check box for the STE output, and the updates from the releases on GitHub. It needs DataFlow 0.6.2 or later. It is the first release of Shotgun on GitHub. The versions 0.1.0 to 0.3.0 have only local tags.
+
+- Tests: 171 unit tests passed. `scripts/test-update.mjs` passed all 9 checks 2 times. An installed package updated itself from a release server on the computer, and it refused an old package as a new version.
+- Package: `npm run package` makes `shotgun-0.4.0.vsix`, with 66 files and 305 KB, and its signature `shotgun-0.4.0.vsix.sig`. The signature is correct with the public key of the code.
+- A check of the package: a script installed the VSIX packages of DataFlow 0.7.0 and Shotgun 0.4.0 into a test build of VS Code 1.147.0. All 18 checks passed. The new check finds the updater with the key of the releases, its command and its setting.
+- Full test: the user works with the build of commit 8ee7a0e in a real project. Only the updater and the version changed after that build. The user selected the release of 0.4.0 on GitHub with no other full test.
+
 ## 9. Tests
 
 | Kind | Tests |

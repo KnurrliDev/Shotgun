@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.4.0
+
+Shotgun 0.4.0 needs DataFlow 0.6.2 or later. It is the first version that updates itself from the releases on GitHub. Install its VSIX one time by hand. Then Shotgun installs the later versions by itself.
 
 - GUI code gets lower levels (decision 40). DataFlow can take a function as GUI code, and then all its heat points count half, except the points of data that threads share. In GUI code, callers that the call graph cannot see do not give level 3 or higher. The plan page shows the reason of GUI code first. This needs a release of DataFlow with the GUI facts. With DataFlow 0.7.0 or earlier, the levels do not change.
 - `src/dataflow/dataflow-api.d.ts` has the GUI facts of the API of DataFlow.

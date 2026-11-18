@@ -30,7 +30,7 @@ Shotgun is not in the Visual Studio Marketplace. Shotgun needs DataFlow, and Dat
 4. In VS Code, open the Extensions view. Click **…** at the top of the view, then click **Install from VSIX…**, and select the file. You can also install the file with a command in a terminal:
 
    ```bat
-   code --install-extension shotgun-0.3.0.vsix
+   code --install-extension shotgun-0.4.0.vsix
    ```
 
 5. Click the icon of Shotgun in the activity bar. The sidebar of Shotgun opens.
