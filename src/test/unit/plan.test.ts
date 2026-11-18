@@ -10,7 +10,7 @@ import { checkPlan, decisionsOf, levelOf, levelReasons, parseLevels, parsePlan, 
 import { placeLevel } from '../../session/risk';
 import { SessionStore } from '../../session/store';
 import type { SurveyContext } from '../../session/survey';
-import { placeRisk } from '../../tools/plan';
+import { placeHeatOf, placeRisk } from '../../tools/plan';
 import { PromptLog } from '../../tools/prompts';
 import type { EngineApi } from '../../tools/survey';
 import { shotgunTools } from '../../tools/tools';
@@ -207,6 +207,28 @@ suite('Plan', () => {
 		assert.notStrictEqual(placeLevel(inc, 'ready').level, null);
 		assert.deepStrictEqual(await placeRisk(fakeEngine(calls), root, { file: 'CMakeLists.txt', lines: [5, 7] }), { kind: 'other' });
 		assert.strictEqual(calls.length, 2);
+	});
+
+	test('The heat of a place keeps the reason of GUI code, and shows it before the reasons with the most points', () => {
+		const heat: HeatFacts = {
+			file: 'src/view.cpp', isReachComplete: true, notices: [], functions: [{
+				name: 'View::paintEvent', lines: [3, 20], score: 33, band: 'warm', flames: 2, reach: 22, risk: 9, history: 2, isReachComplete: true,
+				gui: { kind: 'class', reason: 'View derives from QWidget' }, reasons: [],
+				signals: [
+					{ group: 'reach', points: 40, text: 'Runs in each frame: override of QWidget::paintEvent', id: 'framePath', value: { reason: 'override of QWidget::paintEvent', path: [], calls: 0, isInLoop: false } },
+					{ group: 'risk', points: 8, text: '7 decisions', id: 'decisions', value: 7 },
+					{ group: 'risk', points: 6, text: 'Data that threads share, with no protection: frame', id: 'sharedUnprotected', value: ['frame'] },
+					{ group: 'history', points: 4, text: 'Changed in 3 commits', id: 'commits', value: 3 },
+					{ group: 'reach', points: 0, text: 'GUI code: View derives from QWidget. All points count half, except the points of data that threads share', id: 'gui', value: { kind: 'class', class: 'View', base: 'QWidget' } },
+				],
+			}],
+		};
+		const place = placeHeatOf(heat);
+		assert.strictEqual(place?.gui, 'View derives from QWidget');
+		assert.deepStrictEqual(place?.signals?.map((s) => s.points), [0, 40, 8, 6]);
+		assert.match(place?.signals?.[0].text ?? '', /^GUI code: /);
+		// a function that is not GUI code has no field gui
+		assert.strictEqual('gui' in (placeHeatOf(heatFacts('src/solver.cpp')) ?? {}), false);
 	});
 
 	test('The open decisions: the checks, the level from the heat and the decisions, and the answers and the decisions of the user', async () => {

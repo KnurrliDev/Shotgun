@@ -37,7 +37,9 @@ export interface PlaceHeat {
 	readonly risk?: number;
 	readonly history?: number;
 	readonly isSiloed?: boolean;
-	readonly signals?: readonly { readonly points: number; readonly text: string }[]; // the reasons of the score, the most points first
+	readonly gui?: string; // GUI code: why DataFlow takes the function as GUI code. Its points count half (decision 40)
+	// the reasons of the score: the reason of GUI code first, then the most points first
+	readonly signals?: readonly { readonly points: number; readonly text: string }[];
 }
 
 // The facts of DataFlow for 1 place of a step. kind: new, a new file. other: a file that is not C or C++. function: lines
@@ -136,7 +138,13 @@ function functionLevel(place: PlaceRisk, scan: ScanState): RuleResult {
 			: `The scan of the call graph ${scan === 'failed' ? 'failed' : 'stopped'}, so the reach is not complete: level 3 or higher.`);
 	}
 	if (heat.reachUnknown) {
-		atLeast(3, 'The call graph cannot see all callers of the function: level 3 or higher.');
+		// the slots and the event overrides of GUI code have callers that the call graph cannot see, so the rule does not
+		// apply to GUI code (decision 40)
+		if (!heat.gui) {
+			atLeast(3, 'The call graph cannot see all callers of the function: level 3 or higher.');
+		} else if (level < 3) {
+			reasons.push(`${heat.function} is GUI code, so the callers that the call graph cannot see give no higher level.`);
+		}
 	}
 	if (place.framePath?.isPastLimit) {
 		atLeast(4, 'The line runs in each frame, on a frame path with more than 8 calls: level 4 or higher.');

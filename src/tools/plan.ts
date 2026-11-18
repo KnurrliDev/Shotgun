@@ -14,17 +14,21 @@ const messageOf = (error: unknown): string => (error instanceof Error ? error.me
 
 const NO_PLAN = 'The plan starts in stage 4, after the gate "Accept the order" of the user.';
 
-// The hottest function of a heat result, with the parts of its score and its 4 strongest reasons
+// The hottest function of a heat result, with the parts of its score and its 4 strongest reasons. The reason of GUI code
+// comes first, because it tells why the score is half of the points of the other reasons (decision 40)
 export function placeHeatOf(heat: HeatFacts): PlaceHeat | undefined {
 	const f = [...heat.functions].sort((a, b) => b.score - a.score)[0];
 	if (!f) {
 		return undefined;
 	}
-	const signals = [...(f.signals ?? [])].filter((s) => s.points > 0 || s.id === 'reachUnknown').sort((a, b) => b.points - a.points).slice(0, 4)
+	const isGui = (s: { id: string }): number => (s.id === 'gui' ? 1 : 0);
+	const signals = [...(f.signals ?? [])].filter((s) => s.points > 0 || s.id === 'reachUnknown' || s.id === 'gui')
+		.sort((a, b) => isGui(b) - isGui(a) || b.points - a.points).slice(0, 4)
 		.map((s) => ({ points: s.points, text: s.text }));
 	return {
 		function: f.name, score: f.score, band: f.band, isReachComplete: f.isReachComplete,
 		...(f.reachUnknown ? { reachUnknown: f.reachUnknown.text } : {}),
+		...(f.gui ? { gui: f.gui.reason } : {}),
 		flames: f.flames, reach: f.reach, risk: f.risk, history: f.history, ...(f.siloed ? { isSiloed: true } : {}), signals,
 	};
 }

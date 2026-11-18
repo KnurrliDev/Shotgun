@@ -44,7 +44,7 @@ These items are not in the scope of version 1:
 6. The survey, the order, the plan and the ledger are full pages of Shotgun. The brief and the build use a panel beside the text editor.
 7. Shotgun uses DataFlow as a dependency for facts.
 8. The risk level comes from the heat band of DataFlow: a new file 1, cool 2, warm 3, hot 4 and very hot 5. 3 more rules apply:
-   - Callers that the call graph cannot see (`reachUnknown`) give level 3 or higher.
+   - Callers that the call graph cannot see (`reachUnknown`) give level 3 or higher, but not in GUI code (decision 40).
    - A worker thread at the line gives 1 level more.
    - A new data member of a type on a frame path gives level 3.
 9. Only the user can change a risk level. Shotgun records each change.
@@ -79,8 +79,9 @@ These items are not in the scope of version 1:
 37. Each issue is a step of the user by default, as a step of level 4 in the build. The user can use Claude as in a step of the user. The user can ask a question, ask for a frame, or change the level. At the levels 1 and 2, Claude writes the fix as an errand. This changes the decisions 28 and 29.
 38. The design of stage 6 follows the research report `reports/Agentic code review design.md`. Each effort level has a verify pass. Plausible issues, pre-existing issues and the issues above the cap go into a second list, and the user can make each of them a step. The size of the diff sets the cap on the steps, not the effort. After 3 rounds of the review, the panel asks the user before the next round. This changes decision 37 for the issues in the second list.
 39. The review runs in a new session of Claude Code, which did not write the code of the task. The panel has a button that copies the prompt of the review, and a hint to paste it into a new session. The new session loads the skill `shotgun-review`, and starts the subagents that the effort needs. The subagents use the model of the session.
+40. GUI code gets a large heat penalty. DataFlow takes a function as GUI code if its class is a GUI class or derives from one, for example `QWidget`, `SWidget` or `wxWindow`. A function that mostly calls a GUI API such as ImGui is also GUI code. All heat points of GUI code count half, except the points of data that threads share. In GUI code, callers that the call graph cannot see do not give level 3 or higher, because slots and event overrides always have such callers. The session of DataFlow makes the part of DataFlow.
 
-The user gave decision 10 on 13 November 2026, and the decisions 11 to 23 on 14 November 2026. The user gave the decisions 24 to 26 on 15 November 2026, and the decisions 27 to 34 on 16 November 2026. The user gave the decisions 35 to 39 on 17 November 2026. Decision 38 applies the research report, which has 82 sources. The decisions 31 to 33 come from 13 frames of the runs of `scripts/test-claude.mjs`. Each of their 27 holes was 1 obvious line, and the text of the step gave most of the answers. Decision 10 changes the buttons of the canvas that started Claude. Section 12 lists these changes.
+The user gave decision 10 on 13 November 2026, and the decisions 11 to 23 on 14 November 2026. The user gave the decisions 24 to 26 on 15 November 2026, and the decisions 27 to 34 on 16 November 2026. The user gave the decisions 35 to 39 on 17 November 2026, and decision 40 on 18 November 2026. Decision 38 applies the research report, which has 82 sources. The decisions 31 to 33 come from 13 frames of the runs of `scripts/test-claude.mjs`. Each of their 27 holes was 1 obvious line, and the text of the step gave most of the answers. Decision 10 changes the buttons of the canvas that started Claude. Section 12 lists these changes.
 
 ## 3. Proposals of this plan
 

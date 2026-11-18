@@ -19,6 +19,9 @@ suite('Risk rules', () => {
 			['a very hot function', inFn(fn('very hot')), 'ready', 5],
 			['callers that the call graph cannot see, cool', inFn(fn('cool', { reachUnknown: 'Qt calls the slot' })), 'ready', 3],
 			['callers that the call graph cannot see, hot', inFn(fn('hot', { reachUnknown: 'Qt calls the slot' })), 'ready', 4],
+			['callers that the call graph cannot see, cool GUI code', inFn(fn('cool', { reachUnknown: 'Qt calls the slot', gui: 'View derives from QWidget' })), 'ready', 2],
+			['callers that the call graph cannot see, warm GUI code', inFn(fn('warm', { reachUnknown: 'Qt calls the slot', gui: 'View derives from QWidget' })), 'ready', 3],
+			['GUI code with a worker thread', inFn(fn('cool', { gui: 'View derives from QWidget' }), { workerThreads: ['w'] }), 'ready', 3],
 			['an incomplete reach while the scan runs', inFn(fn('cool', { isReachComplete: false })), 'scanning', null],
 			['an incomplete reach with no scan', inFn(fn('hot', { isReachComplete: false })), 'none', null],
 			['an incomplete reach after a stopped scan', inFn(fn('cool', { isReachComplete: false })), 'stopped', 3],
@@ -85,6 +88,13 @@ suite('Risk rules', () => {
 		]);
 		assert.deepStrictEqual(placeLevel({ kind: 'other' }, 'ready').reasons,
 			['The file is not a C or C++ file. DataFlow has no facts for it: level 2, no facts.']);
+		assert.deepStrictEqual(placeLevel(inFn(fn('cool', { function: 'View::onClick', reachUnknown: 'x', gui: 'View derives from QWidget' })), 'ready').reasons, [
+			'A change of a cool function, View::onClick: level 2.',
+			'View::onClick is GUI code, so the callers that the call graph cannot see give no higher level.',
+		]);
+		// a warm level is already 3, so the rule of the callers adds no reason
+		assert.deepStrictEqual(placeLevel(inFn(fn('warm', { function: 'View::paint', reachUnknown: 'x', gui: 'y' })), 'ready').reasons,
+			['A change of a warm function, View::paint: level 3.']);
 	});
 
 	test('The level of a step is the highest level of its places, and a place with no level stops it', () => {

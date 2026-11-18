@@ -173,11 +173,13 @@ Shotgun gives each step a risk level from the facts of DataFlow. The level of a 
 
 More rules make a level only higher:
 
-- Callers that the call graph cannot see: level 3 or higher.
+- Callers that the call graph cannot see: level 3 or higher. This rule does not apply to GUI code, because slots and event overrides always have such callers.
 - A frame path with more than 8 calls, or a line in the main loop: level 4 or higher.
 - A worker thread at the line: 1 level more. A lock at the line: 1 level more. The maximum is 5.
 - A data member of a type: level 2, or level 3 if threads share a member or a member is on a frame path. A change of a data member gets the level of the hottest function that uses it. A new data member next to the other members changes no member, so the hottest function does not apply.
 - Before the end of the scan of the call graph, a function with an incomplete reach has no level. After a stopped scan or a failed scan, the level is 3 or higher.
+
+GUI code gets less heat. DataFlow takes a function as GUI code if its class derives from a GUI class, for example `QWidget`, or if it mostly calls a GUI API such as ImGui. All heat points of GUI code count half, except the points of data that threads share. The plan page shows this reason first. DataFlow 0.7.0 and earlier do not give this fact, so their levels do not change.
 
 The open decisions of the step change the level of the rules too. A step with no open decision gets at most level 2, but level 5 stays. The next section tells more.
 
