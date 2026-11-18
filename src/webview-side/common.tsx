@@ -247,11 +247,12 @@ function BriefStage({ brief, request }: { brief: BriefView; request?: string }) 
 }
 
 // The gate of the stage: a decision of the user. The button records it, and it never starts Claude
-export function GateBlock({ gate }: { gate: GateView }) {
+// message: gate for the gate of the stage, stepGate for the gate of the current step in stage 6
+export function GateBlock({ gate, message = 'gate' }: { gate: GateView; message?: 'gate' | 'stepGate' }) {
 	return (
 		<div class="gate">
 			{gate.warning && <p class="notice">{gate.warning}</p>}
-			<button type="button" class="btn primary" disabled={!gate.isEnabled} onClick={() => post({ type: 'gate' })}>{gate.label}</button>
+			<button type="button" class="btn primary" disabled={!gate.isEnabled} onClick={() => post({ type: message })}>{gate.label}</button>
 			<p class="muted small">{gate.isEnabled ? gate.note : gate.reason}</p>
 			{gate.after && (
 				<>

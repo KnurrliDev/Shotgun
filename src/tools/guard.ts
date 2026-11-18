@@ -20,7 +20,8 @@ export interface GuardState {
 	readonly task: { readonly title: string; readonly stage: Stage; readonly isDone: boolean } | undefined; // the active task
 	readonly isPaused: boolean;
 	readonly isCaseSensitive: boolean; // false on Windows
-	// stage 5: the scope of the open step of Claude, and the reason of a deny with no open step of Claude
+	// stage 5, and stage 6 for the step of an issue: the scope of the open step of Claude. closed: the reason of a deny
+	// with no open step of Claude
 	readonly build?: {
 		readonly scope?: { readonly files: readonly string[]; readonly names: readonly string[] }; // absolute paths, and the names for Claude
 		readonly step: string; // for example step 5 of 8, "Read the limit"
@@ -73,14 +74,7 @@ export function decide(input: GuardInput, state: GuardState): GuardDecision {
 	if (task.isDone) {
 		return { decision: 'none', why: 'done' };
 	}
-	if (task.stage === 'review') {
-		return {
-			decision: 'deny',
-			reason: `Shotgun: the task "${task.title}" is in ${stageText(task.stage)}. ${STAGE_INFO.review.guard} Give the issues to Shotgun with `
-				+ 'shotgun_submit_review. The user decides each issue. For work outside of the task, the user selects "Shotgun: Pause".',
-		};
-	}
-	if (task.stage !== 'build') {
+	if (task.stage !== 'build' && task.stage !== 'review') {
 		return {
 			decision: 'deny',
 			reason: `Shotgun: the task "${task.title}" is in ${stageText(task.stage)}. Claude changes no file before stage 5, the build. `
@@ -98,6 +92,15 @@ export function decide(input: GuardInput, state: GuardState): GuardDecision {
 			decision: 'deny',
 			reason: `Shotgun: ${build.step} is open, and its scope is ${scope.names.join(', ')}. The file ${input.file} is not in the scope. `
 				+ 'Change only the files of the scope. Give each other place that the step needs as a loose end to shotgun_submit_errand.',
+		};
+	}
+	// stage 6: the review changes no file. Only an open step of Claude for an issue opens its scope
+	if (task.stage === 'review') {
+		return {
+			decision: 'deny',
+			reason: `Shotgun: the task "${task.title}" is in ${stageText(task.stage)}. `
+				+ `${build ? build.closed : `${STAGE_INFO.review.guard} Give the issues to Shotgun with shotgun_submit_review. The user decides each issue.`} `
+				+ 'For work outside of the task, the user selects "Shotgun: Pause".',
 		};
 	}
 	return {

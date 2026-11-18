@@ -373,6 +373,7 @@ progress.walk-track::-webkit-progress-value { border-radius: 2px; background: va
 .issue { padding: 8px 0; }
 .issue + .issue { border-top: 1px solid color-mix(in srgb, var(--sg-border) 50%, transparent); }
 .issue.s-closed, .issue.s-fixed { opacity: 0.7; }
+.issue.current { padding-left: 8px; border-left: 3px solid var(--vscode-focusBorder, var(--sg-border)); background: var(--vscode-list-inactiveSelectionBackground, transparent); }
 .issue .row-head { margin-top: 0; }
 .issue p { margin: 3px 0; overflow-wrap: anywhere; }
 .scenario { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 10px; margin: 6px 0; }

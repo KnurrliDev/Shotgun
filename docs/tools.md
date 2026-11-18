@@ -87,13 +87,13 @@ The tools change no line of your code. They write only the files in the folder `
 | [`submit_task_survey`](#submit_task_survey) | 3 | Write | The survey of 1 changed task |
 | [`get_plan`](#get_plan) | 4 and later | Read | The steps, their open decisions and their risk levels |
 | [`submit_plan`](#submit_plan) | 4 | Write | The plan |
-| [`get_step`](#get_step) | 5 | Read | A step, its decisions, its scope, and its receipt with your marks |
-| [`start_step`](#start_step) | 5 | Write | Opens a step for an errand or a frame |
-| [`submit_errand`](#submit_errand) | 5 | Write | Closes the step with the receipt |
-| [`submit_frame`](#submit_frame) | 5 | Write | Closes the step with the holes of the frame |
-| [`get_callouts`](#get_callouts) | 5 | Read | The callouts of the current step, and the answers on lines |
-| [`submit_explanation`](#submit_explanation) | 5 | Write | The words of Claude for a callout |
-| [`submit_line_answer`](#submit_line_answer) | 5 | Write | The answer to your question about a line |
+| [`get_step`](#get_step) | 5 and 6 | Read | A step, its decisions, its scope, and its receipt with your marks |
+| [`start_step`](#start_step) | 5 and 6 | Write | Opens a step for an errand or a frame |
+| [`submit_errand`](#submit_errand) | 5 and 6 | Write | Closes the step with the receipt |
+| [`submit_frame`](#submit_frame) | 5 and 6 | Write | Closes the step with the holes of the frame |
+| [`get_callouts`](#get_callouts) | 5 and 6 | Read | The callouts of the current step, and the answers on lines |
+| [`submit_explanation`](#submit_explanation) | 5 and 6 | Write | The words of Claude for a callout |
+| [`submit_line_answer`](#submit_line_answer) | 5 and 6 | Write | The answer to your question about a line |
 | [`get_review`](#get_review) | 6 | Read | The review data: the effort, the focus, the base commit, the changed files and the earlier issues |
 | [`submit_review`](#submit_review) | 6 | Write | The issues of the review |
 | [`get_commit_message`](#get_commit_message) | 5 and later | Read | Your commit message, the changed files and the data of the ledger |
@@ -180,7 +180,7 @@ A step has 1 to 8 places. A place has `file`. For a file that is there, it also 
 
 ### get_step
 
-Gives a step of the build, in stage 5. It gives the text, the places, the checks, the decisions, the level, the writer, the state and the scope of the step. It also gives the receipt of the step with your marks and notes: the issues and the questions.
+Gives a step of the build, in stage 5, or the step of an issue of the review in stage 6. The id of the step of an issue is the id of the issue, for example I3. It gives the text, the places, the checks, the decisions, the level, the writer, the state and the scope of the step. It also gives the receipt of the step with your marks and notes: the issues and the questions.
 
 | Parameter | Type | Function |
 | --- | --- | --- |
@@ -188,7 +188,7 @@ Gives a step of the build, in stage 5. It gives the text, the places, the checks
 
 ### start_step
 
-Opens the current step of the build for an errand or a frame, in stage 5, before Claude changes a file. Shotgun saves the open text editors of the files of the scope, and DataFlow keeps their text as the base of the step. Then the guard lets Claude change these files. Claude calls this tool again after a receipt to fix your issues, or for a different frame. The step keeps its base.
+Opens the current step for an errand or a frame, before Claude changes a file. This is in stage 5, or for the step of an issue in stage 6. Shotgun saves the open text editors of the files of the scope, and DataFlow keeps their text as the base of the step. Then the guard lets Claude change these files. Claude calls this tool again after a receipt to fix your issues, or for a different frame. The step keeps its base.
 
 | Parameter | Type | Function |
 | --- | --- | --- |
@@ -256,11 +256,13 @@ Gives the answer of Claude to your question about a line, in stage 5. Shotgun ad
 
 Gives the review data of stage 6. Claude calls it in the new session of the review. It gives your effort and your focus, the base commit of the task, and the changed files with their hunks, heat and writers. It also gives the ripple, the brief, the steps of the plan, the closed callouts, and the earlier issues with your reasons. For the text of the diff, Claude calls `get_diff` of DataFlow with the base commit.
 
+In a new round after your fixes, each hunk that changed since the last round has `"isChangedSinceLastRound": true`. `fixedIssues` gives the issues that you fixed after the last round, and `roundNote` tells Claude to check each fix. The cap on the steps also uses your feedback from the earlier reviews of the folder.
+
 This tool has no parameters.
 
 ### submit_review
 
-Gives the issues of the review after the verify pass. Shotgun checks each issue, and puts it into the list of steps or into the second list. A new review of the same round replaces the open issues of the round. Claude changes no file.
+Gives the issues of the review after the verify pass. Shotgun checks each issue, and puts it into the list of steps or into the second list. A new review of the same round replaces the open issues of the round, but it keeps an issue with a step that you started. A fixed issue that the review gives again with `repeats` is a step again. Claude changes no file.
 
 | Parameter | Type | Function |
 | --- | --- | --- |
@@ -278,13 +280,13 @@ Each issue has these fields:
 | `severity` | string | `important` or `minor`. |
 | `origin` | string | `new`: the task added the problem. `pre-existing`: it was in the code before the task. |
 | `verdict` | string | `confirmed` or `plausible`, from the verify pass. |
-| `source` | string | `engine`: the candidate came from a fact of DataFlow. `model`: from Claude alone. |
+| `source` | string | `engine`: a fact of DataFlow gives the defect, for example a race or a check of `get_threads`. `model`: Claude found the defect, also with the help of facts of DataFlow. |
 | `place` | object | The `file`, the `lines` and the `code`. The place must be in the diff of the task or in its ripple. |
 | `fixPlaces` | array | Optional. Up to 4 more places of the fix, for example the other places of the same class of bug. |
 | `decisions` | array | Optional. 0 to 3 open decisions of the fix, each with a `question` and optional `options`. |
-| `tools` | array | 1 to 6 read tools of DataFlow that show the issue. Shotgun refuses a tool that nobody called in this stage. |
+| `tools` | array | 1 to 6 read tools of DataFlow that show the issue. Shotgun refuses a tool that nobody called in this stage. A race needs `get_threads`. |
 | `repeats` | string | Optional. The id of the earlier issue that this issue repeats, for example `I3`. The issue keeps its id and its state. |
-| `evidence` | string | Necessary for an earlier issue that you closed: the new evidence. Such an issue needs the verdict `plausible`. |
+| `evidence` | string | Necessary for an earlier issue that you closed, and for an issue at the line of a callout that you closed: the new evidence. Such an issue needs the verdict `plausible`. |
 
 ### get_commit_message
 

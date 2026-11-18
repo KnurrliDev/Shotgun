@@ -26,6 +26,7 @@ export interface BriefPart {
 	readonly hasText: boolean;
 	readonly items: number; // the lines with a list mark
 	readonly sentences: number; // the sentences in the other lines
+	readonly lines: readonly string[]; // the lines of the text of the part, with no comment and no empty line
 }
 
 export interface Brief {
@@ -89,7 +90,7 @@ export function parseBrief(text: string): Brief {
 		const items = body.filter((l) => LIST_MARK.test(l)).length;
 		const prose = body.filter((l) => !LIST_MARK.test(l)).join(' ');
 		const sentences = prose ? Math.max(1, (prose.match(/[.!?](\s|$)/g) ?? []).length) : 0;
-		return { id: p.id, name: p.name, line: part?.line, hasText: body.length > 0, items, sentences };
+		return { id: p.id, name: p.name, line: part?.line, hasText: body.length > 0, items, sentences, lines: body };
 	});
 	return { title, parts, isComplete: parts.every((p) => p.hasText) };
 }

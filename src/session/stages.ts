@@ -61,7 +61,7 @@ export const STAGE_INFO: Readonly<Record<Stage, StageInfo>> = {
 	review: {
 		number: 6, name: 'Review', writer: 'both',
 		text: 'Claude reviews the whole diff of the task with your effort and your focus. You work through the issues.',
-		guard: 'Claude changes no file in the review.',
+		guard: 'Claude changes no file in the review. Claude changes files only in an open step of Claude for an issue.',
 		next: 'The user selects the effort and the focus, and asks Claude for the review. Then the user works through the issues, and selects '
 			+ '"The task is done".',
 		request: 'Review my task.',

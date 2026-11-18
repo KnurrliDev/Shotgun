@@ -49,9 +49,10 @@ This document tells how to do a task with Shotgun and Claude Code. [Install Shot
 24. At the gate of each step, Shotgun gets the loose ends of the step from DataFlow. Hand a mechanical loose end to Claude, and tell Claude "Do the loose ends.".
 25. After the last step, select **The build is done**. The task goes to stage 6, the review.
 26. In the panel, select the effort and the focus of the review. Select **Copy the review prompt**, start a new session of Claude Code, and paste the prompt.
-27. Work through the issues of the review. Close an issue that is not a problem with **Not a problem** and your reason.
-28. Select **The task is done**.
-29. Write the commit message in Source Control. Tell Claude "Check my commit message.". Then commit in Source Control.
+27. Work through the steps of the issues, as through the steps of the build. Close an issue that is not a problem with **Not a problem** and your reason.
+28. After your fixes, copy the prompt of the next round into a new session. The next round checks the fixes.
+29. Select **The task is done**.
+30. Write the commit message in Source Control. Tell Claude "Check my commit message.". Then commit in Source Control.
 
 At any time, click an earlier stage in the stage bar of the panel or of the page to return the task to that stage. You can also run **Shotgun: Return to a Stage...**.
 
@@ -280,7 +281,7 @@ The tab **Loose ends** of the panel shows them. **Hand to Claude** makes a mecha
 
 ## The ledger and the commit message
 
-The ledger page shows your decisions and the lines of each file. It shows your lines, the lines of Claude that you walked, and the lines of Claude that you did not walk. A click on a file shows the file in the side view of DataFlow. **Walk** highlights the first lines of Claude that you did not walk in DataFlow. **Copy for the pull request** puts your decisions and the lines of each writer into the clipboard as Markdown.
+The ledger page shows your decisions and the lines of each file. It shows your lines, the lines of Claude that you walked, and the lines of Claude that you did not walk. A click on a file shows the file in the side view of DataFlow. **Walk** highlights the first lines of Claude that you did not walk in DataFlow. **Copy for the pull request** puts your decisions, the lines of each writer and the issues of the review into the clipboard as Markdown. Each issue has its state and your reason.
 
 You write the commit message in the input box of Source Control. The tab **Ledger** of the panel shows the same text. Tell Claude "Check my commit message.". Claude compares the message with the diff. It gives its points with the badge **Model**: what agrees, what is missing, what is wrong, and its questions. If you change the message after the check, the panel tells you that the check is old.
 
@@ -294,8 +295,9 @@ In stage 6, a new session of Claude Code reviews the whole diff of the task. A n
 2. In the panel, select the effort and the focus of the review. You can also write a point of yours, for example "Look at the error paths.".
 3. Select **Copy the review prompt**. Start a new session of Claude Code in the folder of the project, and paste the prompt.
 4. Claude loads the skill `shotgun-review`. Its subagents find the candidates, and a verify pass checks each candidate. Then Claude gives the issues to Shotgun. Claude changes no file.
-5. Work through the issues in the panel or on the page.
-6. Select **The task is done**.
+5. Work through the steps of the issues. The panel shows the current step with its gate.
+6. After your fixes, select **Copy the prompt of round 2**, and paste it into a new session. The next round checks the fixes.
+7. Select **The task is done**.
 
 The effort sets the finders, the context and the verify pass. It does not set the number of issues.
 
@@ -309,6 +311,8 @@ The effort sets the finders, the context and the verify pass. It does not set th
 
 Above high, a review finds few more issues, but it uses much more time and many more tokens.
 
+A measurement of Shotgun tested the efforts low, medium and high on 12 small changes of 1 to 4 hunks. Of these changes, 8 had 1 known bug each. Each effort found each of these bugs. A review at low took about 1 minute. A review at medium or high took about 2 minutes, and the CLI gave about 3.5 times the cost of low. Thus for a small change, low can be enough. The measurement did not compare the efforts on large changes.
+
 The focus has these areas. The default focus is all areas except cleanups.
 
 | Area | The review looks for |
@@ -320,16 +324,35 @@ The focus has these areas. The default focus is all areas except cleanups.
 | Tests | A condition of done of the brief with no test |
 | Cleanups | Code that works, but repeats code or does more work than necessary |
 
-Each issue has a place, a severity, a verdict, an origin and a failure scenario. The severity is important or minor, and the verdict is confirmed or plausible. The origin is new or pre-existing. The failure scenario gives the trigger, the path and the wrong result. A race also gives the interleave of the 2 threads. The badge **Engine** marks an issue from a fact of DataFlow, and **Model** marks an issue of Claude alone. A click on an issue shows its place in the side view of DataFlow.
+Each issue has a place, a severity, a verdict, an origin and a failure scenario. The severity is important or minor, and the verdict is confirmed or plausible. The origin is new or pre-existing. The failure scenario gives the trigger, the path and the wrong result. A race also gives the interleave of the 2 threads. The badge **Engine** marks an issue that a fact of DataFlow gives, for example a race of DataFlow. **Model** marks an issue that Claude found, also with the help of facts of DataFlow. A click on an issue shows its place in the side view of DataFlow.
 
 Shotgun puts each issue into 1 of 2 lists:
 
 - The list of steps has the confirmed new issues, the important issues first. It has a cap of 3 issues, plus 1 for each 100 changed lines of the task, with a maximum of 10.
 - The second list has the plausible issues, the issues that were in the code before the task, and the issues above the cap.
 
-**Not a problem** closes an issue with your reason. The ledger keeps the reason, and the next review gets it. Claude names a closed issue again only with new evidence, and then the issue goes into the second list. **Open again** opens a closed issue. A new review replaces the open issues of the last review, and keeps the issues that you closed.
+**Not a problem** closes an issue with your reason. The ledger keeps the reason, and the next review gets it. Claude names a closed issue or the problem of a closed callout again only with new evidence, and then the issue goes into the second list. **Open again** opens a closed issue. A new review of the same round replaces the open issues of the last review. It keeps the issues that you closed and the steps that you started.
 
-In this version, you fix an issue yourself in the text editor, because the guard stops each change of Claude in stage 6. For a fix of Claude, return the task to stage 5.
+### The steps of the issues
+
+Each issue of the list of steps is a step of yours at level 4. The id of the step is the id of the issue, for example I3. The steps of the issues go in sequence, as the steps of the build, and the panel shows the current step with its own gate:
+
+- Write the fix of the issue. Then select **The step is done**. Shotgun records your lines, and gives callouts and loose ends, as in the build. The gate fixes the issue.
+- You can ask Claude about the issue in the chat. At level 4, select **I want a frame**, and tell Claude "Give me a frame for step I3.". The frame has a hole for each open decision of the fix.
+- To let Claude fix the issue, select **Lower** on the page until level 2. Then tell Claude "Do step I3.", and walk the receipt.
+- On the page, answer an open decision of the fix in words, or add a decision of yours, as on the plan page.
+- **Make it a step** adds an issue of the second list at the end of the list of steps. **Back to the second list** removes it again, before Claude starts it.
+- **Not a problem** for a started step removes the step. Its changes stay in the files.
+
+### Rounds
+
+After you fix an issue, the next review is a new round. The panel then shows **Copy the prompt of round 2**. The prompt tells Claude to review the fixes: the hunks that changed since the last round, with their ripple, and each fixed issue. If a fix is not correct, Claude gives its issue again, and the issue is a step again. A correct fix gets no issue.
+
+After 3 rounds, the panel tells you to think about the approach of the task again, for example with a different plan. A modal message asks before it copies the prompt of round 4.
+
+### Your feedback
+
+Each issue that you fix or close is feedback for the review. For each area of the focus, the page shows the issues of the list of steps that you closed with no action. It counts all tasks of the folder. After 10 decided issues, an area with more than 10% with no action gets the button **Turn off**. It removes the area from the focus of the next review. Your feedback also moves the cap on the steps to the last rank before the issues with no action pass 10%.
 
 The gate **The task is done** never waits. With open issues in the list of steps, a modal message asks first, and the ledger keeps them as open.
 
@@ -345,7 +368,7 @@ You can return the active task to an earlier stage at any time, also a done task
 
 ## The guard
 
-Before each file change of Claude Code, the plugin of Shotgun asks the guard. In the stages 1 to 4 and in stage 6, the guard denies each change of a file of the project. Claude gets the reason. In stage 5, the guard lets Claude change only the files of the scope of its open step. The ledger records each deny.
+Before each file change of Claude Code, the plugin of Shotgun asks the guard. In the stages 1 to 4 and in stage 6, the guard denies each change of a file of the project. Claude gets the reason. In stage 5, the guard lets Claude change only the files of the scope of its open step. The same rule applies to the step of an issue in stage 6. The ledger records each deny.
 
 **Pause** stops the guard for work outside of the task, and **Continue** starts it again. The ledger records the pause.
 

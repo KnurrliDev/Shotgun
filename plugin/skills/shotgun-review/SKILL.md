@@ -34,9 +34,9 @@ Load the tools with 1 call of `ToolSearch`, with `select:` and the full names. E
 
 1. Call `shotgun_get_session`. Make sure that the stage is 6. If the stage is 5, stop, and tell the user to select "The build is done" in the panel of Shotgun.
 2. Call `shotgun_get_review`. Its effort and its focus are the choice of the user. Use them, also if the prompt gives a different effort or focus.
-3. Plan the finders from the effort. The table in the section "The effort" gives them.
+3. Plan the finders from the effort. The table in the section "The effort" gives them. From round 2, also obey the section "A later round".
 4. Start the finders as subagents with the tool Agent, all in 1 message, so that they run in parallel. Give each finder the prompt in the section "The prompt of a finder".
-5. Collect the candidates of all finders. 2 candidates at the same place with the same defect are 1 candidate. Do not vote: a candidate of only 1 finder stays.
+5. Collect the candidates of all finders. 2 candidates at the same place with the same defect are 1 candidate. 2 candidates with the same cause are also 1 candidate, if 1 fix removes the 2 failure scenarios. Give the place of the cause, and put the second result into the summary. Do not vote: a candidate of only 1 finder stays.
 6. Check each candidate. At the effort low, give each candidate a short verdict yourself. From the effort medium, start 1 verifier subagent for each candidate, all in 1 message. Give each verifier the prompt in the section "The prompt of a verifier".
 7. Remove each rejected candidate. Keep each confirmed candidate. Keep a plausible candidate with the verdict `plausible`, except at the effort low.
 8. Put the issues in sequence: the important issues first, then the minor issues.
@@ -73,10 +73,11 @@ The generalist finder looks at all areas of the focus, with less depth.
 
 - Read first the lines of the user in the steps of the levels 3 to 5. Nobody read them a second time, and these steps have the most risk. `shotgun_get_review` gives the writer, the step and the level of each run of lines. Then read the lines of Claude with `"walked": false`. Then read the other changes.
 - The finders of races and lifetime start from the facts of DataFlow. Call `get_threads` for each changed C or C++ file. Take each shared access in a changed function or in its ripple. Judge if 2 threads can reach it at the same time with no lock. Do not search the code for races with no fact of DataFlow.
+- DataFlow gives 1 run of each worker thread. A change can start a second run before the first run ends, for example after it drops the handle with no join. Then also judge the accesses of the 2 runs against each other.
 - Give each finder a small slice: the hunk, its ripple and its facts. The finder calls the read tools of DataFlow for more. Do not paste search results or a list of all facts into a prompt.
 - Report only a problem with a failure scenario: the trigger, the path through the changed code, and the wrong result. For a race, the scenario also gives the 2 accesses and 1 interleave of the 2 threads.
 - Do not report style, the format of the code, names, linter issues, or a general request for tests.
-- Do not report a callout that the user closed, or an issue that the user closed, again. `shotgun_get_review` gives them with the reasons of the user. Report such a problem only with new evidence.
+- Do not report a callout that the user closed, or an issue that the user closed, again. `shotgun_get_review` gives them with the reasons of the user. Report such a problem only with new `evidence` and the verdict `plausible`. Shotgun refuses an issue at the line of a closed callout without them.
 - A place is on a changed line or in the ripple. Copy a short text of the code in the lines exactly.
 
 ## The prompt of a finder
@@ -129,6 +130,35 @@ The candidate: <the candidate of the finder, with its place, its scenario and it
 5. Give a file and a line, and a fact of DataFlow, for each claim of your reason.
 ```
 
+## A later round
+
+After the user fixes issues, the next review is a new round, and it checks the fixes. `shotgun_get_review` then gives `roundNote` and `fixedIssues`.
+
+- Give the finders only the hunks with `"isChangedSinceLastRound": true`, and their ripple. The other hunks had a review in an earlier round.
+- Check each issue of `fixedIssues` in a verifier subagent, all in 1 message with the verifiers of the candidates. Give the verifier the prompt in the section "The prompt of a fix check".
+- If a fix is not correct, give its issue again with `repeats` and a summary of the problem that stays. Give no issue for a correct fix.
+- Give each issue that is the same problem as an earlier issue with `repeats`, also if your title is different.
+
+## The prompt of a fix check
+
+Give each verifier of a fix this prompt, with 1 fixed issue.
+
+```text
+You check 1 fix in the code review of a Shotgun task. You did not write the code. Change no file, and run no shell command
+that changes a file.
+
+Base commit: <the base commit>
+The issue: <the id, the title, the summary, the place, the fix places and the failure scenario>
+
+1. Load the read tools of DataFlow with ToolSearch.
+2. Read the code at the place and at the fix places now, and the facts of DataFlow for them.
+3. Give your verdict:
+   - fixed: the failure scenario cannot occur now.
+   - not fixed: the failure scenario can still occur. Give its trigger, its path and its result now.
+4. Give the verdict first, then the reason in 1 to 3 sentences, with a file and a line, and a fact of DataFlow, for each
+   claim.
+```
+
 ## The issues
 
 Each issue for `shotgun_submit_review` has these fields:
@@ -140,16 +170,16 @@ Each issue for `shotgun_submit_review` has these fields:
 - `severity`: `important` for a wrong result, a crash, a race, a leak or a gap in the brief. Else `minor`.
 - `origin`: `new` if the task added the problem. `pre-existing` if the problem was in the code before the task, for example in a file with `"notCommittedBefore": true`.
 - `verdict`: `confirmed` or `plausible`, from the verify pass.
-- `source`: `engine` if the candidate came from a fact of DataFlow, else `model`.
+- `source`: `engine` if a fact of DataFlow gives the defect, for example a race or a check of `get_threads` for the 2 accesses. Else `model`, also if facts of DataFlow helped you. A race of 2 runs of 1 worker has the source `model`.
 - `place`: the file, the lines and a short text of the code.
 - `fixPlaces`: up to 4 more places of the same class of bug. Report the class 1 time, not each line.
 - `decisions`: 0 to 3 open decisions of the fix, as questions. Give no choice of yours.
-- `tools`: the read tools of DataFlow that show the issue. A subagent of this session called them, so Shotgun accepts them.
+- `tools`: the read tools of DataFlow that show the issue. A subagent of this session called them, so Shotgun accepts them. A race needs `get_threads`.
 - `repeats`: the id of an earlier issue, if the issue is the same problem. Shotgun keeps its id and its state.
-- `evidence`: the new evidence for an earlier issue that the user closed. Give such an issue only with the verdict `plausible`.
+- `evidence`: the new evidence for an earlier issue or a callout that the user closed. Give such an issue only with the verdict `plausible`.
 
 Give a review with no issue as an empty list. A short `note` can tell the user the parts that the review did not read.
 
 ## After the review
 
-The panel of Shotgun shows the list of steps and the second list. The user works through the issues, and closes an issue that is not a problem with a reason. The next review gets the reasons. The user selects "The task is done". Then the user writes the commit message, and can ask for a check of it.
+The panel of Shotgun shows the list of steps and the second list. Each issue of the list of steps is a step of the user. The user works through the steps, and closes an issue that is not a problem with a reason. The next review gets the reasons, and checks the fixes. The user selects "The task is done". Then the user writes the commit message, and can ask for a check of it.

@@ -11,7 +11,7 @@ import { HookDecorations } from './editor/hooks';
 import { ClaudeLines } from './editor/lines';
 import { StepDecorations } from './editor/steps';
 import { commitMessage, headOf } from './git/message';
-import { addedLines, buildNext, ChangeMark, CurrentStep, markName, receiptCounts, scopeOf, stateOf } from './session/build';
+import { addedLines, buildNext, ChangeMark, CurrentStep, markName, receiptCounts, refOf, scopeOf, stateOf } from './session/build';
 import {
 	CALLOUTS_FILE, DEFAULT_PAUSE_SECONDS, DEFAULT_VOICE, factKeys, isVoice, keepUserState, LENS_OF, revealCallouts, updateCallouts, Voice, VOICE_TEXT, VOICES,
 } from './session/callouts';
@@ -21,11 +21,11 @@ import { LINES_FILE, LineStore } from './session/lines';
 import { claudeEnds, LooseFind } from './session/loose';
 import { orderWarnings } from './session/order';
 import { absolutePath, IS_CASE_SENSITIVE, isCppFile, isInside, projectPath } from './session/paths';
-import { levelOf, openDecisions, PlanPlace, writerOf } from './session/plan';
+import { levelOf, openDecisions, PlanPlace, PlanStep, writerOf } from './session/plan';
 import { Level, LEVEL_INFO, LEVELS } from './session/risk';
-import { Area, DEFAULT_OPTIONS, Effort, MAX_ISSUE_REASON, reviewPrompt } from './session/review';
+import { Area, DEFAULT_OPTIONS, Effort, issueSteps, MAX_ISSUE_REASON, MAX_ROUNDS, reviewPrompt, roundOf } from './session/review';
 import { GATE_LABEL, isStage, returnStages, STAGE_INFO, stageText } from './session/stages';
-import { messageOf, SessionStore, Snapshot } from './session/store';
+import { isStepStage, messageOf, SessionStore, Snapshot, workPlan } from './session/store';
 import { findHook, MAX_ANSWER, movedHook } from './session/survey';
 import { BaseApi, markScope } from './tools/build';
 import { ToolCallLog } from './tools/calls';
@@ -78,6 +78,8 @@ const MAX_NOTE = 300;
 // The button of the modal message before a return to an earlier stage (decision 24)
 const RETURN = 'Return';
 const ACCEPT_RECEIPT = 'Accept the Receipt';
+// The button of the modal message before a review after 3 rounds (P23)
+const COPY_PROMPT = 'Copy the Prompt';
 const FILL_HOLE = 'Fill the Hole';
 
 // The folders that the watcher of the files outside of the scope ignores: the folders of tools and of builds
@@ -398,7 +400,19 @@ class Shotgun implements vscode.Disposable {
 		if (!task || task.isDone || task.stage !== 'review') {
 			throw new Error('The review prompt is only for a task in stage 6, the review.');
 		}
-		await vscode.env.clipboard.writeText(reviewPrompt(task.title, review?.options ?? DEFAULT_OPTIONS));
+		// after 3 rounds, the user thinks about the approach again first (P23)
+		const round = roundOf(review);
+		if (round > MAX_ROUNDS) {
+			const pick = await vscode.window.showWarningMessage(`The next review is round ${round}. Do you want to copy its prompt?`, {
+				modal: true,
+				detail: `After ${MAX_ROUNDS} rounds, the issues did not end. Think about the approach of the task again, for example with a different plan. `
+					+ 'To change the plan, return the task to stage 4.',
+			}, COPY_PROMPT);
+			if (pick !== COPY_PROMPT) {
+				return;
+			}
+		}
+		await vscode.env.clipboard.writeText(reviewPrompt(task.title, review?.options ?? DEFAULT_OPTIONS, round));
 		void vscode.window.showInformationMessage('Shotgun: the review prompt is in the clipboard. Start a new session of Claude Code in the folder of the '
 			+ 'project, and paste the prompt. A new session did not write the code, so it reviews with a fresh view.');
 	}
@@ -417,8 +431,22 @@ class Shotgun implements vscode.Disposable {
 				: 'Give your reason.'),
 		});
 		if (reason !== undefined) {
-			this.store.setIssueClosed(id, reason);
+			const removed = this.store.setIssueClosed(id, reason);
+			await this.deleteBase(removed?.step.base);
 		}
+	}
+
+	// "Make it a step" for an issue of the second list, or "Back to the second list" (P22)
+	private async setIssueStep(id: string, isStep: boolean): Promise<void> {
+		const isBlocked = this.isOpeningStep;
+		this.isOpeningStep = true;
+		try {
+			const removed = this.store.setIssueStep(id, isStep);
+			await this.deleteBase(removed?.step.base);
+		} finally {
+			this.isOpeningStep = isBlocked;
+		}
+		await this.openUserStep();
 	}
 
 	// "Not a problem": the reason of the user goes into the ledger
@@ -566,7 +594,7 @@ class Shotgun implements vscode.Disposable {
 	private async openUserStep(): Promise<void> {
 		const { task, root } = this.store.snapshot;
 		const current = this.store.current;
-		if (this.isOpeningStep || this.dataflow.state === 'linking' || !task || !root || task.isDone || task.stage !== 'build'
+		if (this.isOpeningStep || this.dataflow.state === 'linking' || !task || !root || !isStepStage(task)
 			|| !current || current.writer !== 'user' || current.state !== 'todo') {
 			return;
 		}
@@ -599,9 +627,9 @@ class Shotgun implements vscode.Disposable {
 			this.store.startStep(current.step.id, {
 				writer: 'user', level: current.level, scope, ...(base ? { base } : {}), ...(baseError ? { baseError } : {}),
 			});
-			this.log.info(`Step ${current.n} of the task ${task.id} is open for the user.${baseError ? ` It has no base: ${baseError}` : ''}`);
+			this.log.info(`Step ${current.ref} of the task ${task.id} is open for the user.${baseError ? ` It has no base: ${baseError}` : ''}`);
 		} catch (error) {
-			this.log.warn(`Shotgun did not open step ${current.n} for the user: ${messageOf(error)}`);
+			this.log.warn(`Shotgun did not open step ${current.ref} for the user: ${messageOf(error)}`);
 		} finally {
 			this.isOpeningStep = false;
 		}
@@ -618,7 +646,7 @@ class Shotgun implements vscode.Disposable {
 		if (step.base) {
 			const api = this.baseApi();
 			if (!api) {
-				this.log.warn(`Shotgun has no link to DataFlow, so it did not record the lines of step ${current.n}.`);
+				this.log.warn(`Shotgun has no link to DataFlow, so it did not record the lines of step ${current.ref}.`);
 			} else {
 				const marked = step.scope.filter((f) => !newFiles.includes(f)).map((f) => absolutePath(f, root));
 				const facts = await api.diff(`mark:${step.base}`, marked);
@@ -652,7 +680,7 @@ class Shotgun implements vscode.Disposable {
 	private trackLines(e: vscode.TextDocumentChangeEvent): void {
 		const { task, root } = this.store.snapshot;
 		const doc = e.document;
-		if (!task || !root || task.isDone || task.stage !== 'build' || doc.uri.scheme !== 'file' || e.contentChanges.length === 0 || !isInside(doc.uri.fsPath, root)) {
+		if (!task || !root || !isStepStage(task) || doc.uri.scheme !== 'file' || e.contentChanges.length === 0 || !isInside(doc.uri.fsPath, root)) {
 			return;
 		}
 		const file = projectPath(doc.uri.fsPath, root, IS_CASE_SENSITIVE);
@@ -728,7 +756,7 @@ class Shotgun implements vscode.Disposable {
 		const watcher = vscode.workspace.createFileSystemWatcher('**/*');
 		const record = (uri: vscode.Uri, kind: 'created' | 'changed' | 'deleted') => {
 			const { task, root } = this.store.snapshot;
-			if (!task || !root || task.stage !== 'build' || uri.scheme !== 'file' || !this.folders().some((f) => isInside(uri.fsPath, f))) {
+			if (!task || !root || (task.stage !== 'build' && task.stage !== 'review') || uri.scheme !== 'file' || !this.folders().some((f) => isInside(uri.fsPath, f))) {
 				return;
 			}
 			const rel = path.relative(this.folders().find((f) => isInside(uri.fsPath, f))!, uri.fsPath);
@@ -1140,24 +1168,26 @@ class Shotgun implements vscode.Disposable {
 		}
 	}
 
-	// The level of the user for a step, with the keyboard. The page has the same buttons. In stage 5, only the steps that
-	// Claude did not start (decision 17)
+	// The level of the user for a step, with the keyboard. The page has the same buttons. In the stages 5 and 6, only the
+	// steps that Claude did not start (decision 17). In stage 6, only the steps of the issues
 	private async setLevel(): Promise<void> {
-		const { task, plan, risk, levels, build } = this.store.snapshot;
-		if (!task || task.isDone || (task.stage !== 'plan' && task.stage !== 'build') || !plan) {
-			void vscode.window.showInformationMessage('Shotgun: the active task has no plan in stage 4 or 5.');
+		const snapshot = this.store.snapshot;
+		const { task, risk, levels, build } = snapshot;
+		const plan = workPlan(snapshot);
+		if (!task || task.isDone || (task.stage !== 'plan' && task.stage !== 'build' && task.stage !== 'review') || !plan) {
+			void vscode.window.showInformationMessage('Shotgun: the active task has no plan in stage 4 or 5, and no step of an issue in stage 6.');
 			return;
 		}
-		const isEditable = (id: string) => task.stage === 'plan' || stateOf(build, id) === 'todo'
-			|| (stateOf(build, id) === 'open' && build?.steps[id]?.writer === 'user');
-		const items = plan.steps.map((s, i) => {
+		const isEditable = (s: PlanStep) => task.stage === 'plan' || ((task.stage === 'build' || !!s.issue) && (stateOf(build, s.id) === 'todo'
+			|| (stateOf(build, s.id) === 'open' && build?.steps[s.id]?.writer === 'user')));
+		const items = plan.steps.filter(isEditable).map((s) => {
 			const l = levelOf(s, risk, levels);
 			return {
-				label: `${i + 1}. ${s.title}`,
+				label: `${refOf(s, plan.steps.indexOf(s) + 1)}. ${s.title}`,
 				description: l.level ? `level ${l.level}${l.user ? `, the rules gave ${l.rule ?? 'no level'}` : ''}` : 'no level yet',
 				id: s.id,
 			};
-		}).filter((item) => isEditable(item.id));
+		});
 		if (items.length === 0) {
 			void vscode.window.showInformationMessage('Shotgun: Claude started each step that is not done, so no level can change.');
 			return;
@@ -1218,7 +1248,7 @@ class Shotgun implements vscode.Disposable {
 		}
 		const old = this.store.requestFrame(id ?? current.step.id);
 		await this.deleteBase(old?.base);
-		vscode.window.setStatusBarMessage(`Shotgun: tell Claude "Give me a frame for step ${current.n}."`, 8000);
+		vscode.window.setStatusBarMessage(`Shotgun: tell Claude "Give me a frame for step ${current.ref}."`, 8000);
 	}
 
 	// Tab and Shift+Tab in a frame: the next open hole, or the hole before it. With no open hole, the keys indent as usual
@@ -1330,7 +1360,7 @@ class Shotgun implements vscode.Disposable {
 			description: `${c.file}:${c.lines[0]} · +${c.added} −${c.removed} · ${words[c.mark]}`,
 			detail: `Check: ${c.check}`,
 			id: c.id,
-		})), { title: `Shotgun: Mark a Change of Step ${current.n}`, placeHolder: 'Select the change' });
+		})), { title: `Shotgun: Mark a Change of Step ${current.ref}`, placeHolder: 'Select the change' });
 		if (!change) {
 			return;
 		}
@@ -1412,21 +1442,36 @@ class Shotgun implements vscode.Disposable {
 		this.log.info(`The task ${task.id} passed the gate "${GATE_LABEL['task-done']}"${open.length > 0 ? ` with ${open.length} open issues` : ''}.`);
 	}
 
-	// The gates of stage 5: "Accept the receipt" for a step of Claude, "The step is done" for a step of the user, and "The
-	// build is done" after the last step. The task then goes to stage 6, the review
+	// The gates of stage 5: the gate of the current step, and "The build is done" after the last step. The task then goes to
+	// stage 6, the review
 	private async passBuildGate(task: NonNullable<Snapshot['task']>): Promise<void> {
-		const root = this.store.snapshot.root!;
 		const current = this.store.current;
 		if (!current) {
 			this.store.passGate('build-done');
 			this.log.info(`The task ${task.id} passed the gate "${GATE_LABEL['build-done']}".`);
 			return;
 		}
+		await this.passStepGate(task, current);
+	}
+
+	// The gate of the current step, from its own button: in stage 5, and in stage 6 for the step of an issue (P22)
+	private async passCurrentStepGate(): Promise<void> {
+		const task = this.store.snapshot.task;
+		const current = this.store.current;
+		if (!task || !isStepStage(task) || !current) {
+			throw new Error('The active task has no current step.');
+		}
+		await this.passStepGate(task, current);
+	}
+
+	// The gate of the current step: "Accept the receipt" for a step of Claude, and "The step is done" for the user or a frame
+	private async passStepGate(task: NonNullable<Snapshot['task']>, current: CurrentStep): Promise<void> {
+		const root = this.store.snapshot.root!;
 		const step = current.build;
 		if (current.writer === 'frame') {
 			if (current.state !== 'holes' || !step?.holes) {
-				throw new Error(current.state === 'open' ? `Claude writes the frame of step ${current.n}. Wait for its holes.`
-					: `Claude writes the frame of step ${current.n} first. Tell Claude "Give me a frame for step ${current.n}."`);
+				throw new Error(current.state === 'open' ? `Claude writes the frame of step ${current.ref}. Wait for its holes.`
+					: `Claude writes the frame of step ${current.ref} first. Tell Claude "Give me a frame for step ${current.ref}."`);
 			}
 			const open = step.holes.filter((h) => {
 				const lines = this.textOf(absolutePath(h.file, root))?.split(/\r?\n/) ?? [];
@@ -1438,23 +1483,23 @@ class Shotgun implements vscode.Disposable {
 		}
 		if (current.writer === 'user' || current.writer === 'frame') {
 			if (current.writer === 'user' && (current.state !== 'open' || !step)) {
-				throw new Error(`Shotgun opens step ${current.n} first. Try again in a moment.`);
+				throw new Error(`Shotgun opens step ${current.ref} first. Try again in a moment.`);
 			}
 			await this.saveFiles(step!.scope.map((f) => absolutePath(f, root)));
 			try {
 				await this.recordUserLines(current, root);
 			} catch (error) {
-				this.log.warn(`Shotgun did not record the lines of step ${current.n}: ${messageOf(error)}`);
+				this.log.warn(`Shotgun did not record the lines of step ${current.ref}: ${messageOf(error)}`);
 			}
 		} else {
 			const receipt = step?.receipt;
 			if (current.state !== 'receipt' || !receipt) {
-				throw new Error(current.state === 'open' ? `Claude writes step ${current.n}. Wait for its receipt.`
-					: `Claude writes step ${current.n}. Tell Claude "${buildNext(current).request ?? `Do step ${current.n}.`}" first.`);
+				throw new Error(current.state === 'open' ? `Claude writes step ${current.ref}. Wait for its receipt.`
+					: `Claude writes step ${current.ref}. Tell Claude "${buildNext(current, task.stage === 'review').request ?? `Do step ${current.ref}.`}" first.`);
 			}
 			const counts = receiptCounts(receipt);
 			if (counts.issues > 0) {
-				throw new Error(`${counts.issues === 1 ? '1 change has' : `${counts.issues} changes have`} an issue. Tell Claude "Fix the issues of step ${current.n}.", `
+				throw new Error(`${counts.issues === 1 ? '1 change has' : `${counts.issues} changes have`} an issue. Tell Claude "Fix the issues of step ${current.ref}.", `
 					+ 'or change the mark.');
 			}
 			const notWalked = counts.changes - counts.walked;
@@ -1463,7 +1508,7 @@ class Shotgun implements vscode.Disposable {
 					...(notWalked > 0 ? [`${notWalked === 1 ? '1 change has' : `${notWalked} changes have`} no mark`] : []),
 					...(counts.questions > 0 ? [`${counts.questions === 1 ? '1 question is' : `${counts.questions} questions are`} open`] : []),
 				];
-				const pick = await vscode.window.showWarningMessage(`${parts.join(', and ')}. Do you want to accept the receipt of step ${current.n}?`, {
+				const pick = await vscode.window.showWarningMessage(`${parts.join(', and ')}. Do you want to accept the receipt of step ${current.ref}?`, {
 					modal: true, detail: 'The ledger keeps each change with no mark as not walked. Claude answers a question only when you ask.',
 				}, ACCEPT_RECEIPT);
 				if (pick !== ACCEPT_RECEIPT) {
@@ -1479,7 +1524,7 @@ class Shotgun implements vscode.Disposable {
 			await api.deleteMark(base).catch((error: unknown) => this.log.warn(`DataFlow did not delete the base ${base}: ${messageOf(error)}`));
 		}
 		this.store.finishStep(current.step.id, current.writer === 'claude' ? 'accept-receipt' : 'step-done');
-		this.log.info(`Step ${current.n} of the task ${task.id} is done.`);
+		this.log.info(`Step ${current.ref} of the task ${task.id} is done.`);
 		await this.openUserStep();
 	}
 
@@ -1580,7 +1625,7 @@ class Shotgun implements vscode.Disposable {
 		const baseApi = this.baseApi();
 		if (api && baseApi && step.base) {
 			const base = step.base;
-			await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: `Shotgun: the loose ends of step ${current.n}` }, async () => {
+			await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: `Shotgun: the loose ends of step ${current.ref}` }, async () => {
 				try {
 					const diff = await baseApi.diff(`mark:${base}`, step.scope.map((f) => absolutePath(f, root)));
 					const looseApi: LooseApi = {
@@ -1599,13 +1644,13 @@ class Shotgun implements vscode.Disposable {
 					};
 					finds.push(...await findLooseEnds(looseApi, root, base, step.scope, diff, (f) => this.textOf(f)?.split(/\r?\n/), (m) => this.log.info(m)));
 				} catch (error) {
-					this.log.warn(`Shotgun did not find the loose ends of step ${current.n}: ${messageOf(error)}`);
+					this.log.warn(`Shotgun did not find the loose ends of step ${current.ref}: ${messageOf(error)}`);
 				}
 			});
 		}
 		this.store.addLooseEnds(current.step.id, finds);
 		const count = finds.length;
-		this.log.info(`Step ${current.n} has ${count} new ${count === 1 ? 'loose end' : 'loose ends'}.`);
+		this.log.info(`Step ${current.ref} has ${count} new ${count === 1 ? 'loose end' : 'loose ends'}.`);
 	}
 
 	// The gate of stage 2, "Order the tasks". The order of the tasks starts from the survey of Claude
@@ -1872,6 +1917,12 @@ class Shotgun implements vscode.Disposable {
 				case 'reopenIssue':
 					this.store.setIssueClosed(message.id, undefined);
 					break;
+				case 'setIssueStep':
+					await this.setIssueStep(message.id, message.isStep);
+					break;
+				case 'stepGate':
+					await this.passCurrentStepGate();
+					break;
 				default:
 					break;
 			}
@@ -1953,19 +2004,18 @@ class Shotgun implements vscode.Disposable {
 		void vscode.commands.executeCommand('setContext', 'shotgun.hasHooks',
 			!!task && !task.isDone && (task.stage === 'survey' || task.stage === 'order') && !!survey && survey.hooks.length > 0);
 		void vscode.commands.executeCommand('setContext', 'shotgun.hasPlan', !!task && !task.isDone && task.stage === 'plan' && !!snapshot.plan);
-		const current = task && !task.isDone && task.stage === 'build' ? this.store.current : undefined;
+		const current = isStepStage(task) ? this.store.current : undefined;
 		void vscode.commands.executeCommand('setContext', 'shotgun.hasReceipt', current?.state === 'receipt');
 		void vscode.commands.executeCommand('setContext', 'shotgun.hasHoles', current?.state === 'holes');
 		const stepCallouts = current ? snapshot.callouts?.steps[current.step.id]?.callouts ?? [] : [];
 		void vscode.commands.executeCommand('setContext', 'shotgun.hasCallouts', stepCallouts.some((c) => c.shown && !c.closed && !c.isGone));
 		void vscode.commands.executeCommand('setContext', 'shotgun.hasAnswers', (snapshot.callouts?.answers ?? []).some((a) => !a.resolved));
-		void vscode.commands.executeCommand('setContext', 'shotgun.hasLooseEnds', !!task && !task.isDone && task.stage === 'build'
-			&& (snapshot.loose?.ends ?? []).some((e) => e.state === 'open'));
+		void vscode.commands.executeCommand('setContext', 'shotgun.hasLooseEnds', isStepStage(task) && (snapshot.loose?.ends ?? []).some((e) => e.state === 'open'));
 		void vscode.commands.executeCommand('setContext', 'shotgun.hasLedger', !!task && (task.stage === 'build' || task.stage === 'review'));
 		void this.ensureCalloutStart();
-		// decision 17: in stage 5, the user changes the level of a step that Claude did not start
+		// decision 17: in the stages 5 and 6, the user changes the level of a step that Claude did not start
 		void vscode.commands.executeCommand('setContext', 'shotgun.canSetLevel', !!task && !task.isDone && !!snapshot.plan
-			&& (task.stage === 'plan' || task.stage === 'build'));
+			&& (task.stage === 'plan' || task.stage === 'build' || (task.stage === 'review' && issueSteps(snapshot.review).length > 0)));
 		void vscode.commands.executeCommand('setContext', 'shotgun.canRequestFrame', current?.writer === 'user' && current.level === 4
 			&& (current.state === 'todo' || current.state === 'open'));
 		void this.openUserStep();

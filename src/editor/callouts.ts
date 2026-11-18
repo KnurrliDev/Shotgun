@@ -1,7 +1,6 @@
 import * as vscode from 'vscode';
 import { isSamePath } from '../claude/settings';
-import type { Callout, CalloutKind, LineAnswer } from '../session/callouts';
-import { hashLine } from '../session/lines';
+import { Callout, calloutLine, CalloutKind, LineAnswer, nearestLine } from '../session/callouts';
 import { absolutePath } from '../session/paths';
 import type { Snapshot } from '../session/store';
 
@@ -20,28 +19,8 @@ const COLORS: Readonly<Record<Tag, readonly [string, string]>> = {
 	answer: ['#f07fc9', '#b0297e'],
 };
 const LABELS: Readonly<Record<CalloutKind, string>> = { problem: 'PROBLEM', warning: 'WARNING', info: 'INFO' };
-// The lines that the search for a moved line examines above and below its old line
-const WINDOW = 200;
-
-// The line of a callout now: the line with the text of the key of the callout, the nearest to the line of the last check
-function calloutLine(lines: readonly string[], c: Callout): number | undefined {
-	const hash = c.key.slice(c.key.lastIndexOf('|') + 1);
-	return nearest(lines, c.line, (text) => hashLine(text) === hash);
-}
-
 function answerLine(lines: readonly string[], a: LineAnswer): number | undefined {
-	return nearest(lines, a.line, (text) => text.trim() === a.code);
-}
-
-function nearest(lines: readonly string[], line: number, isIt: (text: string) => boolean): number | undefined {
-	for (let d = 0; d <= WINDOW; d++) {
-		for (const l of d === 0 ? [line] : [line - d, line + d]) {
-			if (l >= 1 && l <= lines.length && isIt(lines[l - 1])) {
-				return l;
-			}
-		}
-	}
-	return undefined;
+	return nearestLine(lines, a.line, (text) => text.trim() === a.code);
 }
 
 export class CalloutDecorations implements vscode.Disposable {

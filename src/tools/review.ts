@@ -1,18 +1,20 @@
 import type { DiffFacts, RippleFacts } from '../dataflow/dataflow-api';
 import { withoutComments } from '../session/brief';
 import { hunkKey } from '../session/build';
+import { calloutLine } from '../session/callouts';
 import type { TaskFile } from '../session/files';
 import { isWalked } from '../session/ledger';
 import { hashLine, LineStore } from '../session/lines';
 import { absolutePath, IS_CASE_SENSITIVE, projectPath } from '../session/paths';
+import { levelOf } from '../session/plan';
 import {
-	AREA_INFO, capOf, checkReview, DEFAULT_OPTIONS, EFFORT_INFO, issuesOf, MAX_ISSUES, ReviewFile, ReviewIssue, roundOf,
+	AREA_INFO, capOf, checkReview, DEFAULT_OPTIONS, EFFORT_INFO, issuesOf, issueSteps, issuesToCheck, MAX_ISSUES, ReviewFile, ReviewIssue, roundOf,
 } from '../session/review';
 import { STAGE_INFO, stageText } from '../session/stages';
-import type { Snapshot } from '../session/store';
+import { Snapshot, workPlan } from '../session/store';
 import type { Lines } from '../session/survey';
 import { stageStart } from './calls';
-import { stepsData } from './plan';
+import { planRisk, stepsData } from './plan';
 import type { SurveyDeps } from './survey';
 
 // The tools of stage 6 (phase 12). get_review gives the diff of the task since its base, the effort and the focus of the
@@ -71,6 +73,7 @@ interface TaskDiff {
 	readonly hunks: Map<string, Lines[]>;
 	readonly changedLines: number;
 	readonly hashes: string[];
+	readonly hashOf: Map<string, string>; // the short hash of each hunk, by "file#id"
 	readonly rel: (file: string) => string;
 }
 
@@ -80,6 +83,7 @@ async function taskDiff(api: ReviewApi, root: string, base: string, files: reado
 	const hunks = new Map<string, Lines[]>();
 	let changedLines = 0;
 	const hashes: string[] = [];
+	const hashOf = new Map<string, string>();
 	for (const f of facts.files) {
 		const file = rel(f.file);
 		const list = hunks.get(file) ?? [];
@@ -87,11 +91,13 @@ async function taskDiff(api: ReviewApi, root: string, base: string, files: reado
 			// a hunk of removed lines only has no new lines: it is at its first line
 			list.push([h.lines[0], Math.max(h.lines[0], h.lines[1])]);
 			changedLines += h.added + h.removed;
-			hashes.push(hashLine(hunkKey(file, h.diff, h.added, h.removed)));
+			const hash = hashLine(hunkKey(file, h.diff, h.added, h.removed));
+			hashes.push(hash);
+			hashOf.set(`${file}#${h.id}`, hash);
 		}
 		hunks.set(file, list);
 	}
-	return { facts, hunks, changedLines, hashes, rel };
+	return { facts, hunks, changedLines, hashes, hashOf, rel };
 }
 
 // The lines that the changes reach, by file, from the ripple of DataFlow. undefined: no ripple
@@ -117,6 +123,14 @@ async function taskRipple(api: ReviewApi, root: string, base: string, files: rea
 		log?.(`DataFlow gave no ripple of the task: ${messageOf(error)}`);
 		return undefined;
 	}
+}
+
+// The callouts of the build that the user closed, with their lines now. A callout with no line now is gone (P35)
+function closedCalloutsOf(snapshot: Snapshot, root: string, readText: (file: string) => string | undefined) {
+	return Object.entries(snapshot.callouts?.steps ?? {}).flatMap(([step, value]) => value.callouts.filter((c) => c.closed).map((c) => {
+		const lines = c.isGone ? undefined : readText(absolutePath(c.file, root))?.split(/\r?\n/);
+		return { step, callout: c, line: lines ? calloutLine(lines, c) : undefined };
+	}));
 }
 
 // An issue for the result of a tool
@@ -150,15 +164,26 @@ export async function reviewData(deps: ReviewDeps): Promise<Record<string, unkno
 	const options = review!.options ?? DEFAULT_OPTIONS;
 	const ripple = options.effort === 'low' ? undefined : await taskRipple(api, root, base.commit, files, diff.rel, deps.log);
 	const dirty = new Set(base.dirty);
-	const levelOfStep = new Map(stepsData(snapshot).map((s) => [s.id as string, s.level as number | null]));
+	// the levels of the steps of the plan and of the issues, for the lines of the user
+	const levelOfStep = new Map((workPlan(snapshot)?.steps ?? []).map((s) => [s.id, levelOf(s, snapshot.risk, snapshot.levels).level as number | null]));
 	const briefFile = deps.store.briefFile();
 	const brief = briefFile ? deps.readText(briefFile) : undefined;
-	const closedCallouts = Object.entries(snapshot.callouts?.steps ?? {}).flatMap(([step, value]) => value.callouts
-		.filter((c) => c.closed).map((c) => ({ step, title: c.title, place: `${c.file}:${c.line}`, reason: c.closed!.reason })));
+	const closedCallouts = closedCalloutsOf(snapshot, root, deps.readText).map(({ step, callout: c, line }) => ({
+		step, title: c.title, place: `${c.file}:${line ?? c.line}`, reason: c.closed!.reason,
+	}));
 	const round = roundOf(review);
+	// a new round (P23): the hunks that the last round did not have, and the fixed issues to check
+	const last = review!.rounds[review!.rounds.length - 1];
+	const lastHunks = last && round > last.n ? new Set(last.hunks) : undefined;
+	const toCheck = lastHunks ? issuesToCheck(review) : [];
 	return {
 		task: { id: task.id, title: task.title, stage: STAGE_INFO[task.stage].number },
 		round,
+		...(lastHunks ? {
+			roundNote: `Round ${round} reviews the fixes. Review the hunks with "isChangedSinceLastRound": true and their ripple, and check each `
+				+ 'issue of "fixedIssues". If a fix is not correct, give its issue again with "repeats" and a summary of the problem that stays. '
+				+ 'Give no issue for a correct fix.',
+		} : {}),
 		effort: { level: options.effort, ...EFFORT_INFO[options.effort] },
 		focus: {
 			areas: options.areas.map((a) => ({ area: a, name: AREA_INFO[a].name, categories: AREA_INFO[a].categories, looksFor: AREA_INFO[a].looksFor })),
@@ -166,7 +191,7 @@ export async function reviewData(deps: ReviewDeps): Promise<Record<string, unkno
 		},
 		base: { commit: base.commit, time: base.time, ...(base.dirty.length > 0 ? { notCommittedBefore: base.dirty } : {}) },
 		changedLines: diff.changedLines,
-		capOnSteps: capOf(diff.changedLines),
+		capOnSteps: Math.min(capOf(diff.changedLines), snapshot.feedback?.cap ?? Number.MAX_SAFE_INTEGER),
 		maxIssues: MAX_ISSUES,
 		files: diff.facts.files.map((f) => {
 			const file = diff.rel(f.file);
@@ -179,6 +204,7 @@ export async function reviewData(deps: ReviewDeps): Promise<Record<string, unkno
 				...(dirty.has(file) ? { notCommittedBefore: true } : {}),
 				hunks: f.hunks.map((h) => ({
 					id: h.id, lines: h.lines, added: h.added, removed: h.removed, ...(h.functions ? { functions: h.functions } : {}),
+					...(lastHunks && !lastHunks.has(diff.hashOf.get(`${file}#${h.id}`) ?? '') ? { isChangedSinceLastRound: true } : {}),
 					...(h.heat ? { heat: h.heat.map((x) => ({ function: x.function, score: x.score, band: x.band })) } : {}),
 				})),
 				...(runs.length > 0 ? { writers: runs } : {}),
@@ -198,6 +224,12 @@ export async function reviewData(deps: ReviewDeps): Promise<Record<string, unkno
 			openLooseEnds: snapshot.loose.ends.filter((e) => !e.reason && !e.handed).map((e) => ({ id: e.id, title: e.title })),
 		} : {}),
 		...(review!.issues.length > 0 ? { earlierIssues: review!.issues.map(issueData) } : {}),
+		...(toCheck.length > 0 ? {
+			fixedIssues: toCheck.map((i) => ({
+				id: i.id, title: i.title, summary: i.summary, scenario: i.scenario, place: `${i.place.file}:${i.place.lines[0]}`,
+				...(i.fixPlaces ? { fixPlaces: i.fixPlaces.map((p) => `${p.file}:${p.lines[0]}`) } : {}),
+			})),
+		} : {}),
 		tools: `For the text of the diff, call get_diff of DataFlow with "base": "${base.commit}" and "paths". For the ripple, call get_ripple `
 			+ `with the same base.`,
 		next: 'Follow the skill shotgun-review: find the candidates for each area of the focus, check each candidate in a verify pass, and give the '
@@ -235,6 +267,8 @@ export async function submitReview(deps: ReviewDeps, args: Record<string, unknow
 		hunks: diff.hunks,
 		...(ripple ? { ripple: ripple.lines } : {}),
 		earlier: review!.issues,
+		closedCallouts: closedCalloutsOf(snapshot, root, deps.readText).flatMap(({ callout: c, line }) => (line
+			? [{ file: c.file, line, source: c.source, title: c.title, reason: c.closed!.reason }] : [])),
 	});
 	if (checked.problems.length > 0) {
 		throw new Error(`Shotgun did not take the review. Correct these problems, and call the tool again:\n${checked.problems.map((p) => `- ${p}`).join('\n')}`);
@@ -244,11 +278,26 @@ export async function submitReview(deps: ReviewDeps, args: Record<string, unknow
 		n: round, effort: options.effort, areas: options.areas, ...(options.text ? { text: options.text } : {}), changedLines: diff.changedLines,
 		hunks: diff.hashes, ...(checked.note ? { note: checked.note } : {}),
 	}, checked.issues);
+	// a started step of an issue that left the list of steps loses its base
+	const marks = deps.base?.();
+	for (const r of result.removed.filter((x) => x.step.base)) {
+		await marks?.deleteMark(r.step.base!).catch((error: unknown) => deps.log?.(`DataFlow did not delete the base ${r.step.base}: ${messageOf(error)}`));
+	}
+	// the heat of the places of the steps of the issues: only a hint, because the level of such a step is 4 (P22)
+	const fixes = issueSteps(result.review);
+	if (fixes.length > 0) {
+		try {
+			const risk = await planRisk(engine, root, { steps: fixes }, (file) => deps.readText(file)?.split(/\r?\n/));
+			store.writeRisk({ scan: risk.scan, steps: { ...(store.snapshot.risk?.steps ?? {}), ...risk.steps } });
+		} catch (error) {
+			deps.log?.(`Shotgun did not get the heat of the steps of the issues: ${messageOf(error)}`);
+		}
+	}
 	const steps = issuesOf(result.review, 'steps').filter((i) => i.lastRound === round && i.state === 'open');
 	const second = issuesOf(result.review, 'second').filter((i) => i.lastRound === round && i.state === 'open');
 	return {
 		round,
-		cap: capOf(diff.changedLines),
+		cap: result.review.rounds.find((r) => r.n === round)?.cap ?? capOf(diff.changedLines),
 		steps: steps.map(issueData),
 		second: second.map(issueData),
 		...(result.repeated > 0 ? { repeated: result.repeated } : {}),

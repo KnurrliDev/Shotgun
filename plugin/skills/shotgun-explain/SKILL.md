@@ -1,11 +1,11 @@
 ---
 name: shotgun-explain
-description: 'Explain a callout of the active Shotgun task in stage 5, or answer a question of the user about a line. A callout is a new fact of DataFlow on a line that the user wrote, for example a race. Use this skill when the user asks about a callout, for example "Explain the callout on line 129". Also use it for a question about a line, for example "Does the lambda on line 95 copy charge?".'
+description: 'Explain a callout of the active Shotgun task in stage 5, or in the step of an issue in stage 6. Also answer a question of the user about a line. A callout is a new fact of DataFlow on a line that the user wrote, for example a race. Use this skill when the user asks about a callout, for example "Explain the callout on line 129". Also use it for a question about a line, for example "Does the lambda on line 95 copy charge?".'
 ---
 
 # Callouts and questions on a line
 
-In stage 5, the user writes the steps of high risk. Shotgun gets the facts of DataFlow for the lines that the user writes. A new fact on a line of the user is a callout, for example a race, a warning of the logic, or a hidden copy. The callouts show the facts of the engine. Your words come only when the user asks.
+In stage 5, the user writes the steps of high risk. In stage 6, the user writes the steps of the issues of the review. Shotgun gets the facts of DataFlow for the lines that the user writes. A new fact on a line of the user is a callout, for example a race, a warning of the logic, or a hidden copy. The callouts show the facts of the engine. Your words come only when the user asks.
 
 You change no code for a callout or for a question. The user owns the code of the step.
 

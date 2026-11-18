@@ -1,4 +1,5 @@
-import { decisionList, PlanDecision } from './plan';
+import type { FactSource } from './callouts';
+import { decisionList, Plan, PlanDecision, PlanStep } from './plan';
 import { itemChecks, Lines, SurveyContext } from './survey';
 
 // The review of stage 6 (the decisions 35 to 38, and the proposals P16 to P25 of the plan). review.json keeps the base of
@@ -129,6 +130,13 @@ const HUNK_MARGIN = 3;
 const CAP_BASE = 3;
 const CAP_LINES = 100;
 const CAP_MAX = 10;
+// after this number of rounds, the panel tells the user to think about the approach again, and asks before the next
+// round (P23)
+export const MAX_ROUNDS = 3;
+// the feedback of the user (P35). After 10 decided issues, the page proposes to turn off an area with more than 10% with
+// no action
+export const FEEDBACK_MIN = 10;
+export const FEEDBACK_RATE = 0.1;
 
 // The base of the task at the first gate "Accept the plan" (P17): the commit of HEAD, and the files with changes that
 // were not committed then. error: why the task has no base commit, for example no repository of git
@@ -149,10 +157,12 @@ export interface ReviewOptions {
 export const DEFAULT_OPTIONS: ReviewOptions = { effort: DEFAULT_EFFORT, areas: DEFAULT_AREAS };
 
 // The prompt of the review for a new session of Claude Code. A new session did not write the code of the task, so it
-// reviews with a fresh view (decision 35). The skill gets the effort and the focus from get_review again
-export function reviewPrompt(title: string, options: ReviewOptions): string {
+// reviews with a fresh view (decision 35). The skill gets the effort and the focus from get_review again. round: from
+// round 2, the review checks the fixes (P23)
+export function reviewPrompt(title: string, options: ReviewOptions, round = 1): string {
 	const areas = options.areas.map((a) => AREA_INFO[a].name.toLowerCase());
-	return `Review my Shotgun task "${title}" with the skill shotgun-review, at the effort ${EFFORT_INFO[options.effort].name.toLowerCase()} with the `
+	const start = round > 1 ? `Review the fixes of my Shotgun task "${title}" in round ${round}` : `Review my Shotgun task "${title}"`;
+	return `${start} with the skill shotgun-review, at the effort ${EFFORT_INFO[options.effort].name.toLowerCase()} with the `
 		+ `focus ${areas.length > 1 ? `${areas.slice(0, -1).join(', ')} and ${areas[areas.length - 1]}` : areas[0]}`
 		+ `${options.text ? `. Look also at this point of mine: ${options.text.replace(/[.!?]+$/, '')}` : ''}. Get the data with shotgun_get_review, start the subagents that `
 		+ 'the effort needs, and give the issues with shotgun_submit_review. Change no file.';
@@ -205,8 +215,11 @@ export interface ReviewIssue extends IssueInput {
 	readonly lastRound: number; // the last round that gave the issue
 	readonly list: IssueList;
 	readonly secondReason?: SecondReason;
+	readonly isUserStep?: true; // the user made an issue of the second list a step (P22). It stays in the list of steps
+	readonly rank?: number; // the place in the list of steps of its last round, from 1, for the feedback (P35)
 	readonly state: IssueState;
 	readonly closed?: { readonly reason: string; readonly time: string };
+	readonly fixed?: string; // the time of the gate of its step. The next round checks the fix (P23)
 }
 
 // A round of the review: the effort and the focus, the changed lines and the cap on the steps, and the hashes of the
@@ -262,7 +275,11 @@ export function assignLists(issues: readonly ReviewIssue[], cap: number): Review
 		if (issue.state !== 'open') {
 			return issue;
 		}
-		const { secondReason: _old, ...rest } = issue;
+		const { secondReason: _old, rank: _rank, ...rest } = issue;
+		// a step that the user made of an issue of the second list stays a step, outside of the cap
+		if (issue.isUserStep) {
+			return { ...rest, list: 'steps' };
+		}
 		if (issue.verdict === 'plausible') {
 			return { ...rest, list: 'second', secondReason: 'plausible' };
 		}
@@ -273,12 +290,28 @@ export function assignLists(issues: readonly ReviewIssue[], cap: number): Review
 			return { ...rest, list: 'second', secondReason: 'cap' };
 		}
 		steps += 1;
-		return { ...rest, list: 'steps' };
+		return { ...rest, list: 'steps', rank: steps };
 	});
 }
 
 //-------------------
 // The check of a review of Claude
+
+// A callout that the user closed with "Not a problem", at its line now
+export interface ClosedCallout {
+	readonly file: string; // relative to the first folder of the project, with /
+	readonly line: number;
+	readonly source: FactSource;
+	readonly title: string;
+	readonly reason: string;
+}
+
+// The categories of an issue that can give the problem of a callout again, by the source of the callout
+export const CALLOUT_CATEGORIES: Readonly<Record<FactSource, readonly Category[]>> = {
+	threads: ['race', 'deadlock', 'lifetime'],
+	logic: ['correctness'],
+	hidden: ['correctness', 'cleanup'],
+};
 
 export interface ReviewContext extends SurveyContext {
 	// the changed lines of the task by file, relative to the first folder of the project, from the diff since the base
@@ -287,6 +320,8 @@ export interface ReviewContext extends SurveyContext {
 	readonly ripple?: ReadonlyMap<string, readonly Lines[]>;
 	// the issues of the review before this review
 	readonly earlier: readonly ReviewIssue[];
+	// the callouts of the build that the user closed
+	readonly closedCallouts?: readonly ClosedCallout[];
 }
 
 type Json = Record<string, unknown>;
@@ -406,6 +441,10 @@ export function checkReview(raw: Json, ctx: ReviewContext): { issues: IssueInput
 				}
 			}
 		}
+		// a race starts from the threads of DataFlow (P20)
+		if (category === 'race' && tools.length > 0 && !tools.includes('get_threads')) {
+			problems.push(`${label}: a race starts from the threads of DataFlow. Call get_threads for the file of the race, and give it in "tools".`);
+		}
 
 		// an issue that repeats an earlier issue keeps its id and its state. A closed issue needs new evidence (P35)
 		let repeats: string | undefined;
@@ -428,6 +467,21 @@ export function checkReview(raw: Json, ctx: ReviewContext): { issues: IssueInput
 				if (found.state === 'closed' && verdict === 'confirmed') {
 					problems.push(`${label}: an issue that the user closed comes again only with the verdict plausible.`);
 				}
+			}
+		}
+		// an issue at the line of a callout that the user closed gives its problem again. It needs new evidence, as a
+		// closed issue (P35)
+		const isSameFile = (a: string, b: string): boolean => (ctx.isCaseSensitive ? a === b : a.toLowerCase() === b.toLowerCase());
+		const callout = place && category ? (ctx.closedCallouts ?? []).find((c) => isSameFile(c.file, place!.file) && c.line >= place!.lines[0]
+			&& c.line <= place!.lines[1] && CALLOUT_CATEGORIES[c.source].includes(category)) : undefined;
+		if (callout) {
+			evidence ??= textField(value, 'evidence', label, MAX_EVIDENCE, true);
+			if (!evidence) {
+				problems.push(`${label}: the user closed the callout "${callout.title}" at ${callout.file}:${callout.line} as "Not a problem": `
+					+ `${callout.reason} Give its problem again only with new "evidence", or remove the issue.`);
+			}
+			if (verdict === 'confirmed') {
+				problems.push(`${label}: the problem of a callout that the user closed comes again only with the verdict plausible.`);
 			}
 		}
 
@@ -453,9 +507,12 @@ export function checkReview(raw: Json, ctx: ReviewContext): { issues: IssueInput
 
 // The review after a new review of Claude. A new review of the same round replaces the open issues of that round. An issue
 // that repeats an earlier issue keeps its id and its state, and a repeated closed or fixed issue opens again. The issues
-// that the user decided stay. time: the time of the review
-export function applyReview(review: ReviewFile, round: Omit<ReviewRound, 'time' | 'cap'>, inputs: readonly IssueInput[], time: string)
-	: { review: ReviewFile; added: number; repeated: number } {
+// that the user decided stay. time: the time of the review. started: the issues with a step that the user started. They
+// stay. capLimit: the cap from the feedback of the user (P35)
+export function applyReview(
+	review: ReviewFile, round: Omit<ReviewRound, 'time' | 'cap'>, inputs: readonly IssueInput[], time: string,
+	{ started = new Set<string>(), capLimit }: { started?: ReadonlySet<string>; capLimit?: number } = {},
+): { review: ReviewFile; added: number; repeated: number } {
 	const repeats = new Map(inputs.filter((i) => i.repeats).map((i) => [i.repeats!, i]));
 	let nextId = review.nextId;
 	const others: ReviewIssue[] = []; // the issues that keep their state and their list
@@ -464,9 +521,9 @@ export function applyReview(review: ReviewFile, round: Omit<ReviewRound, 'time' 
 		const input = repeats.get(old.id);
 		if (input) {
 			const { repeats: _r, ...fields } = input;
-			const { closed: _c, secondReason: _s, ...rest } = old;
+			const { closed: _c, secondReason: _s, fixed: _f, ...rest } = old;
 			current.push({ ...rest, ...fields, id: old.id, round: old.round, lastRound: round.n, list: 'steps', state: 'open' });
-		} else if (!(old.lastRound === round.n && old.state === 'open')) {
+		} else if (!(old.lastRound === round.n && old.state === 'open') || started.has(old.id)) {
 			others.push(old);
 		}
 		// an open issue of an earlier review of this round goes away: the new review replaces it
@@ -474,9 +531,84 @@ export function applyReview(review: ReviewFile, round: Omit<ReviewRound, 'time' 
 	for (const input of inputs.filter((i) => !i.repeats)) {
 		current.push({ ...input, id: `I${nextId++}`, round: round.n, lastRound: round.n, list: 'steps', state: 'open' });
 	}
-	const cap = capOf(round.changedLines);
+	const cap = Math.min(capOf(round.changedLines), capLimit ?? CAP_MAX);
 	const rounds = [...review.rounds.filter((r) => r.n !== round.n), { ...round, cap, time }].sort((a, b) => a.n - b.n);
 	return { review: { ...review, rounds, issues: [...others, ...assignLists(current, cap)], nextId }, added: inputs.length - repeats.size, repeated: repeats.size };
+}
+
+// The steps of the issues (P22): each issue of the list of steps that the user did not close, in the sequence of the
+// list. The id of a step is the id of its issue. Its places are the place of the issue and the places of the fix. Its text
+// gives the failure scenario, and its open decisions are the decisions of the fix
+export function issueSteps(review: ReviewFile | undefined): PlanStep[] {
+	return (review?.issues ?? []).filter((i) => i.list === 'steps' && i.state !== 'closed').map((i) => ({
+		id: i.id,
+		title: i.title,
+		task: 'review',
+		hooks: [],
+		places: [i.place, ...(i.fixPlaces ?? [])].map((p) => ({ file: p.file, lines: p.lines, code: p.code, codeLine: p.codeLine })),
+		text: `${i.summary} Trigger: ${i.scenario.trigger} Path: ${i.scenario.path} Result: ${i.scenario.result}`
+			+ `${i.scenario.interleave ? ` Interleave: ${i.scenario.interleave}` : ''}`,
+		checks: [`The failure scenario of ${i.id} cannot occur.`],
+		decisions: i.decisions,
+		issue: i.id,
+	}));
+}
+
+// The steps that the build tools work with: the steps of the plan, and in stage 6 also the steps of the issues after
+// them. The steps of the plan are done in stage 6, so the steps of the issues go in sequence
+export function workPlanOf(plan: Plan | undefined, review: ReviewFile | undefined, stage: string | undefined): Plan | undefined {
+	if (stage !== 'review') {
+		return plan;
+	}
+	const steps = [...(plan?.steps ?? []), ...issueSteps(review)];
+	return plan || steps.length > 0 ? { steps } : undefined;
+}
+
+// The issues that the next round checks (P23): the issues that the user fixed after the last round
+export function issuesToCheck(review: ReviewFile | undefined): ReviewIssue[] {
+	const last = review?.rounds[review.rounds.length - 1];
+	return last ? review!.issues.filter((i) => i.state === 'fixed' && (!i.fixed || i.fixed >= last.time)) : [];
+}
+
+// The feedback of the user for 1 area of the focus (P35). decided: the issues of the list of steps that the user fixed or
+// closed. noAction: the issues that the user closed with "Not a problem"
+export interface AreaFeedback {
+	readonly area: Area;
+	readonly decided: number;
+	readonly noAction: number;
+	readonly isTooNoisy: boolean; // more than 10% with no action, after 10 decided issues or more
+}
+
+export interface ReviewFeedback {
+	readonly decided: number;
+	readonly areas: readonly AreaFeedback[];
+	// the cap from the feedback: the last rank of the list of steps before the rate with no action passes 10%. undefined:
+	// fewer than 10 decided issues with a rank
+	readonly cap?: number;
+}
+
+// The feedback of the user from the reviews of all tasks of the folder (P35)
+export function feedbackOf(reviews: readonly ReviewFile[]): ReviewFeedback {
+	const decided = reviews.flatMap((r) => r.issues).filter((i) => i.list === 'steps' && (i.state === 'fixed' || i.state === 'closed'));
+	const areas = AREAS.map((area) => {
+		const of = decided.filter((i) => areaOf(i.category) === area);
+		const noAction = of.filter((i) => i.state === 'closed').length;
+		return { area, decided: of.length, noAction, isTooNoisy: of.length >= FEEDBACK_MIN && noAction / of.length > FEEDBACK_RATE };
+	}).filter((a) => a.decided > 0);
+	const ranked = decided.filter((i) => i.rank !== undefined);
+	let cap: number | undefined;
+	if (ranked.length >= FEEDBACK_MIN) {
+		cap = CAP_MAX;
+		for (let rank = 1; rank <= CAP_MAX; rank++) {
+			const head = ranked.filter((i) => i.rank! <= rank);
+			if (head.length > 0 && head.filter((i) => i.state === 'closed').length / head.length > FEEDBACK_RATE) {
+				// at least 1 step, also when the first rank passes 10%
+				cap = Math.max(1, rank - 1);
+				break;
+			}
+		}
+	}
+	return { decided: decided.length, areas, ...(cap !== undefined ? { cap } : {}) };
 }
 
 // The issues of a list
@@ -524,7 +656,8 @@ function parseIssue(value: unknown): ReviewIssue | undefined {
 		...(fixPlaces && fixPlaces.length > 0 ? { fixPlaces: fixPlaces as IssuePlace[] } : {}), decisions, tools: value.tools,
 		...(typeof value.repeats === 'string' ? { repeats: value.repeats } : {}), ...(typeof value.evidence === 'string' ? { evidence: value.evidence } : {}),
 		list: value.list, ...(isIn(value.secondReason, ['plausible', 'pre-existing', 'cap'] as const) ? { secondReason: value.secondReason } : {}),
-		state: value.state, ...(closed ? { closed } : {}),
+		...(value.isUserStep === true ? { isUserStep: true as const } : {}), ...(Number.isInteger(value.rank) ? { rank: value.rank as number } : {}),
+		state: value.state, ...(closed ? { closed } : {}), ...(typeof value.fixed === 'string' ? { fixed: value.fixed } : {}),
 	};
 }
 

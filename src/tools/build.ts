@@ -1,6 +1,6 @@
 import type { DiffFacts } from '../dataflow/dataflow-api';
 import {
-	addedLines, buildNext, buildWriterOf, checkChoices, checkErrand, CurrentStep, FileHunk, findStep, hunkKey, keepMarks, markName, Receipt, receiptChanges,
+	addedLines, buildWriterOf, checkChoices, checkErrand, CurrentStep, FileHunk, findStep, hunkKey, keepMarks, markName, Receipt, receiptChanges,
 	receiptCounts, scopeOf, stateOf, walkText,
 } from '../session/build';
 import { checkFrame, findMarkers, Hole, holeNow } from '../session/frame';
@@ -9,7 +9,7 @@ import { hashLines } from '../session/lines';
 import { absolutePath, IS_CASE_SENSITIVE, isCppFile, isInside, projectPath } from '../session/paths';
 import { decisionsOf, levelOf, LevelsFile, openDecisions, placeName, PlanStep } from '../session/plan';
 import { STAGE_INFO, stageText } from '../session/stages';
-import type { Snapshot } from '../session/store';
+import { Snapshot, stepNext, workPlan } from '../session/store';
 import { decisionsData, placeNow } from './plan';
 import type { SurveyDeps } from './survey';
 
@@ -44,7 +44,7 @@ export interface BuildDeps extends SurveyDeps {
 	readonly changes: StepChanges;
 }
 
-const NOT_BUILD = 'Steps open only in stage 5, the build, after the gate "Accept the plan" of the user.';
+const NOT_BUILD = 'Steps open only in stage 5, the build, after the gate "Accept the plan" of the user, and for the issues of the review in stage 6.';
 // The maximum number of the lines of the diff of a new file in a receipt
 const MAX_NEW_DIFF = 400;
 // The maximum number of the names in scope at the line of a hole
@@ -54,7 +54,7 @@ const MAX_OUTSIDE = 50;
 const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 const linesOfText = (text: string): string[] => text.split(/\r?\n/);
 
-// The active task in stage 5, else an error for Claude
+// The active task in stage 5, or in stage 6 for the steps of the issues, else an error for Claude
 function requireBuild(snapshot: Snapshot): { root: string } {
 	const { task, root, isPaused } = snapshot;
 	if (!task || !root) {
@@ -63,7 +63,7 @@ function requireBuild(snapshot: Snapshot): { root: string } {
 	if (task.isDone) {
 		throw new Error('The task is done. It has no open steps.');
 	}
-	if (task.stage !== 'build') {
+	if (task.stage !== 'build' && task.stage !== 'review') {
 		throw new Error(`The active task is in ${stageText(task.stage)}. ${NOT_BUILD}`);
 	}
 	if (isPaused) {
@@ -91,7 +91,8 @@ function holesData(holes: readonly Hole[], root: string, readLines: (file: strin
 // and its receipt with the marks and the notes of the user
 export function stepData(snapshot: Snapshot, ref: { step: PlanStep; n: number }, current: CurrentStep | undefined,
 	readLines: (file: string) => readonly string[] | undefined): Record<string, unknown> {
-	const { plan, risk, levels, build, root } = snapshot;
+	const { risk, levels, build, root } = snapshot;
+	const plan = workPlan(snapshot);
 	const { step, n } = ref;
 	const b = build?.steps[step.id];
 	const level = b?.level ?? levelOf(step, risk, levels).level;
@@ -105,6 +106,7 @@ export function stepData(snapshot: Snapshot, ref: { step: PlanStep; n: number },
 		n,
 		total: plan?.steps.length ?? 0,
 		id: step.id,
+		...(step.issue ? { issue: step.issue } : {}),
 		title: step.title,
 		task: step.task,
 		text: step.text,
@@ -142,17 +144,19 @@ export function stepData(snapshot: Snapshot, ref: { step: PlanStep; n: number },
 // The result of get_step: the current step, or a step by its id or number
 export function getStep(deps: BuildDeps, args: Record<string, unknown>): Record<string, unknown> {
 	const snapshot = deps.store.snapshot;
-	const { task, plan } = snapshot;
+	const { task } = snapshot;
+	const plan = workPlan(snapshot);
 	if (!task || !plan) {
 		throw new Error(`The active task has no plan. ${NOT_BUILD}`);
 	}
 	const current = deps.store.current;
 	const ref = args.step === undefined || args.step === '' ? (current ? { step: current.step, n: current.n } : undefined) : findStep(plan, args.step);
 	if (!ref) {
-		throw new Error(args.step === undefined ? 'Each step of the plan is done.' : `The plan has no step ${String(args.step)}. Give the id of a step, for example S5, or its number.`);
+		throw new Error(args.step === undefined ? 'Each step is done.'
+			: `The plan has no step ${String(args.step)}. Give the id of a step, for example S5 or I3 for the step of an issue, or its number.`);
 	}
 	const readLines = (file: string) => deps.readText(file)?.split(/\r?\n/);
-	const next = task.stage === 'build' && !task.isDone ? buildNext(current).next : STAGE_INFO[task.stage].next;
+	const next = stepNext(snapshot, current)?.next ?? STAGE_INFO[task.stage].next;
 	return { ...stepData(snapshot, ref, current, readLines), next };
 }
 
@@ -161,39 +165,41 @@ export function getStep(deps: BuildDeps, args: Record<string, unknown>): Record<
 export async function startStep(deps: BuildDeps, args: Record<string, unknown>): Promise<Record<string, unknown>> {
 	const store = deps.store;
 	const { root } = requireBuild(store.snapshot);
-	const { task, plan } = store.snapshot;
+	const { task } = store.snapshot;
+	const plan = workPlan(store.snapshot);
 	const kind = args.kind === undefined || args.kind === '' ? undefined : String(args.kind);
 	if (kind !== undefined && kind !== 'errand' && kind !== 'frame') {
 		throw new Error('Give "kind": "errand" for an errand, "frame" for a frame, or no kind.');
 	}
 	const found = findStep(plan, args.step);
 	if (!found) {
-		throw new Error(`The plan has no step ${String(args.step ?? '')}. Give the id of a step, for example S5, or its number. Call shotgun_get_plan for the steps.`);
+		throw new Error(`The plan has no step ${String(args.step ?? '')}. Give the id of a step, for example S5 or I3 for the step of an issue, or its number. `
+			+ 'Call shotgun_get_plan for the steps.');
 	}
 	const current = store.current;
 	if (!current) {
-		throw new Error('Each step of the plan is done.');
+		throw new Error('Each step is done.');
 	}
 	if (current.step.id !== found.step.id) {
-		throw new Error(`Step ${found.n} is not the current step. The steps go in sequence. The current step is step ${current.n}, "${current.step.title}", `
+		throw new Error(`Step ${found.ref} is not the current step. The steps go in sequence. The current step is step ${current.ref}, "${current.step.title}", `
 			+ `and ${writerText(current)}. Tell the user.`);
 	}
 	if (current.writer === 'user') {
 		const frame = current.level === 4 ? ' For a frame of Claude, the user selects "I want a frame" in the panel of Shotgun first, and then asks you.' : '';
-		throw new Error(`Step ${current.n} has risk level ${current.level ?? '?'}, so the user writes it.${frame} Do not change its files. Tell the user, and `
+		throw new Error(`Step ${current.ref} has risk level ${current.level ?? '?'}, so the user writes it.${frame} Do not change its files. Tell the user, and `
 			+ 'answer the questions of the user in the chat.');
 	}
 	const isFrame = current.writer === 'frame';
 	if (kind && kind !== (isFrame ? 'frame' : 'errand')) {
 		throw new Error(isFrame
-			? `Step ${current.n} is a frame: write only the lines with no decision, and a hole for each decision of the user. Give "kind": "frame".`
-			: `Step ${current.n} has risk level ${current.level ?? '?'}, so it is an errand with no holes. Give "kind": "errand".`);
+			? `Step ${current.ref} is a frame: write only the lines with no decision, and a hole for each decision of the user. Give "kind": "frame".`
+			: `Step ${current.ref} has risk level ${current.level ?? '?'}, so it is an errand with no holes. Give "kind": "errand".`);
 	}
 	// each open decision is a hole of the frame (decision 32), so a frame needs an open decision
 	const levels = store.snapshot.levels;
 	const open = openDecisions(found.step, levels);
 	if (isFrame && decisionsOf(found.step, levels) && open.length === 0) {
-		throw new Error(`Step ${current.n} has no open decision, so a frame has no hole. Do not change its files. Tell the user: the user can add a `
+		throw new Error(`Step ${current.ref} has no open decision, so a frame has no hole. Do not change its files. Tell the user: the user can add a `
 			+ 'decision on the plan page, or change the level of the step.');
 	}
 	const submitTool = isFrame ? SUBMIT_FRAME_TOOL : SUBMIT_ERRAND_TOOL;
@@ -328,10 +334,10 @@ async function hunksOf(deps: BuildDeps, root: string, step: NonNullable<CurrentS
 export async function submitFrame(deps: BuildDeps, args: Record<string, unknown>): Promise<Record<string, unknown>> {
 	const store = deps.store;
 	const { root } = requireBuild(store.snapshot);
-	const found = findStep(store.snapshot.plan, args.step);
+	const found = findStep(workPlan(store.snapshot), args.step);
 	const current = store.current;
 	if (!found || !current || current.step.id !== found.step.id || current.state !== 'open' || current.writer !== 'frame' || !current.build) {
-		const open = current && current.state === 'open' && current.writer === 'frame' ? ` The open frame step is step ${current.n}.` : ' No frame step is open.';
+		const open = current && current.state === 'open' && current.writer === 'frame' ? ` The open frame step is step ${current.ref}.` : ' No frame step is open.';
 		throw new Error(`Step ${String(args.step ?? '')} is not open for a frame.${open} Open the current step with ${START_STEP_TOOL} and the kind frame first.`);
 	}
 	const step = current.build;
@@ -390,11 +396,10 @@ export async function submitFrame(deps: BuildDeps, args: Record<string, unknown>
 export async function submitErrand(deps: BuildDeps, args: Record<string, unknown>): Promise<Record<string, unknown>> {
 	const store = deps.store;
 	const { root } = requireBuild(store.snapshot);
-	const { plan } = store.snapshot;
-	const found = findStep(plan, args.step);
+	const found = findStep(workPlan(store.snapshot), args.step);
 	const current = store.current;
 	if (!found || !current || current.step.id !== found.step.id || current.state !== 'open' || current.writer !== 'claude' || !current.build) {
-		const open = current && current.state === 'open' && current.writer === 'claude' ? ` The open step is step ${current.n}.` : ' No step of Claude is open.';
+		const open = current && current.state === 'open' && current.writer === 'claude' ? ` The open step is step ${current.ref}.` : ' No step of Claude is open.';
 		throw new Error(`Step ${String(args.step ?? '')} is not open for Claude.${open} Open the current step with ${START_STEP_TOOL} first.`);
 	}
 	const step = current.build;

@@ -25,7 +25,7 @@ This document tells how to change, run, test and release the code of Shotgun. [I
 | `src/webview-side/` | The code of the panel and the page in the webview, with Preact |
 | `src/test/unit/` | The unit tests |
 | `plugin/skills/` | The skills of the plugin for Claude Code |
-| `scripts/` | `build-webviews.mjs` bundles the panel and the page with esbuild. `package-vsix.mjs` makes the VSIX package. `test-claude.mjs` is the test with Claude Code. |
+| `scripts/` | `build-webviews.mjs` bundles the panel and the page with esbuild. `package-vsix.mjs` makes the VSIX package. `test-claude.mjs` is the test with Claude Code. `measure-review.mjs` measures the review skill on the cases of `review-cases.mjs`. `harness.mjs` has the shared parts of these 2 scripts. |
 | `media/` | The icon of Shotgun |
 | `spikes/` | The tests of phase 0 |
 | `docs/` | The documents of Shotgun |
@@ -58,6 +58,7 @@ The window uses the DataFlow extension of VS Code. To use DataFlow from its repo
 | --- | --- |
 | `npm test` | The unit tests in a test build of VS Code. The tests load DataFlow from `../DataFlow`, or from the folder of the environment variable `DATAFLOW_REPO`. If the environment variable `CLAUDE_EXE` gives the CLI of Claude Code, a test also checks the plugin with `claude plugin validate`. |
 | `node scripts/test-claude.mjs <run folder>` | The test with Claude Code. Type `npm run compile` first. Use a new run folder outside of the repository. |
+| `node scripts/measure-review.mjs <run folder>` | The measurement of the review skill (P36). Type `npm run compile` first. Options: `--efforts low,medium,high`, `--runs 3`, `--cases B1,C1` and `--model sonnet`. With `--report`, the script makes the results again from the runs in the run folder, with no new run. |
 
 `scripts/test-claude.mjs` does 1 full task in a copy of the fixture `battery` of DataFlow, from the brief to the end of the review:
 
@@ -69,9 +70,19 @@ The window uses the DataFlow extension of VS Code. To use DataFlow from its repo
 - The test sets step 3 to level 4, and asks for a frame. Claude gives the frame, and the test fills the holes with Tab and the hints.
 - In step 4, the test writes a line with a race. The race shows as a callout, and Claude explains it and answers a question about a line.
 - The test ends step 4, hands a loose end to Claude, and writes a commit message. Claude checks the message.
-- The test passes "The build is done", selects the effort and the focus of the review, and copies the review prompt. A new run of Claude Code reviews the task with subagents. The test checks a refusal of Shotgun through the bridge, closes an issue with "Not a problem", and ends the task.
+- The test passes "The build is done", selects the effort and the focus of the review, and copies the review prompt. A new run of Claude Code reviews the task with subagents. The test checks a refusal of Shotgun through the bridge.
+- The issues are steps. A run of Claude Code with no plugins writes the fix of the first step for the user. For Claude, the test takes a step with no line near the lines of the first step, because 1 fix can remove 2 issues. The test lowers this step to level 2, and Claude fixes it with a receipt. "Not a problem" closes 1 issue.
+- Round 2 reviews the fixes, and checks each fixed issue in a subagent. A correct fix stays fixed. An issue with a wrong fix comes again with its id. The closed issue does not come again. The test ends the task, and Claude checks the commit message again.
 
-NOTE: `scripts/test-claude.mjs` uses the Claude subscription of the user for 13 runs of Claude Code. It does not change the settings of the user.
+NOTE: `scripts/test-claude.mjs` uses the Claude subscription of the user for 17 runs of Claude Code. It does not change the settings of the user.
+
+`scripts/measure-review.mjs` measures the review skill on the 12 cases of `scripts/review-cases.mjs` in a copy of the fixture `battery`. Of these cases, 8 have 1 known bug each, and 4 have no bug. For each case, effort and run, it makes a task in stage 6 and runs the review prompt in a new run of Claude Code. An issue finds the bug if its place is in the file of the bug, near the line of the bug.
+
+Each other issue is a test gap, a pre-existing problem, or an issue of the kind other. Each brief asks for a test, and no change has a test, so a test gap is a correct issue. An issue of the kind other is a false alarm, or a real problem that the case did not plan. The precision is the issues of the bug, divided by the issues of the bug and of the kind other.
+
+The run folder gets `results.jsonl`, `results.md` and `summary.json`. They give the recall, the precision, the time, the subagents and the cost of each effort. They also list each issue of the kind other, so that you can examine it. With a run folder that has `results.jsonl`, the script continues with the runs that are not done.
+
+NOTE: `scripts/measure-review.mjs` uses the Claude subscription of the user for each run: 108 runs with the default options, about 3 hours. It does not change the settings of the user.
 
 ## Make a release
 

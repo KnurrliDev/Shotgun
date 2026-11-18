@@ -157,10 +157,11 @@ export interface BuildFile {
 	readonly steps: Readonly<Record<string, BuildStep>>;
 }
 
-// The current step: the first step of the plan that is not done (strict sequence)
+// The current step: the step that is started, else the first step of the plan that is not done (strict sequence)
 export interface CurrentStep {
 	readonly step: PlanStep;
 	readonly n: number; // the place of the step in the plan, from 1
+	readonly ref: string; // the step in a text: its number, or the id of the issue for the step of an issue, for example I3
 	readonly total: number;
 	readonly level: Level | null;
 	readonly writer: BuildWriter;
@@ -173,26 +174,31 @@ export const stateOf = (build: BuildFile | undefined, id: string): StepState => 
 export function currentStep(plan: Plan | undefined, risk: RiskFile | undefined, levels: LevelsFile | undefined, build: BuildFile | undefined)
 	: CurrentStep | undefined {
 	const steps = plan?.steps ?? [];
-	const n = steps.findIndex((s) => stateOf(build, s.id) !== 'done');
+	// a started step stays the current step. In stage 6, a new step of an issue can come before it (P22)
+	const started = steps.findIndex((s) => !['todo', 'done'].includes(stateOf(build, s.id)));
+	const n = started >= 0 ? started : steps.findIndex((s) => stateOf(build, s.id) !== 'done');
 	if (n < 0) {
 		return undefined;
 	}
 	const step = steps[n];
 	const b = build?.steps[step.id];
 	const level = b?.level ?? levelOf(step, risk, levels).level;
-	return { step, n: n + 1, total: steps.length, level, writer: b?.writer ?? buildWriterOf(level), state: b?.state ?? 'todo', ...(b ? { build: b } : {}) };
+	return { step, n: n + 1, ref: refOf(step, n + 1), total: steps.length, level, writer: b?.writer ?? buildWriterOf(level), state: b?.state ?? 'todo', ...(b ? { build: b } : {}) };
 }
 
+// The step in a text: its number in the plan, or the id of the issue for the step of an issue (P22)
+export const refOf = (step: PlanStep, n: number): string => (step.issue ? step.id : String(n));
+
 // The step of a reference of Claude or of the user: the id of a step, or its number in the plan, from 1
-export function findStep(plan: Plan | undefined, ref: unknown): { step: PlanStep; n: number } | undefined {
+export function findStep(plan: Plan | undefined, ref: unknown): { step: PlanStep; n: number; ref: string } | undefined {
 	const steps = plan?.steps ?? [];
 	const text = typeof ref === 'number' ? String(ref) : typeof ref === 'string' ? ref.trim().replace(/^step\s+/i, '') : '';
 	const byId = steps.findIndex((s) => s.id.toLowerCase() === text.toLowerCase());
 	if (byId >= 0) {
-		return { step: steps[byId], n: byId + 1 };
+		return { step: steps[byId], n: byId + 1, ref: refOf(steps[byId], byId + 1) };
 	}
 	const n = /^\d+$/.test(text) ? Number(text) : 0;
-	return n >= 1 && n <= steps.length ? { step: steps[n - 1], n } : undefined;
+	return n >= 1 && n <= steps.length ? { step: steps[n - 1], n, ref: refOf(steps[n - 1], n) } : undefined;
 }
 
 // The files of the places of a step, in their sequence and with no copy
@@ -432,12 +438,19 @@ export function walkText(receipt: Receipt | undefined): string {
 //-------------------
 // The next work, and the rule of the guard
 
-const stepName = (current: CurrentStep): string => `step ${current.n} of ${current.total}, "${current.step.title}"`;
+// the name of the current step. The step of an issue of the review has the id of its issue
+const stepName = (current: CurrentStep): string => (current.step.issue ? `the fix of issue ${current.step.id}, "${current.step.title}"`
+	: `step ${current.n} of ${current.total}, "${current.step.title}"`);
+// the step in a request of the user, for example "step 5", or "step I3" for the step of an issue
+const stepRef = (current: CurrentStep): string => `step ${current.ref}`;
 
-// The next work in stage 5, and the request in words for Claude Code
-export function buildNext(current: CurrentStep | undefined): { next: string; request?: string } {
+// The next work in stage 5, or in stage 6 for the steps of the issues, and the request in words for Claude Code
+export function buildNext(current: CurrentStep | undefined, isReview = false): { next: string; request?: string } {
 	if (!current) {
-		return { next: 'Each step of the plan is done. The user selects "The task is done".' };
+		return {
+			next: isReview ? 'Each step of the issues is done. The user selects "The task is done", or copies the review prompt for the next round.'
+				: 'Each step of the plan is done. The user selects "The build is done".',
+		};
 	}
 	const name = stepName(current);
 	if (current.writer === 'user') {
@@ -453,7 +466,7 @@ export function buildNext(current: CurrentStep | undefined): { next: string; req
 				return {
 					next: `Claude writes the frame of ${name}, at risk level ${current.level ?? '?'}: the lines with no decision, and a hole for each decision `
 						+ 'of the user. The user asks Claude for it. Claude opens the step with shotgun_start_step and the kind frame first.',
-					request: `Give me a frame for step ${current.n}.`,
+					request: `Give me a frame for ${stepRef(current)}.`,
 				};
 			case 'open':
 				return { next: `Claude writes the frame of ${name}. Then Claude gives the holes with their hints with shotgun_submit_frame.` };
@@ -478,7 +491,7 @@ export function buildNext(current: CurrentStep | undefined): { next: string; req
 			}
 			return {
 				next: `Claude writes ${name}, at risk level ${current.level ?? '?'}. The user asks Claude for it. Claude opens the step with shotgun_start_step first.`,
-				request: `Do step ${current.n}.`,
+				request: `Do ${stepRef(current)}.`,
 			};
 		case 'open':
 			return { next: `Claude writes ${name}. Claude changes only the files of its scope, and then gives the receipt with shotgun_submit_errand.` };
@@ -488,7 +501,7 @@ export function buildNext(current: CurrentStep | undefined): { next: string; req
 				return {
 					next: `The user walks the receipt of ${name}: ${walkText(current.build?.receipt)}. The user can ask Claude to fix the issues and to answer `
 						+ 'the questions. Then Claude opens the step again with shotgun_start_step.',
-					request: `Fix the issues of step ${current.n}.`,
+					request: `Fix the issues of ${stepRef(current)}.`,
 				};
 			}
 			return { next: `The user walks the receipt of ${name}: ${walkText(current.build?.receipt)}. Then the user selects "Accept the receipt".` };

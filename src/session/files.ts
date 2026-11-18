@@ -98,6 +98,7 @@ export interface QuestionsFile {
 // - review: Claude gave a review of stage 6, with its round, its effort and the number of its issues in each list
 // - issue-close: the user closed an issue of the review with "Not a problem" and a reason. issue-open: the user opened
 //   it again
+// - issue-step: the user made an issue of the second list a step (isStep true), or put it back into the second list
 export const DECISION_ACTIONS = ['answer', 'open', 'add', 'remove'] as const;
 export type DecisionAction = (typeof DECISION_ACTIONS)[number];
 
@@ -176,7 +177,8 @@ export type Decision =
 		readonly issues: number; readonly steps: number; readonly second: number;
 	}
 	| { readonly version: 1; readonly time: string; readonly kind: 'issue-close'; readonly by: 'user'; readonly issue: string; readonly title: string; readonly reason: string }
-	| { readonly version: 1; readonly time: string; readonly kind: 'issue-open'; readonly by: 'user'; readonly issue: string };
+	| { readonly version: 1; readonly time: string; readonly kind: 'issue-open'; readonly by: 'user'; readonly issue: string }
+	| { readonly version: 1; readonly time: string; readonly kind: 'issue-step'; readonly by: 'user'; readonly issue: string; readonly title: string; readonly isStep: boolean };
 
 // The gates of a step: the gate of an errand, and the gate of a step of the user
 export const STEP_GATES = ['accept-receipt', 'step-done'] as const;
@@ -416,6 +418,9 @@ function parseDecision(value: unknown): Decision | undefined {
 				? { version: FILE_VERSION, time, kind: 'issue-close', by: 'user', issue: value.issue, title: value.title, reason: value.reason } : undefined;
 		case 'issue-open':
 			return value.by === 'user' && isText(value.issue) ? { version: FILE_VERSION, time, kind: 'issue-open', by: 'user', issue: value.issue } : undefined;
+		case 'issue-step':
+			return value.by === 'user' && isText(value.issue) && typeof value.title === 'string' && typeof value.isStep === 'boolean'
+				? { version: FILE_VERSION, time, kind: 'issue-step', by: 'user', issue: value.issue, title: value.title, isStep: value.isStep } : undefined;
 		case 'step-gate':
 			return value.by === 'user' && isText(value.step) && (STEP_GATES as readonly unknown[]).includes(value.gate) && typeof value.notWalked === 'number'
 				? {

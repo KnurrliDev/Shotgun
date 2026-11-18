@@ -5,7 +5,8 @@ import {
 } from '../session/callouts';
 import { absolutePath, IS_CASE_SENSITIVE, isCppFile, isInside, projectPath } from '../session/paths';
 import { stageText } from '../session/stages';
-import type { Snapshot } from '../session/store';
+import { currentStep } from '../session/build';
+import { isStepStage, Snapshot, workPlan } from '../session/store';
 import type { PromptLog } from './prompts';
 import type { EngineApi, SurveyDeps } from './survey';
 
@@ -91,15 +92,17 @@ export function lineFacts(line: number, place?: PlaceFacts, threads?: ThreadFact
 	return out;
 }
 
-// The current step with callouts: a step of the user, or a frame with its holes
-function currentOf(snapshot: Snapshot): { id: string; n: number } | undefined {
-	const { task, plan, build } = snapshot;
-	if (!task || task.isDone || task.stage !== 'build' || !plan) {
+// The current step with callouts: a step of the user, or a frame with its holes. This is in stage 5, or for an issue
+// in stage 6
+function currentOf(snapshot: Snapshot): { id: string; n: number; ref: string } | undefined {
+	const plan = workPlan(snapshot);
+	if (!isStepStage(snapshot.task) || !plan) {
 		return undefined;
 	}
-	const n = plan.steps.findIndex((s) => build?.steps[s.id]?.state !== 'done');
-	const b = n >= 0 ? build?.steps[plan.steps[n].id] : undefined;
-	return b && ((b.writer === 'user' && b.state === 'open') || (b.writer === 'frame' && b.state === 'holes')) ? { id: plan.steps[n].id, n: n + 1 } : undefined;
+	const current = currentStep(plan, snapshot.risk, snapshot.levels, snapshot.build);
+	const b = current?.build;
+	return current && b && ((b.writer === 'user' && b.state === 'open') || (b.writer === 'frame' && b.state === 'holes'))
+		? { id: current.step.id, n: current.n, ref: current.ref } : undefined;
 }
 
 const calloutData = (c: Callout, voice: Voice) => ({
@@ -110,14 +113,15 @@ const calloutData = (c: Callout, voice: Voice) => ({
 // The result of get_callouts
 export function calloutsData(snapshot: Snapshot, voice: Voice): Record<string, unknown> {
 	const { task } = snapshot;
-	if (!task || task.isDone || task.stage !== 'build') {
-		throw new Error(`Callouts are only in stage 5, the build. The active task is ${task ? (task.isDone ? 'done' : `in ${stageText(task.stage)}`) : 'not there'}.`);
+	if (!isStepStage(task)) {
+		throw new Error(`Callouts are only in stage 5, the build, and in the steps of the issues in stage 6. The active task is `
+			+ `${task ? (task.isDone ? 'done' : `in ${stageText(task.stage)}`) : 'not there'}.`);
 	}
 	const current = currentOf(snapshot);
 	const step = current ? snapshot.callouts?.steps[current.id] : undefined;
 	const callouts = (step?.callouts ?? []).filter((c) => !c.isGone);
 	return {
-		step: current ? { n: current.n, id: current.id } : null,
+		step: current ? { n: current.n, id: current.id, ref: current.ref } : null,
 		voice: VOICE_TEXT[voice],
 		callouts: callouts.map((c) => calloutData(c, voice)),
 		answers: (snapshot.callouts?.answers ?? []).filter((a) => !a.resolved).map((a) => ({ id: a.id, place: `${a.file}:${a.line}`, question: a.question })),
@@ -132,7 +136,7 @@ export function submitExplanation(deps: CalloutDeps, args: Record<string, unknow
 	const snapshot = deps.store.snapshot;
 	const current = currentOf(snapshot);
 	if (!current) {
-		throw new Error('The current step has no callouts. Callouts are only for a step of the user or for the holes of a frame, in stage 5.');
+		throw new Error('The current step has no callouts. Callouts are only for a step of the user or for the holes of a frame, in the stages 5 and 6.');
 	}
 	const step = snapshot.callouts?.steps[current.id];
 	const callouts = (step?.callouts ?? []).filter((c) => !c.isGone);
@@ -140,7 +144,7 @@ export function submitExplanation(deps: CalloutDeps, args: Record<string, unknow
 	const line = Number.isInteger(args.line) ? (args.line as number) : 0;
 	const found = callouts.find((c) => c.id.toLowerCase() === ref.toLowerCase()) ?? callouts.find((c) => line > 0 && c.line === line && c.shown);
 	if (!found) {
-		throw new Error(`Step ${current.n} has no callout ${ref || `on line ${line}`}. Call shotgun_get_callouts for the callouts with their ids.`);
+		throw new Error(`Step ${current.ref} has no callout ${ref || `on line ${line}`}. Call shotgun_get_callouts for the callouts with their ids.`);
 	}
 	const text = typeof args.text === 'string' ? args.text.trim().replace(/\s+/g, ' ') : '';
 	if (!text || text.length > MAX_EXPLANATION) {
@@ -156,8 +160,8 @@ export function submitExplanation(deps: CalloutDeps, args: Record<string, unknow
 // Gives the answer of Claude to a question of the user about a line. The question must be in the words of the user
 export async function submitLineAnswer(deps: CalloutDeps, args: Record<string, unknown>): Promise<Record<string, unknown>> {
 	const { task, root } = deps.store.snapshot;
-	if (!task || !root || task.isDone || task.stage !== 'build') {
-		throw new Error('An answer on a line is only for stage 5, the build. Answer the user in the chat.');
+	if (!isStepStage(task) || !root) {
+		throw new Error('An answer on a line is only for the stages 5 and 6. Answer the user in the chat.');
 	}
 	const name = typeof args.file === 'string' ? args.file.trim() : '';
 	const full = name ? absolutePath(name, root) : '';

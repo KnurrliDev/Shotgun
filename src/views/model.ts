@@ -5,7 +5,7 @@ import { parseBrief, partName, partSummary, questionLine } from '../session/brie
 import type { Decision, TaskFile } from '../session/files';
 import { changedTasks, factsOf, MAX_TASK_TEXT, orderOf, orderWarnings } from '../session/order';
 import {
-	buildNext, buildWriterOf, currentStep, diffLines, MAX_CHANGE_NOTE, receiptCounts, stateOf, walkText,
+	buildWriterOf, currentStep, diffLines, MAX_CHANGE_NOTE, receiptCounts, refOf, stateOf, walkText,
 } from '../session/build';
 import { calloutStatus, DEFAULT_PAUSE_SECONDS, DEFAULT_VOICE, MAX_PER_PAUSE, Voice, VOICE_TEXT } from '../session/callouts';
 import { findMarkers, Hole, holeNow, isHoleDone } from '../session/frame';
@@ -16,14 +16,15 @@ import {
 	decisionsOf, levelOf, levelReasons, MAX_DECISION_ANSWER, MAX_DECISION_QUESTION, MAX_LEVEL_NOTE, MAX_USER_DECISIONS, openDecisions, placeName, PlanStep,
 } from '../session/plan';
 import {
-	AREA_INFO, areaOf, AREAS, DEFAULT_OPTIONS, EFFORT_INFO, EFFORTS, IssuePlace, MAX_FOCUS_TEXT, MAX_ISSUE_REASON, ReviewIssue, reviewPrompt,
+	AREA_INFO, areaOf, AREAS, DEFAULT_OPTIONS, EFFORT_INFO, EFFORTS, FEEDBACK_MIN, IssuePlace, issueSteps, issuesToCheck, MAX_FOCUS_TEXT, MAX_ISSUE_REASON,
+	MAX_ROUNDS, ReviewIssue, reviewPrompt, roundOf,
 } from '../session/review';
 import { LEVEL_INFO } from '../session/risk';
 import { GATE_LABEL, returnStages, STAGE_INFO, STAGES, stageText } from '../session/stages';
-import type { Snapshot } from '../session/store';
+import { isStepStage, Snapshot, stepNext, workPlan } from '../session/store';
 import { excerptOf, findHook, Lines } from '../session/survey';
 import type {
-	BriefView, BuildStepView, BuildView, CurrentStepView, DecisionView, GateView, HoleView, HookView, IssuePlaceView, IssueView, LedgerView, LooseEndView,
+	BriefView, BuildStepView, BuildView, CurrentStepView, DecisionView, FeedbackView, GateView, HoleView, HookView, IssuePlaceView, IssueStepView, IssueView, LedgerView, LooseEndView,
 	LooseView, MessageView, NavigatorView, OrderTaskView, OrderView, PlanPlaceView, PlanStepView, PlanView, ReceiptView, ReviewView, SetupRow, StageView,
 	StepDecisionView, SurveyView, TaskView, ViewModel,
 } from './protocol';
@@ -181,6 +182,9 @@ export function decisionText(decision: Decision): string {
 			return `You closed the issue ${decision.issue}, "${decision.title}": not a problem. Your reason: "${decision.reason}".`;
 		case 'issue-open':
 			return `You opened the issue ${decision.issue} again.`;
+		case 'issue-step':
+			return decision.isStep ? `You made the issue ${decision.issue}, "${decision.title}", a step.`
+				: `You put the issue ${decision.issue}, "${decision.title}", back into the second list.`;
 	}
 }
 
@@ -292,9 +296,11 @@ function orderView(snapshot: Snapshot, survey: SurveyView | undefined): OrderVie
 	};
 }
 
-// Stage 4 and later: the plan of Claude, with the level of each step and the places at their lines now
-function planView(snapshot: Snapshot, readLines: ModelInput['readLines']): PlanView | undefined {
-	const { task, plan, risk, levels, root } = snapshot;
+// Stage 4 and later: the plan of Claude, with the level of each step and the places at their lines now. isWork: the work
+// plan, in stage 6 with the steps of the issues after the steps of the plan (P22)
+function planView(snapshot: Snapshot, readLines: ModelInput['readLines'], isWork = false): PlanView | undefined {
+	const { task, risk, levels, root } = snapshot;
+	const plan = isWork ? workPlan(snapshot) : snapshot.plan;
 	if (!task || !plan || !root) {
 		return undefined;
 	}
@@ -332,7 +338,7 @@ function planView(snapshot: Snapshot, readLines: ModelInput['readLines']): PlanV
 			n: i + 1,
 			title: s.title,
 			task: s.task,
-			taskText: order.tasks.find((t) => t.id === s.task)?.text ?? s.task,
+			taskText: s.issue ? `Issue ${s.issue} of the review` : order.tasks.find((t) => t.id === s.task)?.text ?? s.task,
 			hooks: [...s.hooks],
 			places,
 			text: s.text,
@@ -343,12 +349,14 @@ function planView(snapshot: Snapshot, readLines: ModelInput['readLines']): PlanV
 			...(l.user ? { user: l.user } : {}),
 			levelName: info ? `${info.name}, level ${l.level} of 5` : 'No level yet',
 			...(info ? { writer: info.writer, writerText: info.text } : {}),
-			reasons: stepRisk ? levelReasons(s, risk, levels) : ['Shotgun did not check the step with DataFlow yet.'],
+			reasons: s.issue ? ['Each issue of the review is a step of the user at level 4. You can change the level.',
+				...(stepRisk ? [`Only a hint: the heat of the places gives level ${stepRisk.level ?? '?'}.`, ...stepRisk.reasons] : [])]
+				: stepRisk ? levelReasons(s, risk, levels) : ['Shotgun did not check the step with DataFlow yet.'],
 			...(decisions ? { decisions } : {}),
 			isCapped: l.isCapped,
 			userNote: levels?.levels[s.id]?.note ?? '',
-			isLevelEditable: !task.isDone && (task.stage === 'plan' || (task.stage === 'build' && (stateOf(snapshot.build, s.id) === 'todo'
-				|| (stateOf(snapshot.build, s.id) === 'open' && snapshot.build?.steps[s.id]?.writer === 'user')))),
+			isLevelEditable: !task.isDone && (task.stage === 'plan' || ((task.stage === 'build' || (task.stage === 'review' && !!s.issue))
+				&& (stateOf(snapshot.build, s.id) === 'todo' || (stateOf(snapshot.build, s.id) === 'open' && snapshot.build?.steps[s.id]?.writer === 'user')))),
 			...(hottest?.heat ? { heat: { ...hottest.heat, signals: [...(hottest.heat.signals ?? [])] } } : {}),
 		};
 	});
@@ -419,11 +427,10 @@ function holeViews(holes: readonly Hole[], root: string, readLines: ModelInput['
 
 // Stage 5: the navigator: the voice, the callouts of the current step of the user, and the answers of Claude on lines
 function navigatorView(snapshot: Snapshot, voice: Voice, pauseSeconds: number): NavigatorView {
-	const { plan, build, root } = snapshot;
-	const steps = plan?.steps ?? [];
-	const n = steps.findIndex((s) => build?.steps[s.id]?.state !== 'done');
-	const b = n >= 0 ? build?.steps[steps[n].id] : undefined;
-	const step = b && ((b.writer === 'user' && b.state === 'open') || (b.writer === 'frame' && b.state === 'holes')) ? steps[n].id : undefined;
+	const { build, root } = snapshot;
+	const current = currentStep(workPlan(snapshot), snapshot.risk, snapshot.levels, build);
+	const b = current?.build;
+	const step = b && ((b.writer === 'user' && b.state === 'open') || (b.writer === 'frame' && b.state === 'holes')) ? current!.step.id : undefined;
 	const callouts = (step ? snapshot.callouts?.steps[step]?.callouts ?? [] : []).filter((c) => !c.isGone).map((c) => ({
 		id: c.id, kind: c.kind, source: c.source, title: c.title, place: `${c.file}:${c.line}`, path: absolutePath(c.file, root ?? ''), line: c.line,
 		status: calloutStatus(c, voice), proof: [...c.proof], ...(c.explanation ? { explanation: c.explanation.text } : {}),
@@ -458,9 +465,12 @@ function stepsText(numbers: readonly number[]): string {
 
 // The loose ends of the build (phase 9), with the steps of Claude for the loose ends that the user handed over
 function looseView(snapshot: Snapshot): LooseView {
-	const { plan, build, loose, root, risk, levels } = snapshot;
+	const { build, loose, root, risk, levels } = snapshot;
+	const plan = workPlan(snapshot);
 	const steps = plan?.steps ?? [];
 	const n = (id: string) => steps.findIndex((s) => s.id === id) + 1;
+	// the step in a text: its number, or the id of the issue
+	const ref = (id: string) => (n(id) > 0 ? refOf(steps[n(id) - 1], n(id)) : id);
 	const ends = (loose?.ends ?? []).map((e): LooseEndView => ({
 		id: e.id,
 		kind: e.kind,
@@ -470,15 +480,19 @@ function looseView(snapshot: Snapshot): LooseView {
 		...(e.file && root ? { place: e.lines ? placeName({ file: e.file, lines: e.lines }) : e.file, path: absolutePath(e.file, root), line: e.lines?.[0] ?? 1 } : {}),
 		state: e.state,
 		stepN: n(e.step),
-		...(e.handed ? { handed: { id: e.handed, n: n(e.handed), state: stateOf(build, e.handed) } } : {}),
+		step: ref(e.step),
+		...(e.handed ? { handed: { id: e.handed, n: n(e.handed), ref: ref(e.handed), state: stateOf(build, e.handed) } } : {}),
 		...(e.reason ? { reason: e.reason } : {}),
 	}));
-	const checked = (loose?.checked ?? []).map(n).filter((x) => x > 0);
+	// the steps of the plan by number, and the steps of the issues by id
+	const checked = (loose?.checked ?? []).map(n).filter((x) => x > 0 && !steps[x - 1].issue);
+	const issues = (loose?.checked ?? []).filter((id) => n(id) > 0 && steps[n(id) - 1].issue);
+	const parts = [...(checked.length > 0 ? [stepsText(checked)] : []), ...(issues.length > 0 ? [`the ${issues.length === 1 ? 'step' : 'steps'} of ${issues.join(', ')}`] : [])];
 	const current = currentStep(plan, risk, levels, build);
-	const request = current?.step.looseEnd ? buildNext(current).request : undefined;
+	const request = current?.step.looseEnd ? stepNext(snapshot, current)?.request : undefined;
 	return {
 		ends,
-		checked: checked.length > 0 ? `after ${stepsText(checked)}` : 'no step is done yet',
+		checked: parts.length > 0 ? `after ${parts.join(' and ')}` : 'no step is done yet',
 		open: ends.filter((e) => e.state === 'open').length,
 		...(request ? { request } : {}),
 	};
@@ -523,24 +537,29 @@ function ledgerView(snapshot: Snapshot, input: ModelInput): LedgerView | undefin
 		notWalked: sum('notWalked'),
 		decisions: { user: ofUser.length, claude: decisions.filter((d) => d.by === 'claude').length },
 		userDecisions: ofUser.map((d, i) => ({ n: i + 1, text: decisionText(d), time: d.time })),
-		markdown: ledgerMarkdown(task.title, ofUser.map(decisionText), rows),
+		markdown: ledgerMarkdown(task.title, ofUser.map(decisionText), rows, (snapshot.review?.issues ?? []).map((i) => ({
+			id: i.id, title: i.title, severity: i.severity, category: i.category, list: i.list, state: i.state, ...(i.closed ? { reason: i.closed.reason } : {}),
+		}))),
 		message: messageView(snapshot.message, input.commit, root),
 	};
 }
 
 function buildView(snapshot: Snapshot, plan: PlanView, readLines: ModelInput['readLines'], navigator: NavigatorView): BuildView | undefined {
 	const { task, risk, levels, build, root } = snapshot;
-	if (!task || !snapshot.plan || !root) {
+	const work = workPlan(snapshot);
+	if (!task || !work || !root) {
 		return undefined;
 	}
-	const current = currentStep(snapshot.plan, risk, levels, build);
-	const steps: BuildStepView[] = snapshot.plan.steps.map((s, i) => {
+	const current = currentStep(work, risk, levels, build);
+	const steps: BuildStepView[] = work.steps.map((s, i) => {
 		const b = build?.steps[s.id];
 		const level = b?.level ?? levelOf(s, risk, levels).level;
 		const writer = b?.writer ?? buildWriterOf(level);
 		return {
 			id: s.id,
 			n: i + 1,
+			ref: refOf(s, i + 1),
+			...(s.issue ? { issue: s.issue } : {}),
 			title: s.title,
 			level,
 			levelName: level ? `${LEVEL_INFO[level].name}, level ${level} of 5` : 'No level',
@@ -657,11 +676,33 @@ function briefView(snapshot: Snapshot, brief: NonNullable<ModelInput['brief']>):
 }
 
 // Stage 6: the effort and the focus of the next review, the prompt for a new session, and the 2 lists of the review (P22)
-function reviewView(snapshot: Snapshot, readLines: ModelInput['readLines']): ReviewView | undefined {
-	const { task, review, root } = snapshot;
+// briefText: the text of brief.md. The page shows its specs, its work out of scope and its conditions of done next to the
+// issues of the area The brief
+function reviewView(snapshot: Snapshot, readLines: ModelInput['readLines'], briefText?: string): ReviewView | undefined {
+	const { task, review, root, build, risk, levels } = snapshot;
 	if (!task || task.stage !== 'review' || !root) {
 		return undefined;
 	}
+	// the steps of the issues (P22)
+	const current = isStepStage(task) ? currentStep(workPlan(snapshot), risk, levels, build) : undefined;
+	const issueStepsById = new Map(issueSteps(review).map((s) => [s.id, s]));
+	const stepView = (i: ReviewIssue): IssueStepView | undefined => {
+		const s = issueStepsById.get(i.id);
+		if (!s) {
+			return undefined;
+		}
+		const b = build?.steps[s.id];
+		const l = levelOf(s, risk, levels);
+		const level = b?.level ?? l.level;
+		const state = stateOf(build, s.id);
+		return {
+			state, isCurrent: current?.step.id === s.id, level, levelName: level ? `${LEVEL_INFO[level].name}, level ${level} of 5` : 'No level',
+			writer: b?.writer ?? buildWriterOf(level), writerText: WRITER_TEXT[b?.writer ?? buildWriterOf(level)], ...(l.user ? { user: l.user } : {}),
+			...(risk?.steps[s.id]?.level ? { heatLevel: risk.steps[s.id].level! } : {}),
+			isLevelEditable: !task.isDone && (state === 'todo' || (state === 'open' && b?.writer === 'user')),
+			...(s.decisions ? { decisions: stepDecisionsView(s, levels) } : {}),
+		};
+	};
 	const options = review?.options ?? DEFAULT_OPTIONS;
 	const rounds = new Map((review?.rounds ?? []).map((r) => [r.n, r]));
 	const last = review?.rounds[review.rounds.length - 1];
@@ -687,16 +728,32 @@ function reviewView(snapshot: Snapshot, readLines: ModelInput['readLines']): Rev
 	};
 	const issueView = (i: ReviewIssue): IssueView => {
 		const listReason = i.list === 'second' ? reasonOf(i) : undefined;
+		const step = stepView(i);
 		return {
 			id: i.id, title: i.title, summary: i.summary, scenario: { ...i.scenario }, category: i.category, areaName: AREA_INFO[areaOf(i.category)].name,
 			severity: i.severity, origin: i.origin, verdict: i.verdict, source: i.source, place: placeView(i.place), fixPlaces: (i.fixPlaces ?? []).map(placeView),
 			decisions: i.decisions.map((d) => ({ id: d.id, question: d.question, ...(d.options ? { options: [...d.options] } : {}) })), tools: [...i.tools],
 			list: i.list, ...(listReason ? { listReason } : {}), state: i.state, ...(i.closed ? { reason: i.closed.reason } : {}),
-			...(i.evidence ? { evidence: i.evidence } : {}), round: i.lastRound,
+			...(i.evidence ? { evidence: i.evidence } : {}), round: i.lastRound, ...(i.isUserStep ? { isUserStep: true } : {}),
+			...(step ? { step } : {}),
 		};
 	};
-	// the issues of the last round first
-	const issues = [...(review?.issues ?? [])].sort((a, b) => b.lastRound - a.lastRound);
+	// the list of steps in the sequence of the steps. The second list: the issues of the last round first
+	const issues = review?.issues ?? [];
+	// the next round (P23), and the feedback of the user from all tasks (P35)
+	const nextRound = roundOf(review);
+	const isNewRound = !!last && nextRound > last.n;
+	const fb = snapshot.feedback;
+	const feedback: FeedbackView | undefined = fb && fb.decided > 0 ? {
+		decided: fb.decided,
+		areas: fb.areas.map((a) => ({
+			id: a.area, name: AREA_INFO[a.area].name, decided: a.decided, noAction: a.noAction, rate: `${Math.round((100 * a.noAction) / a.decided)}%`,
+			isTooNoisy: a.isTooNoisy, isInFocus: options.areas.includes(a.area),
+		})),
+		...(fb.cap !== undefined ? { cap: fb.cap } : {}),
+		text: `You decided ${count(fb.decided, 'issue')} of the lists of steps in this folder. `
+			+ (fb.cap !== undefined ? `Your feedback sets the cap on the steps to ${count(fb.cap, 'step')} or fewer.` : `From ${FEEDBACK_MIN} decided issues, your feedback moves the cap on the steps.`),
+	} : undefined;
 	return {
 		effort: options.effort,
 		areas: [...options.areas],
@@ -705,7 +762,23 @@ function reviewView(snapshot: Snapshot, readLines: ModelInput['readLines']): Rev
 		allAreas: AREAS.map((a) => ({ id: a, name: AREA_INFO[a].name, looksFor: AREA_INFO[a].looksFor })),
 		maxText: MAX_FOCUS_TEXT,
 		maxReason: MAX_ISSUE_REASON,
-		prompt: reviewPrompt(task.title, options),
+		maxAnswer: MAX_DECISION_ANSWER,
+		maxQuestion: MAX_DECISION_QUESTION,
+		maxUserDecisions: MAX_USER_DECISIONS,
+		prompt: reviewPrompt(task.title, options, nextRound),
+		nextRound,
+		isNewRound,
+		toCheck: isNewRound ? issuesToCheck(review).length : 0,
+		...(nextRound > MAX_ROUNDS ? {
+			roundWarning: `The next review is round ${nextRound}. After ${MAX_ROUNDS} rounds, the issues did not end. Think about the approach of the task `
+				+ 'again before the next round, for example with a different plan.',
+		} : {}),
+		...(feedback ? { feedback } : {}),
+		...(briefText !== undefined ? (() => {
+			const parts = parseBrief(briefText).parts;
+			const linesOf = (id: string) => [...(parts.find((x) => x.id === id)?.lines ?? [])].map((l) => l.replace(/^\s*(?:[-*+]|\d+[.)])\s+/, ''));
+			return { brief: { specs: linesOf('specs'), scope: linesOf('scope'), done: linesOf('done') } };
+		})() : {}),
 		...(base?.commit ? {
 			base: `${base.commit.slice(0, 7)}${base.dirty.length > 0 ? `, ${count(base.dirty.length, 'file')} with changes that were not committed` : ''}`,
 		} : { baseError: base?.error ?? 'The gate "Accept the plan" recorded no base commit, so the review has no diff.' }),
@@ -716,7 +789,7 @@ function reviewView(snapshot: Snapshot, readLines: ModelInput['readLines']): Rev
 			},
 		} : {}),
 		steps: issues.filter((i) => i.list === 'steps').map(issueView),
-		second: issues.filter((i) => i.list === 'second').map(issueView),
+		second: issues.filter((i) => i.list === 'second').sort((a, b) => b.lastRound - a.lastRound).map(issueView),
 		open: issues.filter((i) => i.list === 'steps' && i.state === 'open').length,
 		closed: issues.filter((i) => i.state === 'closed').length,
 	};
@@ -746,7 +819,7 @@ function buildGate(build: BuildView): GateView {
 	if (current.writer === 'user') {
 		return {
 			label: 'The step is done',
-			note: 'Your gate. Shotgun records your lines, and the next step of the plan starts.',
+			note: 'Your gate. Shotgun records your lines, and the next step starts.',
 			isEnabled: current.state === 'open',
 			...(current.state === 'open' ? {} : { reason: 'Shotgun opens the step first.' }),
 		};
@@ -758,7 +831,7 @@ function buildGate(build: BuildView): GateView {
 				note: '',
 				isEnabled: false,
 				reason: current.state === 'open' ? 'Claude writes the frame. The holes come when Claude closes the step.'
-					: `Claude writes the frame first. Tell Claude: "Give me a frame for step ${current.n}."`,
+					: `Claude writes the frame first. Tell Claude: "Give me a frame for step ${current.ref}."`,
 			};
 		}
 		const total = current.holes?.length ?? 0;
@@ -766,7 +839,7 @@ function buildGate(build: BuildView): GateView {
 		const changed = (current.holes ?? []).filter((h) => h.state === 'changed').map((h) => h.n);
 		return {
 			label: 'The step is done',
-			note: 'Your gate. Shotgun records your lines, and the next step of the plan starts.',
+			note: 'Your gate. Shotgun records your lines, and the next step starts.',
 			isEnabled: done === total,
 			...(done < total ? { reason: `Fill the holes first: ${done} of ${count(total, 'hole')} done.` } : {}),
 			...(changed.length > 0 ? {
@@ -781,7 +854,7 @@ function buildGate(build: BuildView): GateView {
 			note: '',
 			isEnabled: false,
 			reason: current.state === 'open' ? 'Claude writes the step. The receipt comes when Claude closes the step.'
-				: `Claude writes this step. Tell Claude: "${build.loose.request ?? `Do step ${current.n}.`}"`,
+				: `Claude writes this step. Tell Claude: "${build.loose.request ?? `Do step ${current.ref}.`}"`,
 		};
 	}
 	const notWalked = receipt.total - receipt.walked;
@@ -791,10 +864,10 @@ function buildGate(build: BuildView): GateView {
 	];
 	return {
 		label: 'Accept the receipt',
-		note: 'Your gate. Shotgun then deletes the base of the step, and the next step of the plan starts.',
+		note: 'Your gate. Shotgun then deletes the base of the step, and the next step starts.',
 		isEnabled: receipt.issues === 0,
 		...(receipt.issues > 0 ? {
-			reason: `${count(receipt.issues, 'change')} ${receipt.issues === 1 ? 'has' : 'have'} an issue. Tell Claude "Fix the issues of step ${current.n}.", `
+			reason: `${count(receipt.issues, 'change')} ${receipt.issues === 1 ? 'has' : 'have'} an issue. Tell Claude "Fix the issues of step ${current.ref}.", `
 				+ 'or change the mark.',
 		} : {}),
 		...(warnings.length > 0 ? { warning: warnings.join(' ') } : {}),
@@ -977,12 +1050,15 @@ function taskView(input: ModelInput): TaskView | null {
 	const survey = task.stage !== 'brief' ? surveyView(snapshot, readLines) : undefined;
 	const order = orderView(snapshot, survey);
 	const plan = task.stage === 'plan' || task.stage === 'build' || task.stage === 'review' ? planView(snapshot, readLines) : undefined;
-	const build = task.stage === 'build' && plan ? buildView(snapshot, plan, readLines, navigatorView(snapshot, voice, pauseSeconds)) : undefined;
-	const review = reviewView(snapshot, readLines);
+	// stage 6: the steps of the issues after the steps of the plan (P22)
+	const work = task.stage === 'build' ? plan : task.stage === 'review' && issueSteps(snapshot.review).length > 0 ? planView(snapshot, readLines, true) : undefined;
+	const build = work ? buildView(snapshot, work, readLines, navigatorView(snapshot, voice, pauseSeconds)) : undefined;
+	const review = reviewView(snapshot, readLines, briefInput?.text);
 	const gate = gateView(task, brief, survey, order, plan, build, review);
+	const stepGate = task.stage === 'review' && !task.isDone && build?.current ? buildGate(build) : undefined;
 	const info = STAGE_INFO[task.stage];
 	const isActive = !task.isDone && !snapshot.isPaused;
-	const now = task.stage === 'build' ? buildNext(currentStep(snapshot.plan, snapshot.risk, snapshot.levels, snapshot.build)) : undefined;
+	const now = stepNext(snapshot, currentStep(workPlan(snapshot), snapshot.risk, snapshot.levels, snapshot.build));
 	let next = now?.next ?? info.next;
 	let guard = info.guard;
 	// stage 6: the review runs in a new session of Claude Code, so the panel copies its prompt instead of a request
@@ -1014,6 +1090,7 @@ function taskView(input: ModelInput): TaskView | null {
 		...(review ? { review } : {}),
 		...(ledger ? { ledger } : {}),
 		...(gate ? { gate } : {}),
+		...(stepGate ? { stepGate } : {}),
 		isDone: task.isDone,
 		isPaused: snapshot.isPaused,
 	};
@@ -1051,10 +1128,10 @@ export function statusOf(snapshot: Snapshot): { text: string; tooltip: string } 
 	if (snapshot.isPaused) {
 		return { text: 'Shotgun: paused', tooltip: `Shotgun: the guard is off for "${task.title}". Select "Shotgun: Continue" to continue.` };
 	}
-	// stage 5: the problems on the lines of the user come first
+	// the stages 5 and 6: the problems on the lines of the user come first
 	const problems = Object.values(snapshot.callouts?.steps ?? {}).flatMap((s) => s.callouts)
 		.filter((c) => c.kind === 'problem' && c.shown && !c.closed && !c.isGone).length;
-	if (task.stage === 'build' && problems > 0) {
+	if ((task.stage === 'build' || task.stage === 'review') && problems > 0) {
 		return {
 			text: `Shotgun: ${problems === 1 ? '1 problem' : `${problems} problems`} on your lines`,
 			tooltip: 'Shotgun: callouts of DataFlow on the lines that you wrote. The panel of Shotgun shows them.',

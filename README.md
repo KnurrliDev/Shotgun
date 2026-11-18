@@ -28,9 +28,9 @@ The plan names the open decisions of each step: the choices that your brief and 
 | 4 | You write the step. You can ask for a frame. |
 | 5 | You write the step, also with no open decision. Claude changes no file, but it answers your questions. |
 
-The guard of Shotgun stops each file change of Claude in the stages 1 to 4 and in stage 6. In the build, it lets Claude change only the files of its open step. While you write, Shotgun shows the new facts of DataFlow on your lines as callouts, for example a race. The ledger keeps your decisions and the writer of each changed line.
+The guard of Shotgun stops each file change of Claude in the stages 1 to 4 and in stage 6. In the build and in the steps of the issues, it lets Claude change only the files of its open step. While you write, Shotgun shows the new facts of DataFlow on your lines as callouts, for example a race. The ledger keeps your decisions and the writer of each changed line.
 
-In stage 6, you select the effort and the focus of the review, and paste its prompt into a new session of Claude Code. The new session did not write the code, so it reviews with a fresh view. It checks each candidate in a verify pass, and gives each issue with a failure scenario and the evidence of DataFlow. Shotgun shows the confirmed new issues in the list of steps, and the other issues in a second list. You close an issue that is not a problem with a reason, and the next review gets it.
+In stage 6, you select the effort and the focus of the review, and paste its prompt into a new session of Claude Code. The new session did not write the code, so it reviews with a fresh view. It checks each candidate in a verify pass, and gives each issue with a failure scenario and the evidence of DataFlow. Shotgun shows the confirmed new issues in the list of steps, and the other issues in a second list. Each issue of the list of steps is a step of yours, as in the build. You close an issue that is not a problem with a reason, and the next review gets it. After your fixes, the next round checks them.
 
 Shotgun needs DataFlow 0.6.2 or later, VS Code 1.143 or later, and Claude Code 2.1.323 or later. DataFlow works only on Windows 64-bit, so Shotgun works only there too.
 

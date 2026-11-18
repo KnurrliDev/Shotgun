@@ -159,6 +159,27 @@ export function hiddenFacts(facts: HiddenFacts): EngineFact[] {
 // The key of a fact at a line: the fact with the text of the line, so a fact that only moves keeps its key
 export const factKey = (fact: EngineFact, lineText: string): string => `${fact.id}|${hashLine(lineText)}`;
 
+// The lines that the search for a moved line examines above and below its old line
+const WINDOW = 200;
+
+// The line near a line that agrees with a test, the nearest first
+export function nearestLine(lines: readonly string[], line: number, isIt: (text: string) => boolean): number | undefined {
+	for (let d = 0; d <= WINDOW; d++) {
+		for (const l of d === 0 ? [line] : [line - d, line + d]) {
+			if (l >= 1 && l <= lines.length && isIt(lines[l - 1])) {
+				return l;
+			}
+		}
+	}
+	return undefined;
+}
+
+// The line of a callout now: the line with the text of the key of the callout, the nearest to the line of the last check
+export function calloutLine(lines: readonly string[], c: Pick<Callout, 'key' | 'line'>): number | undefined {
+	const hash = c.key.slice(c.key.lastIndexOf('|') + 1);
+	return nearestLine(lines, c.line, (text) => hashLine(text) === hash);
+}
+
 // The keys of all facts of a file, for the start of a step
 export function factKeys(facts: readonly EngineFact[], lines: readonly string[]): string[] {
 	return facts.flatMap((f) => f.lines.filter((l) => l >= 1 && l <= lines.length).map((l) => factKey(f, lines[l - 1])));

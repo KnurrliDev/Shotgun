@@ -1,6 +1,6 @@
 // The test of Shotgun with Claude Code. It starts the test build of VS Code with DataFlow and Shotgun from their
 // repository folders. In VS Code, it makes a task with "Shotgun: New Task", and connects DataFlow and Shotgun to Claude
-// Code with their commands. Then it runs 12 prompts of the CLI of Claude Code in print mode:
+// Code with their commands. Then it runs the prompts of the CLI of Claude Code in print mode, in 15 parts:
 // 1. Task 1: the gate of the empty brief is on, because each part is optional. The sidebar of Shotgun shows the task.
 //    The test writes the brief into brief.md, as the user does. "Ask me questions about my brief." loads the skill
 //    shotgun, and Claude gives its questions with shotgun_submit_questions. The test closes the questions.
@@ -40,23 +40,35 @@
 // 12. "The build is done" takes the task to stage 6. The test selects the effort medium and the focus correctness and
 //    threads, and copies the review prompt. A new run of the CLI gets the prompt and loads the skill shotgun-review.
 //    Claude starts subagents, and gives the issues with shotgun_submit_review. The test checks a refusal through the
-//    bridge, closes an issue with "Not a problem", and ends the task (the condition of phase 12).
+//    bridge (the condition of phase 12).
+// 13. Each issue of the list of steps is a step of the user (phase 13). If the list has fewer than 3 steps, "Make it a
+//    step" adds issues of the second list. A run of Claude Code with no plugins stands in for the user and writes the fix
+//    of the first step. 1 fix can remove 2 issues with 1 cause. Thus for Claude, the test takes the next step with no
+//    line near the lines of the first step. "Not a problem" closes each step in front of it, or else the step after it.
+//    The test lowers the step of Claude to level 2, and "Do step I3." gives an errand of Claude with a receipt in stage 6.
+// 14. The panel copies the prompt of round 2. get_review marks the changed hunks and gives the fixed issues. A new run of
+//    the CLI reviews the fixes, and checks each fixed issue in a subagent. A correct fix stays fixed. An issue with a
+//    wrong fix comes again with its id, and its step is not done. The closed issue does not come again.
+// 15. The gate "The task is done" ends the task, and Claude checks the commit message again (the condition of phase 13).
 // The commands write the settings of proposal P15, and the test checks these files. The CLI loads the 2 plugins with
 // --plugin-dir from the folders that the commands wrote. The CLI uses the login and thus the config folder of the user,
 // and a marketplace from settings would go into the plugin data of the user.
 // The settings of the user do not change: the test build has its own user data, MCP registry, folder for the settings
 // of Claude Code and Shotgun folder. The test records the plugin data of Claude Code of the user before the runs, and
 // checks it after them. It removes the empty folders that the CLI makes there.
-// The test uses the Claude subscription of the user for 13 runs of Claude Code, so it runs only on request.
+// The test uses the Claude subscription of the user for 17 runs of Claude Code, so it runs only on request.
 // Usage: node scripts/test-claude.mjs <new run folder>
 // Environment: DATAFLOW_REPO (default: ../DataFlow), CLAUDE_EXE (default: the CLI of the VS Code extension of Claude Code)
 import { execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
-import os from 'node:os';
 import path from 'node:path';
-import { performance } from 'node:perf_hooks';
+import {
+	callBridgeTool as harnessCallBridgeTool, checkBridge as harnessCheckBridge, cleanEnv, cleanUserData, clickAt, clickDialog, codeExe as harnessCodeExe,
+	command, inWebview as harnessInWebview, killTree, listenersOf, poll, quickInput, quickPickNth, readJson, runClaude as harnessRunClaude, sleep,
+	stopProcessesOf, userState, waitFor, workbench as harnessWorkbench,
+} from './harness.mjs';
 
 const repo = path.resolve(import.meta.dirname, '..');
 const DATAFLOW = path.resolve(process.env.DATAFLOW_REPO ?? path.join(repo, '..', 'DataFlow'));
@@ -110,75 +122,7 @@ const { foreignLines, parseBrief } = createRequire(import.meta.url)(path.join(re
 const { levelOf, openDecisions } = createRequire(import.meta.url)(path.join(repo, 'out', 'session', 'plan.js'));
 const { isObviousAnswer } = createRequire(import.meta.url)(path.join(repo, 'out', 'session', 'frame.js'));
 const { reviewPrompt } = createRequire(import.meta.url)(path.join(repo, 'out', 'session', 'review.js'));
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-const newest = (dir, prefix) => fs.readdirSync(dir).filter((d) => d.startsWith(prefix))
-	.sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))[0];
-const codeExe = () => path.join(DATAFLOW, '.vscode-test', newest(path.join(DATAFLOW, '.vscode-test'), 'vscode-win32-x64-archive'), 'Code.exe');
-function claudeExe() {
-	if (process.env.CLAUDE_EXE) {
-		return process.env.CLAUDE_EXE;
-	}
-	const dir = path.join(os.homedir(), '.vscode', 'extensions');
-	return path.join(dir, newest(dir, 'anthropic.claude-code-'), 'resources', 'native-binary', 'claude.exe');
-}
-
-// The environment for a child process: no variables of a session of Claude Code or of a VS Code that started this script
-function cleanEnv(extra = {}) {
-	const env = {};
-	for (const [key, value] of Object.entries(process.env)) {
-		if (!/^(CLAUDE|ANTHROPIC|VSCODE_|ELECTRON_)/i.test(key)) {
-			env[key] = value;
-		}
-	}
-	return { ...env, ...extra };
-}
-
-function killTree(pid) {
-	try {
-		execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
-	} catch {
-		// the process is closed
-	}
-}
-
-// The processes with the run folder in their command line. The query, this script and the processes that started this
-// script are not in the list: the command line of this script also has the run folder
-function processesOf(dir) {
-	const script = "Get-CimInstance Win32_Process | ForEach-Object { \"$($_.ProcessId)`t$($_.ParentProcessId)`t$($_.Name)`t$([int]($_.CommandLine -and "
-		+ `$_.CommandLine.Contains('${dir.replace(/'/g, "''")}') -and -not $_.CommandLine.Contains('Get-CimInstance')))\" }`;
-	const out = execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], { encoding: 'utf8', windowsHide: true });
-	const all = out.split(/\r?\n/).filter(Boolean).map((l) => {
-		const [pid, parent, name, isOfRun] = l.split('\t');
-		return { pid: Number(pid), parent: Number(parent), name, isOfRun: isOfRun === '1' };
-	});
-	const parents = new Map(all.map((x) => [x.pid, x.parent]));
-	const own = new Set();
-	for (let pid = process.pid; pid && !own.has(pid); pid = parents.get(pid)) {
-		own.add(pid);
-	}
-	return all.filter((x) => x.isOfRun && !own.has(x.pid)).map(({ pid, name }) => ({ pid, name }));
-}
-
-const readJson = (file) => {
-	try {
-		return JSON.parse(fs.readFileSync(file, 'utf8'));
-	} catch {
-		return undefined;
-	}
-};
 const hashOf = (file) => createHash('sha256').update(fs.readFileSync(file)).digest('hex');
-
-async function waitFor(fn, seconds, what) {
-	for (let waited = 0; waited < seconds * 1000; waited += 250) {
-		const value = fn();
-		if (value) {
-			return value;
-		}
-		await sleep(250);
-	}
-	throw new Error(`No ${what} after ${seconds} s.`);
-}
 
 //-------------------
 // The run folder
@@ -204,31 +148,6 @@ const userSettings = path.join(p.claudeConfig, 'settings.json');
 const localSettings = path.join(p.project, '.claude', 'settings.local.json');
 const dataflowPlugin = path.join(p.registry, 'claude', 'plugins', 'dataflow');
 const shotgunPlugin = path.join(p.shotgunHome, 'claude', 'plugins', 'shotgun');
-
-// The data of Claude Code of the user that a run of the CLI can change
-const userClaude = path.join(os.homedir(), '.claude');
-const userFiles = [path.join(userClaude, 'plugins', 'known_marketplaces.json'), path.join(userClaude, 'plugins', 'installed_plugins.json')];
-const userFolders = [path.join(userClaude, 'plugins', 'data'), path.join(userClaude, 'projects')];
-const listOf = (folder) => (fs.existsSync(folder) ? fs.readdirSync(folder) : []);
-const userState = () => ({
-	files: userFiles.map((f) => (fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : null)),
-	folders: userFolders.map(listOf),
-});
-
-// Removes a folder that has only empty folders. The result: true if the folder is gone
-function removeIfEmpty(folder) {
-	try {
-		for (const entry of fs.readdirSync(folder, { withFileTypes: true })) {
-			if (!entry.isDirectory() || !removeIfEmpty(path.join(folder, entry.name))) {
-				return false;
-			}
-		}
-		fs.rmdirSync(folder);
-		return true;
-	} catch {
-		return false;
-	}
-}
 
 const results = { checks: [], runs: {} };
 function check(name, isOk, detail) {
@@ -280,123 +199,10 @@ function setup() {
 }
 
 //-------------------
-// VS Code through the Chrome DevTools Protocol
+// VS Code through the Chrome DevTools Protocol, with the functions of harness.mjs
 
-async function connect(url) {
-	const ws = new WebSocket(url);
-	await new Promise((resolve, reject) => {
-		ws.onopen = resolve;
-		ws.onerror = reject;
-	});
-	let nextId = 0;
-	const pending = new Map();
-	ws.onmessage = (e) => {
-		const m = JSON.parse(e.data);
-		if (m.id && pending.has(m.id)) {
-			pending.get(m.id)(m);
-			pending.delete(m.id);
-		}
-	};
-	const send = (method, params = {}) => new Promise((resolve) => {
-		const id = ++nextId;
-		pending.set(id, resolve);
-		ws.send(JSON.stringify({ id, method, params }));
-	});
-	const evaluate = async (expression) => (await send('Runtime.evaluate', { expression, returnByValue: true })).result?.result?.value;
-	return { ws, send, evaluate };
-}
-
-async function workbench() {
-	let page;
-	for (let i = 0; i < 240 && !page; i++) {
-		try {
-			page = (await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json()).find((t) => t.type === 'page' && t.url.includes('workbench'));
-		} catch {
-			// not ready
-		}
-		if (!page) {
-			await sleep(500);
-		}
-	}
-	if (!page) {
-		throw new Error('No workbench page on the debug port.');
-	}
-	const wb = await connect(page.webSocketDebuggerUrl);
-	// the page acts as if it has the focus, also when a different window of the desktop has it
-	await wb.send('Emulation.setFocusEmulationEnabled', { enabled: true });
-	wb.key = async (key, code, vk, modifiers = 0) => {
-		await wb.send('Input.dispatchKeyEvent', { type: 'keyDown', key, code, windowsVirtualKeyCode: vk, modifiers });
-		await wb.send('Input.dispatchKeyEvent', { type: 'keyUp', key, code, windowsVirtualKeyCode: vk, modifiers });
-	};
-	wb.shot = async (name) => {
-		const res = await wb.send('Page.captureScreenshot', { format: 'png' });
-		fs.writeFileSync(path.join(dir, name), Buffer.from(res.result.data, 'base64'));
-	};
-	return wb;
-}
-
-// True if the quick input is visible with this title, or with any title for no title. A webview can take the focus
-// after the quick input opens. Then the quick input gets the focus again
-function isQuickInputReady(wb, title) {
-	return wb.evaluate(`(() => {
-		const w = document.querySelector('.quick-input-widget');
-		if (!w || getComputedStyle(w).display === 'none') { return false; }
-		const t = w.querySelector('.quick-input-title')?.textContent ?? '';
-		if (${JSON.stringify(title ?? '')} && !t.includes(${JSON.stringify(title ?? '')})) { return false; }
-		if (!w.contains(document.activeElement)) { w.querySelector('input')?.focus(); }
-		return w.contains(document.activeElement);
-	})()`);
-}
-
-// Types a text into the visible quick input, and selects Enter. title: the title of the quick input, or no title for the
-// Command Palette
-async function quickInput(wb, text, title) {
-	for (let i = 0; i < 40; i++) {
-		const isReady = await isQuickInputReady(wb, title);
-		if (isReady) {
-			await wb.send('Input.insertText', { text });
-			await sleep(600);
-			await wb.key('Enter', 'Enter', 13);
-			return;
-		}
-		await sleep(250);
-	}
-	throw new Error(`The quick input for "${text}" did not open.`);
-}
-
-// Selects an item of the visible quick pick with this title. n: the index of the item, from 0
-async function quickPickNth(wb, title, n = 0) {
-	for (let i = 0; i < 40; i++) {
-		const isReady = await wb.evaluate(`(() => {
-			const w = document.querySelector('.quick-input-widget');
-			if (!w || getComputedStyle(w).display === 'none') { return false; }
-			return (w.querySelector('.quick-input-title')?.textContent ?? '').includes(${JSON.stringify(title)}) && !!w.querySelector('.monaco-list-row');
-		})()`);
-		if (isReady) {
-			for (let k = 0; k < n; k++) {
-				await wb.key('ArrowDown', 'ArrowDown', 40);
-				await sleep(150);
-			}
-			await wb.key('Enter', 'Enter', 13);
-			return;
-		}
-		await sleep(250);
-	}
-	throw new Error(`The quick pick "${title}" did not open.`);
-}
+const workbench = () => harnessWorkbench(PORT, dir);
 const quickPickFirst = (wb, title) => quickPickNth(wb, title, 0);
-
-// The value of fn when it has one, or undefined after the time. fn can be async
-async function poll(fn, seconds) {
-	for (let waited = 0; waited < seconds * 1000; waited += 300) {
-		const value = await fn();
-		if (value) {
-			return value;
-		}
-		await sleep(300);
-	}
-	return undefined;
-}
 
 // The text of the logs of Shotgun in the test build
 function shotgunLog() {
@@ -428,49 +234,6 @@ const fileHashes = () => new Map(gitChanges().map((f) => [f, fs.existsSync(path.
 const ledgerOf = (id) => (fs.existsSync(taskFile(id, 'decisions.jsonl'))
 	? fs.readFileSync(taskFile(id, 'decisions.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
 
-// Runs a command with the Command Palette. A click on the text editor first takes the focus from a webview, for example
-// from the panel of Shotgun after "Shotgun: New Task". If the page of Shotgun is the active editor, a click can hit a
-// button of the page. Then the test removes the focus from the webview, and the workbench gets the keys
-async function command(wb, text) {
-	// a new webview can take the focus after the keys, so the test tries 3 times
-	for (let attempt = 0; attempt < 3; attempt++) {
-		const box = await wb.evaluate(`(() => {
-			const r = [...document.querySelectorAll('.part.editor .monaco-editor .view-lines')].map((e) => e.getBoundingClientRect()).find((x) => x.width > 0);
-			return r ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : undefined; })()`);
-		if (box) {
-			for (const type of ['mousePressed', 'mouseReleased']) {
-				await wb.send('Input.dispatchMouseEvent', { type, x: box.x, y: box.y, button: 'left', clickCount: 1 });
-			}
-		} else {
-			await wb.evaluate('document.activeElement?.blur()');
-		}
-		await sleep(300);
-		await wb.key('P', 'KeyP', 80, 10); // ctrl+shift+p
-		if (await poll(() => isQuickInputReady(wb), 4)) {
-			await quickInput(wb, text);
-			await sleep(800);
-			return;
-		}
-	}
-	// a webview can keep the keys, for example the page of Shotgun with no visible text editor. A click on the Command
-	// Center of the title bar opens the quick input, and ">" makes it the Command Palette
-	const center = await wb.evaluate(`(() => {
-		const e = document.querySelector('.command-center .command-center-center') ?? document.querySelector('.command-center');
-		const r = e?.getBoundingClientRect();
-		return r && r.width > 0 ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : undefined; })()`);
-	if (center) {
-		for (const type of ['mousePressed', 'mouseReleased']) {
-			await wb.send('Input.dispatchMouseEvent', { type, x: center.x, y: center.y, button: 'left', clickCount: 1 });
-		}
-		if (await poll(() => isQuickInputReady(wb), 4)) {
-			await quickInput(wb, `>${text}`);
-			await sleep(800);
-			return;
-		}
-	}
-	throw new Error(`The Command Palette did not open for "${text}".`);
-}
-
 // Saves the active text editor with Ctrl+S. In the Command Palette, "File: Save" can select a different command, for
 // example "File: Compare Active File with Saved". The result: true if the file on the disk has the text
 async function saveEditor(wb, file, text) {
@@ -487,202 +250,29 @@ async function saveEditor(wb, file, text) {
 	return !!(await poll(() => fs.readFileSync(file, 'utf8').includes(text) || undefined, 10));
 }
 
-// Runs a script in the webview of Shotgun with this root element: .panel for the panel, .page for the page. The script
-// has the document of the webview in the variable d. The result: the value of the script, or undefined
-async function inWebview(root, script) {
-	const targets = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json();
-	for (const t of targets.filter((x) => x.webSocketDebuggerUrl && x.url.includes('vscode-webview'))) {
-		const c = await connect(t.webSocketDebuggerUrl);
-		const value = await c.evaluate(`(() => { const d = document.querySelector('iframe#active-frame')?.contentDocument ?? document; `
-			+ `if (!d.querySelector(${JSON.stringify(root)})) { return undefined; } return (${script})(); })()`);
-		c.ws.close();
-		if (value !== undefined) {
-			return value;
-		}
-	}
-	return undefined;
-}
+// Runs a script in the webview of Shotgun with this root element: .panel for the panel, .page for the page
+const inWebview = (root, script) => harnessInWebview(PORT, root, script);
 
 // The text of the webview of the panel of Shotgun, or undefined
 const panelText = () => inWebview('.panel', '() => d.body.innerText');
 // The text of the page of Shotgun, or undefined
 const pageText = () => inWebview('.page', '() => d.body.innerText');
 
-// A click of the mouse at a point of the workbench, as the user clicks
-async function clickAt(wb, { x, y }) {
-	for (const type of ['mousePressed', 'mouseReleased']) {
-		await wb.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', clickCount: 1 });
-	}
-	await sleep(400);
-}
-
-// Clicks the button of a modal message of VS Code with this text. The result: true if the message was there
-async function clickDialog(wb, label) {
-	return wb.evaluate(`(() => {
-		const box = document.querySelector('.monaco-dialog-box');
-		const button = box && [...box.querySelectorAll('.monaco-button')].find((b) => b.textContent.includes(${JSON.stringify(label)}));
-		button?.click();
-		return !!button;
-	})()`);
-}
-
 //-------------------
-// The bridge of DataFlow, as Claude Code starts it: the command of the MCP server of the plugin of DataFlow
+// The bridge of DataFlow and Claude Code, with the functions of harness.mjs
 
-// The processes that listen on a TCP port, for the data of a failure
-function listenersOf(port) {
-	const script = `Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | ForEach-Object { `
-		+ '$p = Get-CimInstance Win32_Process -Filter "ProcessId=$($_.OwningProcess)"; "$($_.LocalAddress) $($_.OwningProcess) $($p.ExecutablePath)" }';
-	try {
-		return execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], { encoding: 'utf8', windowsHide: true })
-			.split(/\r?\n/).filter(Boolean);
-	} catch (error) {
-		return [String(error)];
-	}
-}
-
-// Calls 1 tool of the MCP server of DataFlow through the bridge, as a client with no Claude. The result: the text of the
-// result and isError, or an error of the bridge
-function callBridgeTool(name, args) {
-	const server = readJson(path.join(dataflowPlugin, '.claude-plugin', 'plugin.json'))?.mcpServers?.dataflow;
-	if (!server) {
-		return Promise.resolve({ error: 'The plugin of DataFlow has no MCP server.' });
-	}
-	return new Promise((resolve) => {
-		const proc = spawn(server.command, server.args, { cwd: p.project, env: cleanEnv(server.env), stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
-		let out = '';
-		const finish = (result) => {
-			clearTimeout(timer);
-			killTree(proc.pid);
-			resolve(result);
-		};
-		const timer = setTimeout(() => finish({ error: 'No answer of the bridge after 60 s.', out: out.slice(0, 1500) }), 60000);
-		proc.stdout.on('data', (chunk) => {
-			out += chunk.toString('utf8');
-			const answer = out.split('\n').filter((l) => l.trim()).map((l) => {
-				try {
-					return JSON.parse(l);
-				} catch {
-					return undefined;
-				}
-			}).find((m) => m?.id === 2);
-			if (answer) {
-				finish({
-					text: (answer.result?.content ?? []).map((c) => c.text ?? '').join('\n'), isError: answer.result?.isError === true || !!answer.error,
-					...(answer.error ? { error: answer.error.message } : {}),
-				});
-			}
-		});
-		const send = (message) => proc.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', ...message })}\n`);
-		send({ id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'shotgun-test', version: '0.2.0' } } });
-		send({ method: 'notifications/initialized' });
-		send({ id: 2, method: 'tools/call', params: { name, arguments: args } });
-	});
-}
-
-function checkBridge() {
-	const server = readJson(path.join(dataflowPlugin, '.claude-plugin', 'plugin.json'))?.mcpServers?.dataflow;
-	if (!server) {
-		return Promise.resolve({ error: 'The plugin of DataFlow has no MCP server.' });
-	}
-	return new Promise((resolve) => {
-		const proc = spawn(server.command, server.args, { cwd: p.project, env: cleanEnv(server.env), stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
-		let out = '';
-		let stderr = '';
-		const finish = (result) => {
-			clearTimeout(timer);
-			killTree(proc.pid);
-			resolve({ ...result, stderr: stderr.slice(0, 1500) });
-		};
-		const timer = setTimeout(() => finish({ error: 'No answer of the bridge after 20 s.', out: out.slice(0, 1500) }), 20000);
-		proc.stdout.on('data', (chunk) => {
-			out += chunk.toString('utf8');
-			const lines = out.split('\n').filter((l) => l.trim()).map((l) => {
-				try {
-					return JSON.parse(l);
-				} catch {
-					return undefined;
-				}
-			});
-			const list = lines.find((m) => m?.id === 2);
-			if (list) {
-				const tools = (list.result?.tools ?? []).map((t) => t.name);
-				finish({ count: tools.length, shotgun: tools.filter((t) => t.startsWith('shotgun_')), error: list.error?.message });
-			}
-		});
-		proc.stderr.on('data', (chunk) => {
-			stderr += chunk.toString('utf8');
-		});
-		const send = (message) => proc.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', ...message })}\n`);
-		send({ id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'shotgun-test', version: '0.1.0' } } });
-		send({ method: 'notifications/initialized' });
-		send({ id: 2, method: 'tools/list', params: {} });
-	});
-}
-
-//-------------------
-// Claude Code
+// Calls 1 tool of the MCP server of DataFlow through the bridge, as a client with no Claude
+const callBridgeTool = (name, args) => harnessCallBridgeTool({ pluginDir: dataflowPlugin, cwd: p.project }, name, args);
+const checkBridge = () => harnessCheckBridge({ pluginDir: dataflowPlugin, cwd: p.project });
 
 // options: tools, the tools that Claude can use with no permission prompt, maxTurns and seconds, the time limit, and
 // plugins. With plugins false, the run has no plugins, thus no tools of Shotgun and no guard
-function runClaude(name, prompt, { tools = [GET_SESSION, SUBMIT_BRIEF, SUBMIT_QUESTIONS, 'Skill'], maxTurns = 8, seconds = 300, plugins = true } = {}) {
-	const args = [
-		'-p', prompt,
-		'--output-format', 'stream-json', '--verbose', '--include-hook-events',
-		'--model', 'sonnet',
-		// no settings of the user, and the 2 plugins from the folders that the commands wrote
-		'--setting-sources', 'project', ...(plugins ? ['--plugin-dir', dataflowPlugin, '--plugin-dir', shotgunPlugin] : []),
-		'--permission-mode', 'acceptEdits', '--permission-prompts', 'none',
-		'--allowedTools', tools.join(','),
-		'--max-turns', String(maxTurns), '--no-session-persistence',
-		'--debug-file', path.join(dir, `claude-${name}.debug.log`),
-	];
-	return new Promise((resolve) => {
-		const t0 = performance.now();
-		const proc = spawn(claudeExe(), args, {
-			cwd: p.project, env: cleanEnv({ ENABLE_CLAUDEAI_MCP_SERVERS: 'false' }), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
-		});
-		const messages = [];
-		let rest = '';
-		let stderr = '';
-		const timer = setTimeout(() => killTree(proc.pid), seconds * 1000);
-		proc.stdout.on('data', (chunk) => {
-			rest += chunk.toString('utf8');
-			const lines = rest.split('\n');
-			rest = lines.pop();
-			for (const line of lines.filter((l) => l.trim())) {
-				try {
-					messages.push(JSON.parse(line));
-				} catch {
-					messages.push({ type: 'text', text: line });
-				}
-			}
-		});
-		proc.stderr.on('data', (chunk) => {
-			stderr += chunk.toString('utf8');
-		});
-		proc.on('close', (code) => {
-			clearTimeout(timer);
-			fs.writeFileSync(path.join(dir, `claude-${name}.jsonl`), messages.map((m) => JSON.stringify(m)).join('\n') + '\n');
-			const init = messages.find((m) => m.type === 'system' && m.subtype === 'init');
-			const run = {
-				code,
-				ms: Math.round(performance.now() - t0),
-				plugins: (init?.plugins ?? []).filter((x) => !x.source.endsWith('@builtin')).map((x) => ({ name: x.name, path: x.path })),
-				servers: init?.mcp_servers ?? [],
-				hooks: messages.filter((m) => m.type === 'system' && m.subtype === 'hook_response')
-					.map((m) => ({ hook: m.hook_name, output: m.output ?? m.stdout ?? m.response ?? '' })),
-				toolUses: messages.filter((m) => m.type === 'assistant').flatMap((m) => m.message?.content ?? [])
-					.filter((b) => b.type === 'tool_use').map((b) => ({ name: b.name, input: b.input })),
-				toolResults: messages.filter((m) => m.type === 'user').flatMap((m) => (Array.isArray(m.message?.content) ? m.message.content : []))
-					.filter((b) => b.type === 'tool_result').map((b) => ({ isError: b.is_error === true, text: JSON.stringify(b.content).slice(0, 600) })),
-				result: messages.find((m) => m.type === 'result')?.result ?? '',
-				stderr: stderr.slice(0, 1000),
-			};
-			results.runs[name] = run;
-			resolve(run);
-		});
+async function runClaude(name, prompt, { tools = [GET_SESSION, SUBMIT_BRIEF, SUBMIT_QUESTIONS, 'Skill'], maxTurns = 8, seconds = 300, plugins = true } = {}) {
+	const run = await harnessRunClaude({
+		name, prompt, cwd: p.project, logDir: dir, pluginDirs: plugins ? [dataflowPlugin, shotgunPlugin] : [], tools, maxTurns, seconds,
 	});
+	results.runs[name] = run;
+	return run;
 }
 
 //-------------------
@@ -690,7 +280,7 @@ function runClaude(name, prompt, { tools = [GET_SESSION, SUBMIT_BRIEF, SUBMIT_QU
 async function main() {
 	setup();
 	const before = userState();
-	const proc = spawn(codeExe(), [
+	const proc = spawn(harnessCodeExe(DATAFLOW), [
 		`--extensionDevelopmentPath=${DATAFLOW}`, `--extensionDevelopmentPath=${repo}`,
 		`--user-data-dir=${p.userData}`, `--extensions-dir=${path.join(dir, 'extensions')}`,
 		`--remote-debugging-port=${PORT}`, '--disable-workspace-trust', '--skip-welcome', '--skip-release-notes', '--new-window', p.project,
@@ -2023,10 +1613,18 @@ async function main() {
 		check('The review at the effort medium gives 1 issue or more, each with a severity, an origin, a verdict, a failure scenario and the evidence of DataFlow',
 			round?.effort === 'medium' && issues.length > 0 && issues.every((i) => i.severity && i.origin && i.verdict && i.scenario?.trigger && i.scenario?.result
 				&& i.tools.length > 0), review);
+		// a race starts from the threads of DataFlow (P20). Its source can be the model: DataFlow gives 1 run of each worker
 		const races = issues.filter((i) => i.category === 'race');
-		check('Each race issue starts from a race of DataFlow', races.every((i) => i.source === 'engine' && i.tools.includes('get_threads')), races);
-		const closedRace = races.filter((i) => i.place.file === 'src/battery.cpp' && Math.abs(i.place.lines[0] - (problem?.line ?? 0)) <= 2);
+		check('Each race issue starts from the threads of DataFlow: it names get_threads and gives the interleave',
+			races.every((i) => i.tools.includes('get_threads') && !!i.scenario?.interleave), races);
+		console.log(`INFO The races of the review: ${JSON.stringify(races.map((i) => `${i.id} ${i.source}`))}`);
+		// the race of the callout that the user closed comes again only with new evidence and the verdict plausible (P35). The
+		// line of the callout now is the line with its text
+		const raceLineNow = fs.readFileSync(path.join(p.project, 'src', 'battery.cpp'), 'utf8').split(/\r?\n/).findIndex((l) => l.trim() === 'charge.is_dirty = true;') + 1;
+		const closedRace = races.filter((i) => i.place.file === 'src/battery.cpp' && i.place.lines[0] <= raceLineNow && raceLineNow <= i.place.lines[1]);
 		console.log(`INFO The race of the callout that the user closed: ${closedRace.length === 0 ? 'not in the review' : JSON.stringify(closedRace.map((i) => `${i.id} ${i.verdict} ${i.list}`))}`);
+		check('The race of the callout that the user closed comes again only with new evidence and the verdict plausible', raceLineNow > 0
+			&& closedRace.every((i) => i.verdict === 'plausible' && !!i.evidence && i.list === 'second'), { raceLineNow, closedRace });
 		// Shotgun refuses an issue outside of the diff of the task. The test calls the tool directly, as a client
 		const refusedOutside = await callBridgeTool('shotgun_submit_review', {
 			issues: [{
@@ -2039,7 +1637,8 @@ async function main() {
 		check('Shotgun refuses an issue outside of the diff of the task', refusedOutside.isError && /not in the diff of the task/.test(refusedOutside.text ?? '')
 			&& reviewNow()?.issues?.length === issues.length, refusedOutside);
 
-		// the 2 lists in the panel and on the page. "Not a problem" closes an issue with a reason
+		// the 2 lists in the panel and on the page
+		const openSteps = () => (reviewNow()?.issues ?? []).filter((i) => i.list === 'steps' && i.state === 'open');
 		const steps6 = issues.filter((i) => i.list === 'steps' && i.state === 'open');
 		const first6 = steps6[0] ?? issues[0];
 		text = await poll(async () => {
@@ -2055,19 +1654,185 @@ async function main() {
 		}, 20);
 		check('The page shows the 2 lists of the review', !!text, await pageText());
 		await wb.shot('page-review.png');
-		const reason6 = 'The test closes this issue on purpose.';
-		await inWebview('.page', `() => {
-			const card = [...d.querySelectorAll('.issue')].find((x) => x.querySelector('.id')?.textContent === ${JSON.stringify(first6?.id ?? '?')});
-			const b = card && [...card.querySelectorAll('button')].find((x) => x.textContent.includes('Not a problem'));
+		// a button of the card of an issue on the page
+		const clickIssue = (id, label) => inWebview('.page', `() => {
+			const card = [...d.querySelectorAll('.issue')].find((x) => x.querySelector('.id')?.textContent === ${JSON.stringify(id)});
+			const b = card && [...card.querySelectorAll('button')].find((x) => x.textContent.includes(${JSON.stringify(label)}));
 			b?.click();
 			return !!b;
 		}`);
-		await quickInput(wb, reason6, 'Not a Problem');
-		const closed6 = await poll(() => reviewNow()?.issues?.find((i) => i.id === first6?.id && i.state === 'closed'), 15);
-		check('"Not a problem" closes an issue of the review, and the ledger keeps the reason of the user', closed6?.closed?.reason === reason6
-			&& ledgerOf(TASK_1).some((d) => d.kind === 'issue-close' && d.issue === first6?.id && d.reason === reason6), closed6);
+		const clickPanelGate = (label) => inWebview('.panel', `() => {
+			const b = [...d.querySelectorAll('.gate button')].find((x) => x.textContent.includes(${JSON.stringify(label)}));
+			b?.click();
+			return !!b;
+		}`);
 
-		// the gate "The task is done" never waits. With open issues of the list of steps, a modal message asks first
+		// 13: each issue of the list of steps is a step of the user (phase 13). The test needs 3 steps. If the list of steps has
+		// fewer, "Make it a step" adds issues of the second list
+		for (const extra of issues.filter((i) => i.list === 'second' && i.state === 'open').slice(0, Math.max(0, 3 - steps6.length))) {
+			await clickIssue(extra.id, 'Make it a step');
+			await poll(() => reviewNow()?.issues?.find((i) => i.id === extra.id && i.list === 'steps'), 10);
+		}
+		const made = ledgerOf(TASK_1).filter((d) => d.kind === 'issue-step');
+		if (made.length > 0) {
+			check('"Make it a step" puts an issue of the second list into the list of steps, and the ledger records it', made.every((d) => d.isStep
+				&& reviewNow()?.issues?.find((i) => i.id === d.issue)?.isUserStep), made);
+		}
+		// A: Shotgun opens the first step for the user at level 4. A run of Claude Code with no plugins stands in for the user
+		const fixA = openSteps()[0];
+		check('The review gives at least 1 step of an issue', !!fixA, reviewNow()?.issues);
+		if (fixA) {
+			const openedA = await poll(() => (buildOf()?.steps?.[fixA.id]?.state === 'open' ? buildOf().steps[fixA.id] : undefined), 30);
+			check(`Shotgun opens step ${fixA.id} of the issue for the user at level 4`, openedA?.writer === 'user' && openedA?.level === 4, buildOf()?.steps?.[fixA.id]);
+			text = await poll(async () => {
+				const t = await panelText();
+				return t && new RegExp(`step ${fixA.id}`, 'i').test(t) && t.includes('The step is done') ? t : undefined;
+			}, 15);
+			check(`The panel shows step ${fixA.id} with its own gate "The step is done"`, !!text, await panelText());
+			await wb.shot('panel-issue-step.png');
+			const scopeA = openedA?.scope ?? [fixA.place.file];
+			const beforeA = fileHashes();
+			const userFix = await runClaude('issue-user', [
+				`You stand in for the user of this project. Fix this issue of a code review: ${fixA.title}. ${fixA.summary}`,
+				`Trigger: ${fixA.scenario.trigger} Path: ${fixA.scenario.path} Result: ${fixA.scenario.result}`,
+				`The issue is at ${fixA.place.file}:${fixA.place.lines[0]}. Change only these files: ${scopeA.join(', ')}. Do not build or run the code.`,
+			].join(' '), { tools: ['Read', 'Edit', 'Write', 'Grep', 'Glob'], maxTurns: 20, seconds: 300, plugins: false });
+			const changedA = [...fileHashes()].filter(([f, h]) => beforeA.get(f) !== h).map(([f]) => f);
+			check(`A run of Claude Code with no plugins stands in for the user, and writes the fix of ${fixA.id}`, changedA.length > 0,
+				{ changedA, result: userFix.result.slice(0, 300) });
+			if (changedA.length === 0) {
+				const fileA = path.join(p.project, fixA.place.file);
+				const t = fs.readFileSync(fileA, 'utf8').split('\n');
+				t.splice(fixA.place.lines[0] - 1, 0, '// The user wrote this line in the fix of the issue.');
+				fs.writeFileSync(fileA, t.join('\n'));
+			}
+			await sleep(1500);
+			await clickPanelGate('The step is done');
+			const fixedA = await poll(() => reviewNow()?.issues?.find((i) => i.id === fixA.id && i.state === 'fixed'), 20);
+			check(`The gate "The step is done" ends step ${fixA.id}, and the issue is fixed`, buildOf()?.steps?.[fixA.id]?.state === 'done' && !!fixedA?.fixed,
+				{ step: buildOf()?.steps?.[fixA.id], issue: reviewNow()?.issues?.find((i) => i.id === fixA.id) });
+			const linesA = await poll(() => {
+				const runs = Object.values(readJson(taskFile(TASK_1, 'lines.json'))?.files ?? {}).flatMap((x) => x.runs ?? []);
+				return runs.some((r) => r.writer === 'user' && r.step === fixA.id) ? runs : undefined;
+			}, 10);
+			check(`lines.json records the lines of the user in step ${fixA.id}`, !!linesA, readJson(taskFile(TASK_1, 'lines.json')));
+		}
+
+		// "Not a problem" closes an issue with a reason, and a started step of the issue goes away. The test checks the first
+		// close
+		const reason6 = 'The test closes this issue on purpose.';
+		let closeC;
+		const closeIssue = async (issue) => {
+			await poll(() => (issue.list === 'steps' ? buildOf()?.steps?.[issue.id]?.state === 'open' : true) || undefined, 20);
+			await clickIssue(issue.id, 'Not a problem');
+			await quickInput(wb, reason6, 'Not a Problem');
+			const closed6 = await poll(() => reviewNow()?.issues?.find((i) => i.id === issue.id && i.state === 'closed'), 15);
+			if (!closeC) {
+				closeC = issue;
+				check('"Not a problem" closes an issue of the review, the ledger keeps the reason of the user, and the started step goes away',
+					closed6?.closed?.reason === reason6 && !buildOf()?.steps?.[issue.id]
+						&& ledgerOf(TASK_1).some((d) => d.kind === 'issue-close' && d.issue === issue.id && d.reason === reason6), { closed6, step: buildOf()?.steps?.[issue.id] });
+			}
+		};
+
+		// B: the user lowers the level of a step to 2 on the page. Claude fixes the issue as an errand with a receipt. 1 fix
+		// can remove 2 issues with 1 cause. Thus the test takes the first open step with no line near a line of step A, and
+		// "Not a problem" closes each open step in front of it (C)
+		const regionsOf = (i) => [i.place, ...(i.fixPlaces ?? [])].map((x) => ({ file: x.file, first: x.lines[0], last: x.lines[1] ?? x.lines[0] }));
+		const isNearIssue = (x, y) => regionsOf(x).some((a) => regionsOf(y).some((b) => a.file === b.file && a.first <= b.last + 3 && b.first <= a.last + 3));
+		const open6 = openSteps();
+		const fixB = open6.find((i) => !fixA || !isNearIssue(i, fixA)) ?? open6[0];
+		const inFront = fixB ? open6.slice(0, open6.findIndex((i) => i.id === fixB.id)) : [];
+		if (inFront.length > 0) {
+			console.log(`INFO The steps ${inFront.map((i) => i.id).join(', ')} have a line near a line of step ${fixA?.id}. "Not a problem" closes them before step ${fixB.id}`);
+		}
+		for (const issue of inFront) {
+			await closeIssue(issue);
+		}
+		if (fixB) {
+			for (const level of [3, 2]) {
+				await poll(() => clickIssue(fixB.id, 'Lower'), 10);
+				await poll(() => levelsNow()?.levels?.[fixB.id]?.level === level || undefined, 10);
+			}
+			check(`"Lower" on the page sets step ${fixB.id} to level 2, so Claude writes it`, levelsNow()?.levels?.[fixB.id]?.level === 2, levelsNow()?.levels?.[fixB.id]);
+			text = await poll(async () => (await panelText())?.includes(`Do step ${fixB.id}.`) && true, 15);
+			check(`The panel shows the request "Do step ${fixB.id}."`, !!text, await panelText());
+			const beforeB = fileHashes();
+			const errandB = await runClaude('issue-errand', `Do step ${fixB.id}.`, { tools: errandTools, maxTurns: 40, seconds: 900 });
+			const namesB = errandB.toolUses.map((t) => t.name);
+			const editB = namesB.findIndex((n) => ['Edit', 'Write', 'MultiEdit'].includes(n));
+			check(`"Do step ${fixB.id}." loads the skill shotgun-errand, opens the step before its first file change, and gives a receipt`,
+				errandB.toolUses.some((t) => t.name === 'Skill' && String(t.input?.skill).includes('shotgun-errand')) && namesB.includes(START_STEP)
+					&& (editB < 0 || namesB.indexOf(START_STEP) < editB) && namesB.includes(SUBMIT_ERRAND), namesB);
+			const stepB = buildOf()?.steps?.[fixB.id];
+			const scopeB = new Set((stepB?.scope ?? []).map((f) => f.toLowerCase()));
+			const changedB = [...fileHashes()].filter(([f, h]) => beforeB.get(f) !== h).map(([f]) => f);
+			check(`In stage 6, the guard lets Claude change only the scope of step ${fixB.id}, and the receipt has its changes`, stepB?.state === 'receipt'
+				&& changedB.every((f) => scopeB.has(f.toLowerCase())) && (stepB?.receipt?.changes?.length ?? 0) > 0, { changedB, step: stepB });
+			for (let i = 0; i < (stepB?.receipt?.changes?.length ?? 0); i++) {
+				await clickMark(i, 'OK');
+				await sleep(400);
+			}
+			await poll(() => (buildOf()?.steps?.[fixB.id]?.receipt?.changes ?? []).every((c) => c.mark === 'ok') || undefined, 15);
+			await sleep(500);
+			await clickPanelGate('Accept the receipt');
+			const fixedB = await poll(() => reviewNow()?.issues?.find((i) => i.id === fixB.id && i.state === 'fixed'), 20);
+			check(`The gate "Accept the receipt" ends step ${fixB.id}, and the issue is fixed`, buildOf()?.steps?.[fixB.id]?.state === 'done' && !!fixedB,
+				{ step: buildOf()?.steps?.[fixB.id], issue: reviewNow()?.issues?.find((i) => i.id === fixB.id) });
+		}
+
+		// C: if "Not a problem" closed no step in front of step B, it closes the next step. With no step left, the test closes
+		// an issue of the second list
+		const nextC = closeC ? undefined : openSteps()[0] ?? (reviewNow()?.issues ?? []).find((i) => i.state === 'open');
+		if (nextC) {
+			await closeIssue(nextC);
+		}
+
+		// 14: the next round reviews the fixes (P23). get_review marks the changed hunks, and gives the fixed issues to check
+		const fixedIds = (reviewNow()?.issues ?? []).filter((i) => i.state === 'fixed').map((i) => i.id);
+		if (fixedIds.length > 0) {
+			text = await poll(async () => (await panelText())?.includes('Copy the prompt of round 2') && true, 15);
+			check('After a fix, the panel copies the prompt of round 2', !!text, await panelText());
+			await inWebview('.panel', `() => {
+				const b = [...d.querySelectorAll('.review-options button')].find((x) => x.textContent.includes('Copy the prompt of round 2'));
+				b?.click();
+				return !!b;
+			}`);
+			const data2 = await callBridgeTool('shotgun_get_review', {});
+			let review2Data;
+			try {
+				review2Data = JSON.parse(data2.text ?? '');
+			} catch {
+				review2Data = undefined;
+			}
+			check('get_review of round 2 gives the fixed issues to check, and marks the hunks that changed since round 1', review2Data?.round === 2
+				&& fixedIds.every((id) => review2Data.fixedIssues?.some((i) => i.id === id))
+				&& (review2Data.files ?? []).some((f) => f.hunks.some((h) => h.isChangedSinceLastRound)), { ...data2, text: data2.text?.slice(0, 1500) });
+			const reviewRun2 = await runClaude('review-2', reviewPrompt(TITLE, reviewNow()?.options ?? options, 2), {
+				tools: [GET_SESSION, GET_REVIEW, SUBMIT_REVIEW, 'Skill', 'Agent', 'Task', 'Read', 'Grep', 'Glob', ...READ_TOOLS,
+					'mcp__plugin_dataflow_dataflow__get_diff', 'mcp__plugin_dataflow_dataflow__get_ripple'],
+				maxTurns: 80, seconds: 2400,
+			});
+			const after2 = reviewNow();
+			check('The prompt of round 2 loads the skill shotgun-review, and Claude gives round 2 with shotgun_submit_review',
+				reviewRun2.toolUses.some((t) => t.name === SUBMIT_REVIEW) && (after2?.rounds ?? []).some((r) => r.n === 2), reviewRun2.toolUses.map((t) => t.name));
+			const states2 = fixedIds.map((id) => after2?.issues?.find((i) => i.id === id)).map((i) => `${i?.id} ${i?.state} ${i?.lastRound}`);
+			results.review2 = { fixed: states2, issues: (after2?.issues ?? []).filter((i) => i.lastRound === 2).map((i) => `${i.id} ${i.list} ${i.state} ${i.title}`) };
+			console.log(`INFO Round 2: ${JSON.stringify(results.review2)}`);
+			// the skill checks each fixed issue in a subagent with the prompt of a fix check
+			const fixChecks = reviewRun2.toolUses.filter((t) => (t.name === 'Agent' || t.name === 'Task') && /check 1 fix/i.test(String(t.input?.prompt)));
+			check('Round 2 checks each fixed issue in a subagent with the prompt of a fix check',
+				fixedIds.every((id) => fixChecks.some((t) => new RegExp(`\\b${id}\\b`).test(String(t.input?.prompt)))), fixChecks.map((t) => t.input?.description));
+			// a correct fix stays fixed. An issue with a wrong fix comes again with its id, and its done step goes away
+			check('Each fixed issue stays fixed, or comes again with its id, and then its step is not done', fixedIds.every((id) => {
+				const i = after2?.issues?.find((x) => x.id === id);
+				return i?.state === 'fixed' || (i?.state === 'open' && i.lastRound === 2 && buildOf()?.steps?.[id]?.state !== 'done');
+			}), { states2, steps: fixedIds.map((id) => buildOf()?.steps?.[id]) });
+			check('Round 2 repeats no closed issue', !closeC || after2?.issues?.find((i) => i.id === closeC.id)?.state === 'closed',
+				after2?.issues?.find((i) => i.id === closeC?.id));
+		}
+
+		// 15: the gate "The task is done" never waits. With open issues of the list of steps, a modal message asks first
 		await inWebview('.page', `() => {
 			const b = [...d.querySelectorAll('.gate button')].find((x) => x.textContent.includes('The task is done'));
 			b?.click();
@@ -2076,6 +1841,15 @@ async function main() {
 		await poll(() => clickDialog(wb, 'Pass the Gate'), 5);
 		const done6 = await poll(() => (readJson(taskFile(TASK_1, 'task.json'))?.isDone ? readJson(taskFile(TASK_1, 'task.json')) : undefined), 20);
 		check('The gate "The task is done" ends the task in stage 6', done6?.stage === 'review' && done6?.gates?.at(-1)?.gate === 'task-done', readJson(taskFile(TASK_1, 'task.json')));
+		// the check of the commit message also works after the end of the task (P24)
+		const checkRun2 = await runClaude('commit-2', 'Check my commit message.', {
+			tools: [GET_SESSION, GET_COMMIT_MESSAGE, SUBMIT_MESSAGE_CHECK, 'Skill', 'Read', 'Bash(git diff:*)', 'Bash(git status:*)', ...READ_TOOLS,
+				'mcp__plugin_dataflow_dataflow__get_diff'],
+			maxTurns: 30, seconds: 600,
+		});
+		const messageCheck2 = readJson(taskFile(TASK_1, 'message.json'));
+		check('After the end of the task, Claude checks the commit message again', checkRun2.toolUses.some((t) => t.name === SUBMIT_MESSAGE_CHECK)
+			&& !!messageCheck2 && messageCheck2.time !== messageCheck?.time, { names: checkRun2.toolUses.map((t) => t.name), messageCheck2 });
 
 		wb.ws.close();
 	} catch (error) {
@@ -2085,11 +1859,7 @@ async function main() {
 	} finally {
 		killTree(proc.pid);
 		await sleep(2000);
-		for (const x of processesOf(dir)) {
-			killTree(x.pid);
-		}
-		await sleep(500);
-		const left = processesOf(dir);
+		const left = await stopProcessesOf(dir);
 		check('No process of the run is left', left.length === 0, left);
 		// a write of a stage file that failed leaves a temporary file
 		const temps = [];
@@ -2099,16 +1869,10 @@ async function main() {
 			walk(path.join(p.project, '.shotgun'));
 		}
 		check('No temporary file is left in .shotgun', temps.length === 0, temps);
-		// the CLI makes folders in the data of the user: the folder of the project of the run in projects, and the data of the
-		// 2 plugins in plugins/data. The test removes them. The folder of the project has the name of the run folder, and the
-		// subagents of the review write their data into it, so the test removes it with its content. The folders of the
-		// plugins go only when they are empty. A different new folder stays, but the check fails
-		const isOfRun = (name) => name.includes(path.basename(dir)) || ['dataflow-inline', 'shotgun-inline'].includes(name);
-		const after = userState();
-		userFolders.forEach((folder, i) => after.folders[i].filter((n) => !before.folders[i].includes(n) && isOfRun(n))
-			.forEach((n) => (n.includes(path.basename(dir)) ? fs.rmSync(path.join(folder, n), { recursive: true, force: true }) : removeIfEmpty(path.join(folder, n)))));
-		const added = userFolders.flatMap((folder, i) => listOf(folder).filter((n) => !before.folders[i].includes(n)));
-		check('The data of Claude Code of the user did not change', JSON.stringify(after.files) === JSON.stringify(before.files) && added.length === 0, added);
+		// the CLI makes folders in the data of the user. cleanUserData removes the folders of the run. A different new folder
+		// stays, but the check fails
+		const user = cleanUserData(before, dir);
+		check('The data of Claude Code of the user did not change', user.isSame, user.added);
 	}
 	fs.writeFileSync(path.join(dir, 'results.json'), JSON.stringify(results, null, 2));
 	const failed = results.checks.filter((c) => !c.isOk).length;

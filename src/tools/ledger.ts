@@ -3,7 +3,7 @@ import { currentStep, stateOf } from '../session/build';
 import { ledgerRows, MAX_CHECK_NOTE, MAX_POINT, MAX_POINTS, MessagePoint, POINT_KINDS, PointKind, sameMessage } from '../session/ledger';
 import type { LineStore } from '../session/lines';
 import { levelOf } from '../session/plan';
-import type { SessionStore } from '../session/store';
+import { SessionStore, workPlan } from '../session/store';
 import { decisionText } from '../views/model';
 
 // The tools of the ledger (phase 9). get_commit_message gives the commit message of the user from Source Control, with the
@@ -43,7 +43,10 @@ function requireMessage(deps: LedgerDeps): { message: CommitMessage } {
 
 export function commitMessageData(deps: LedgerDeps): Record<string, unknown> {
 	const { message } = requireMessage(deps);
-	const { task, plan, risk, levels, build, decisions, loose } = deps.store.snapshot;
+	const snapshot = deps.store.snapshot;
+	const { task, risk, levels, build, decisions, loose } = snapshot;
+	// stage 6: also the steps of the issues of the review
+	const plan = workPlan(snapshot);
 	const current = currentStep(plan, risk, levels, build);
 	const rows = ledgerRows(deps.lines.paths.map((file) => ({ file, runs: deps.lines.runs(file) })), build);
 	const ends = loose?.ends ?? [];
@@ -54,8 +57,9 @@ export function commitMessageData(deps: LedgerDeps): Record<string, unknown> {
 		task: task!.title,
 		steps: (plan?.steps ?? []).map((s) => ({
 			id: s.id, title: s.title, level: levelOf(s, risk, levels).level, state: stateOf(build, s.id), ...(s.looseEnd ? { looseEnd: s.looseEnd } : {}),
+			...(s.issue ? { issue: s.issue } : {}),
 		})),
-		...(current ? { openSteps: `Step ${current.n} and later are not done. The message can tell only the work that is done.` } : {}),
+		...(current ? { openSteps: `Step ${current.ref} and later are not done. The message can tell only the work that is done.` } : {}),
 		decisionsOfTheUser: decisions.filter((d) => d.by === 'user').slice(-MAX_DECISIONS).map(decisionText),
 		lines: rows.map((r) => ({ file: r.file, user: r.user, claudeWalked: r.walked, claudeNotWalked: r.notWalked })),
 		looseEnds: {

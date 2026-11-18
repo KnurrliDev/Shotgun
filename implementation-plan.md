@@ -1,7 +1,7 @@
 # Shotgun: implementation plan
 
 - Date: 13 November 2026, changed on 17 November 2026
-- Status: the phases 0 to 12 are done, except the full test of phase 10 in a real project of the user. Phase 11 tuned the risk levels and the holes of the frames. Phase 12 added stage 6, the review, and phase 13 adds the steps of the issues. On 17 November 2026, the decisions 35 to 39 changed the design of stage 6, and a research report gave the evidence. Section 8 gives the status of each phase.
+- Status: the phases 0 to 13 are done, except the full tests of the phases 10 and 13 in a real project of the user. Phase 11 tuned the risk levels and the holes of the frames. Phase 12 added stage 6, the review, and phase 13 added the steps of the issues and the measurement of the review. On 17 November 2026, the decisions 35 to 39 changed the design of stage 6, and a research report gave the evidence. Section 8 gives the status of each phase.
 - Sources:
   - the design canvas: https://claude.ai/artifact/Sxm9DJ8WPE6LAFqW8PVD6z
   - `dataflow-gaps.md` and `dataflow-gaps-2.md` in this folder
@@ -109,7 +109,7 @@ The user can change each proposal before the phase that needs it starts.
 | P19 | An issue has the parts that `/code-review` gives for each problem. These are a place, a category, a title, a summary, a failure scenario and a verdict. An issue also has a severity, important or minor, and an origin, new or pre-existing. A pre-existing issue was in the code before the task. The title has a maximum of 60 characters, and the summary is 1 sentence. The failure scenario gives the trigger, the path through the changed code and the wrong result. For a race, it gives the 2 accesses and 1 interleave of the 2 threads. The place has a short text of its code, and up to 4 more places for the fix. An issue also has 0 to 3 open decisions of its fix, as a step of the plan. It names the read tools of DataFlow that show it, and its source: a fact of DataFlow or the model alone. As decision 13, Shotgun refuses a tool that Claude did not call in this stage. Shotgun also refuses a place outside of the diff of the task and of the ripple of DataFlow. A round has a maximum of 32 issues, as the report of `/code-review`. | 12 |
 | P20 | The skill `shotgun-review` for "Review my task." and "Review the fixes.". It has the 4 stages of Anthropic Code Review: find the candidates, check each candidate, remove the duplicates, and rank by severity. Each finder and each verifier is a fresh subagent that did not write the code. It gets the diff, the brief and the facts, not the chat of the build. The finders of races and lifetime start from the facts of DataFlow. Claude judges if a race of DataFlow can occur and what it causes, and does not search for races. Each finder gets a small slice: the hunk, its ripple and its facts. It calls the read tools of DataFlow for more, and gets no search results and no list of all facts. A verifier gives the verdict first, then the failure scenario, with a file and line and a fact of DataFlow for each claim. For race and lifetime candidates, the verifier reasons first, because a strict check loses more real issues there. Claude reads first the lines of the user in the steps of the levels 3 to 5, which nobody read a second time. Then it reads the lines of Claude that the user did not walk, the ripple, and the tests for "Done when". The skill reports no style, no linter issues and no general requests for tests. Claude changes no file in the review, and decides nothing. | 12 |
 | P21 | The effort sets the finders, the context and the verify pass, but not the number of issues (decision 38). The table in section 6.10 gives each level. The table comes from the research report, and no source measured it as a whole. Above the effort high, the recall grows little, and the cost grows fast. | 12 |
-| P22 | Each confirmed new issue up to the cap is a step with the id F1, F2 and so on, after the steps of the build. The cap is 3 steps, plus 1 step for each 100 changed lines of the task, with a maximum of 10. The other issues go into the second list: the plausible issues, the pre-existing issues and the issues above the cap. The user can make each issue of the second list a step. A step has the places, the text and the open decisions of its issue. Its level is 4, also with no open decision (decision 37). The level of the heat shows only as a hint. The user can answer or add a decision of an issue, as on the plan page. A frame needs an open decision, as in the build. The steps go in the sequence of the list: the important issues first, then the minor issues. Each step gets callouts and loose ends, as a step of the build. **Not a problem** closes an issue with a reason, and the ledger records it. | 13 |
+| P22 | Each confirmed new issue up to the cap is a step after the steps of the plan. The id of the step is the id of the issue, for example I3. A plan cannot use these ids. The cap is 3 steps, plus 1 step for each 100 changed lines of the task, with a maximum of 10. The other issues go into the second list: the plausible issues, the pre-existing issues and the issues above the cap. The user can make each issue of the second list a step. A step has the places, the text and the open decisions of its issue. Its level is 4, also with no open decision (decision 37). The level of the heat shows only as a hint. The user can answer or add a decision of an issue, as on the plan page. A frame needs an open decision, as in the build. The steps go in the sequence of the list: the important issues first, then the minor issues. Each step gets callouts and loose ends, as a step of the build. **Not a problem** closes an issue with a reason, and the ledger records it. | 13 |
 | P23 | After the fixes, "Review the fixes." starts the next round, with the effort and the focus that the user selects for it. Each round keeps the hashes of the hunks of its diff, so the next round marks the new and the changed hunks. Claude reviews these hunks and their ripple, and checks each fixed issue. An issue that is not fixed opens again, with a note of Claude. Claude names the earlier issue that each issue repeats, because the same LLM gives different titles in each run. After 3 rounds, the panel tells the user to think about the approach again, and a modal message asks before the next round. | 13 |
 | P24 | The check of the commit message works in the stages 5 and 6, and after the end of the task. **Copy for the pull request** adds the issues with their states and the reasons of the user. | 13 |
 | P25 | A task that is done in stage 5 of version 0.2.0 or earlier stays done, with no review. A task in stage 5 that is not done goes to stage 6 at the gate **The build is done**. A new plan of Claude puts the steps of the issues back to todo, as each step that is not in the plan. | 12 |
@@ -234,7 +234,7 @@ The MCP name of each tool starts with `shotgun_`. In Claude Code, the full name 
 | `submit_line_answer` | submit | 5 | The answer of Claude to a question of the user about a line. |
 | `submit_message_check` | submit | 5 | The points of the check of the commit message. |
 | `get_review` | read | 6 | The diff of the task: the hunks with their heat and their ripple, and the writer and the walk of each changed line. The effort and the focus of the user. The parts of the brief, and the steps with their checks and levels. The callouts that the user closed, with the reasons. The open loose ends, and the issues of the earlier rounds with their states and the reasons of the user. Phase 12. |
-| `submit_review` | submit | 6 | The issues of a round, ranked by severity. A new review of the same round replaces the old review. Each issue names the earlier issue that it repeats. A repeated issue keeps its state and its step, and a repeated closed issue needs new evidence. Shotgun puts each issue into the list of steps or into the second list (P22). Phase 12. |
+| `submit_review` | submit | 6 | The issues of a round, ranked by severity. A new review of the same round replaces the old review. Each issue names the earlier issue that it repeats. A repeated issue keeps its state and its step, and a repeated closed issue needs new evidence. From phase 13, an issue at the line of a closed callout also needs new evidence. Shotgun puts each issue into the list of steps or into the second list (P22). Phase 12. |
 | `guard` | hook | all | The decision of the guard for a file change. |
 | `session_context` | hook | all | A short text with the task, the stage and the gates for each prompt to Claude. With no active task, it gives no text. |
 
@@ -372,7 +372,7 @@ Shotgun cannot run `/code-review` itself. Its text is not public, and it can cha
 9. The user works through the list of steps (decision 37). Each issue is a step of the user, as a step of level 4 in the build:
    - The user writes the fix. Shotgun records the lines of the user, and gives callouts and loose ends, as for a step of the build.
    - The user can ask Claude a question in the chat, or ask for a frame. A frame has a hole for each open decision of the fix.
-   - The user can change the level of the issue. At the levels 1 and 2, the user tells Claude "Do fix F1.", and walks the receipt.
+   - The user can change the level of the issue. At the levels 1 and 2, the user tells Claude "Do step I3.", and walks the receipt.
    - **Not a problem** closes the issue. The ledger keeps the reason of the user, and the next review gets it (P35).
    - The user can make an issue of the second list a step.
 10. After the fixes, the user tells Claude "Review the fixes." The next round reviews the new and the changed hunks with their ripple, and checks each fixed issue (P23). After 3 rounds, the panel asks first.
@@ -404,7 +404,7 @@ The focus has 1 or more areas (decision 36). The default focus is all areas exce
 | confirmed | The verify pass found the failure scenario in the code. |
 | plausible | The verify pass did not confirm the failure scenario, but it did not find proof against it. The issue goes into the second list. |
 
-The severity is important or minor. An important issue has a failure scenario with a wrong result, a crash, a race, a leak or a gap in the brief. The origin is new or pre-existing. A pre-existing issue was in the code before the task, and it goes into the second list. The second list shows the source of each plausible issue (decision 13). The badge **Engine** marks a fact of DataFlow, and **Model** marks a candidate of Claude alone.
+The severity is important or minor. An important issue has a failure scenario with a wrong result, a crash, a race, a leak or a gap in the brief. The origin is new or pre-existing. A pre-existing issue was in the code before the task, and it goes into the second list. The second list shows the source of each plausible issue (decision 13). The badge **Engine** marks an issue that a fact of DataFlow gives, and **Model** marks an issue that Claude found, also with the help of facts of DataFlow. A race issue always names `get_threads` (P20).
 
 An issue is open, fixed or closed. When the step of an issue is done, the issue is fixed. **Not a problem** closes an issue. The next round checks each fixed issue (P23). The second list does not stop the gate (P16).
 
@@ -822,16 +822,62 @@ Open items:
 
 ### Phase 13: the steps of the issues
 
-- **Steps:** each confirmed new issue up to the cap is a step of the user with level 4 (P22, decision 37). The user writes the fix, and gets callouts and loose ends. The user can ask for a frame, or change the level. At the levels 1 and 2, the user tells Claude "Do fix F1.", and walks the receipt. "Give me a frame for fix F2." gives a frame with a hole for each open decision. The user can make an issue of the second list a step.
+- **Steps:** each confirmed new issue up to the cap is a step of the user with level 4 (P22, decision 37). The user writes the fix, and gets callouts and loose ends. The user can ask for a frame, or change the level. At the levels 1 and 2, the user tells Claude "Do step I3.", and walks the receipt. "Give me a frame for step I3." gives a frame with a hole for each open decision. The user can make an issue of the second list a step.
 - **Decisions:** the user can answer or add an open decision of an issue, as on the plan page.
 - **Guard:** an open errand of Claude for an issue opens the files of its scope, as a step of the build.
 - **Feedback:** the next review gets the reasons of **Not a problem**. The page shows the rate of issues with no action for each area, and proposes to turn off an area above 10% (P35).
 - **Rounds:** "Review the fixes." reviews the new and the changed hunks with their ripple, and checks each fixed issue. Each issue names the earlier issue that it repeats. After 3 rounds, the panel asks first (P23).
 - **Commit message and ledger:** the check of the commit message works in stage 6. **Copy for the pull request** adds the issues (P24).
-- **Measurement:** a script measures the skill on the bug history of the fixture and of a project of the user (P36). It runs each configuration 3 times.
+- **Measurement:** `scripts/measure-review.mjs` measures the skill on 12 cases in the fixture: 8 changes with 1 known bug each, and 4 changes with no bug (P36). The user selected these cases instead of a bug history, and the efforts low, medium and high. The script runs each case at each effort 3 times.
 - **Full test:** `scripts/test-claude.mjs` adds stage 6. The test selects an effort and a focus, and Claude reviews the fixture task. The test writes the fix of 1 issue, sets 1 issue to level 2 for Claude, and closes 1 issue with **Not a problem**. "Review the fixes." checks the fixes. Then the test ends the task, and Claude checks the commit message.
 - **Release:** the documents and the skills name 6 stages, and the changelog gives version 0.3.0.
-- **Done when:** a fix of the user and a fix of Claude go through stage 6, with callouts and with a receipt. The second round shows the fixed issues as fixed, and repeats no closed issue. The measurement gives the recall, the precision and the cost of the effort medium on the bug history of the fixture.
+- **Done when:** a fix of the user and a fix of Claude go through stage 6, with callouts and with a receipt. The second round checks each fixed issue. A correct fix stays fixed, and an issue with a wrong fix comes again with its id. The second round repeats no closed issue. The measurement gives the recall, the precision and the cost of each effort on the cases of the fixture.
+
+**Status, 17 November 2026:** done, except the full test in a real project of the user. 152 unit tests passed. Run 3 of `scripts/test-claude.mjs` passed all 195 checks with 17 runs of Claude Code:
+
+- The review at the effort medium gave 2 steps, and 2 issues in the second list. "Make it a step" added an issue of the second list to the list of steps.
+- A run of Claude Code with no plugins stood in for the user, and fixed I1 at level 4. Claude fixed I2 at level 2 as an errand with a receipt in stage 6. The guard opened only the scope of the step. "Not a problem" closed the third step, and its started step went away.
+- Round 2 reviewed the changed hunks, and checked each fixed issue in a subagent. The 2 fixes stayed fixed. Round 2 gave 1 new issue in the second list, and no closed issue came again.
+- The gate "The task is done" ended the task, and Claude checked the commit message again.
+
+The runs 1 and 2 found 4 faults. This phase has the fixes:
+
+- Run 1 passed 188 of 191 checks. A real race of 2 runs of the worker had the source model, because `get_threads` gives 1 run of each worker (item 50 of `dataflow-gaps-2.md`). The test needed the source engine for each race. Now `submit_review` refuses a race without `get_threads`, and the test checks this rule.
+- In run 1, the fix of the user for I1 also fixed I2, because the 2 issues had 1 cause. Thus the errand of Claude for I2 changed nothing. Now the skill makes 1 issue of 2 candidates with 1 cause. For Claude, the test takes a step with no line near the first fix, if there is one.
+- In run 1, round 2 found that the fix of the user for I1 can stop the main loop, and gave I1 again with its id. The check expected only correct fixes. Now the test checks that round 2 checks each fixed issue, and that a wrong fix comes again with its id.
+- Run 2 passed all 189 checks, but the review gave the race of a callout that the user closed again, as a confirmed step. Then Claude changed the line of the user in its errand. Now `submit_review` refuses an issue at the line of a closed callout with no new evidence or with the verdict confirmed.
+
+In run 3, the review did not give the race of the closed callout again. Thus only the unit test tested the refusal. A check with the files of run 3 showed that Shotgun finds the line of the closed callout. The fixes moved this line from 101 to 107.
+
+Open items:
+
+- The full test in a real project of the user, with the VSIX, before the push of release 0.3.0.
+- The skill can give the source model to a race that `get_threads` gives, for example I2 of run 2. Shotgun does not check the source.
+- Shotgun gets the heat of the places of the steps of the issues only in `submit_review`. An issue that "Make it a step" adds later gets no heat hint.
+- The cases of the measurement are easy, so they show no difference between the efforts. The next paragraph gives the results.
+
+**Measurement, 17 November 2026:** `scripts/measure-review.mjs` ran 108 reviews with the model Sonnet, in about 2 hours and 45 minutes. No run failed. The runs used the Claude subscription of the user, and the CLI gave a cost of $68 for all runs.
+
+| Effort | Recall | Precision, list of steps | Precision, both lists | Pre-existing issues, each run | Minutes (median) | Subagents, each run | Cost of a run (CLI) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Low | 100% | 100% | 100% | 0.03 | 0.7 | 1.0 | $0.23 |
+| Medium | 100% | 100% | 93% | 0.22 | 1.6 | 8.3 | $0.82 |
+| High | 100% | 96% | 96% | 0.25 | 1.6 | 8.4 | $0.84 |
+
+- Each effort found the bug of each of the 8 bug cases in all 3 runs, each time in the list of steps. The cases are too easy to show a difference between the efforts. Each case is a small change in 1 or 2 files, and each bug is in the changed code.
+- No issue was a clear false alarm. The 8 issues of the kind other came from 3 cases:
+  - In case C3, 5 issues found that `is_idle()` is true while a worker still runs a job. The spec of the brief permits this, but its goal "the pool has no work" does not.
+  - In case C1, 2 issues in the second list found that the old log line "used preset" comes before the code picks the start.
+  - In case B2, 1 plausible issue found other runs of the solver with no log line.
+- Medium and high found more pre-existing problems than low, all in the second list.
+- High is almost the same as medium. Its second pass only changes the order of the hunks, and 7 of the 12 cases change only 1 place. Only 2 runs of case B7 started a second pass, with 15 subagents.
+- In 2 of the 72 runs at medium and high, Claude started no subagent, and reviewed the change itself. Both runs were the clean case C2 with 2 small changes. The skill does not permit this.
+- Each brief asks for a test, and no change has a test. Thus each effort gave about 0.4 test gaps in each run.
+
+Open items of the measurement:
+
+- Harder cases must compare the efforts: a bug across 2 files, a bug in the ripple of a change, a large diff, and the bug-fix commits of a project of the user.
+- The default effort stays medium until these cases give data. On small changes, low was enough.
 
 ## 9. Tests
 
@@ -844,6 +890,7 @@ Open items:
 | Plugin tests | `claude plugin validate` on the plugin folder. |
 | Hook tests | `scripts/test-claude.mjs`: `claude -p` with `--plugin-dir`, `--setting-sources project`, `--include-hook-events` and `--no-session-persistence`. Not `--strict-mcp-config`, because it also removes the MCP servers of plugins. These tests use the Claude subscription of the user, so they run only on request. |
 | Rule for the hook tests | The CLI uses the login and thus the config folder of the user. A marketplace from the settings of a run goes into the plugin data of the user, so a test loads each plugin with `--plugin-dir`. The test records the plugin data of the user before the runs, removes the empty folders of the runs, and checks the data after them. |
+| Measurement | `scripts/measure-review.mjs` runs the review skill on the 12 cases of `scripts/review-cases.mjs`, at each effort, 3 times (P36). It gives the recall, the precision, the issues of the clean cases and the cost. It uses the Claude subscription of the user, so it runs only on request. |
 | Skill tests | Cases of `claude plugin eval` for the requests that must load each skill. These tests use the Claude subscription of the user, so they run only on request. |
 | Manual tests | 1 full task with Claude Code before each release. |
 
@@ -905,6 +952,7 @@ The gates stay buttons, because they record decisions of the user. A click on th
 - The items 11 and 30 to 33 of the heat stay important for the risk levels of phase 5.
 - Phase 1 found item 42: the MCP server and the token file can have different tokens at the first start of DataFlow. The order of the work puts it first.
 - Stage 6 found a new gap: the lock order of the threads, with its cycles, for the deadlock candidates of the review. DataFlow 0.6.2 gives the locks of each access, but no lock order. In the research report, no model alone found a true deadlock. Until DataFlow has this fact, the review reports no deadlock.
+- The test of phase 13 found item 50 of `dataflow-gaps-2.md`: `get_threads` gives 1 run of each worker. Thus a race of 2 runs of a worker, for example after a change drops the handle with no join, has only the source model.
 - This plan and the spikes of phase 0 find no other new gap.
 
 ## 14. Risks
@@ -933,4 +981,4 @@ The gates stay buttons, because they record decisions of the user. A click on th
 | A review at the effort high or more. | A long review uses much time and many tokens, and above high it finds few more issues. | The default effort is medium. The panel names the finders and the verify pass of each effort. The size of the diff, not the effort, sets the cap on the steps. |
 | Claude names no open decision in a step. | Claude writes a step with a decision of the user. | The plan page shows the open decisions of each step, and the user can add a decision. Then the level of the heat applies again. |
 | Claude names a decision that the brief or the answers of the user already settle. | A hole is obvious again. | The user can answer the decision in words. `submit_frame` refuses an answer that the text of the step contains. |
-| Claude names again a callout that the user closed as "Not a problem". | The user decides the same thing 2 times. | `get_review` gives the closed callouts with the reasons. The skill tells Claude to name such a place again only with new evidence, and with the verdict plausible. |
+| Claude names again a callout that the user closed as "Not a problem". | The user decides the same thing 2 times. | `get_review` gives the closed callouts with the reasons. The skill tells Claude to name such a place again only with new evidence, and with the verdict plausible. From phase 13, `submit_review` refuses an issue at the line of a closed callout with no new evidence or with the verdict confirmed. |

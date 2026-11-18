@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Phase 13: the steps of the issues
+
+Each issue of the list of steps is a step of the user (decision 37). The user works through the steps as through the steps of the build, and the next round of the review checks the fixes.
+
+- The steps of the issues come after the steps of the plan, in the sequence of the list of steps. The id of a step is the id of its issue, for example I3. A step is at level 4: the user writes the fix, and gets callouts, loose ends and the gate "The step is done". The gate fixes the issue.
+- The user can change the level of a step on the page. At the levels 1 and 2, the user tells Claude "Do step I3.", and walks the receipt. "Give me a frame for step I3." gives a frame with a hole for each open decision of the fix. The heat of the places shows only as a hint.
+- The user can answer and add the open decisions of a fix on the page, as on the plan page.
+- "Make it a step" adds an issue of the second list at the end of the list of steps. "Back to the second list" removes it again before Claude starts it. "Not a problem" for a started step removes the step, and its changes stay in the files.
+- The panel shows the current step of an issue with its own gate, and the tab "Loose ends". The page shows the state and the level of each step. Next to an issue of the area "The brief", the page shows the specs, the work out of scope and the conditions of done.
+- The guard opens the scope of an open errand or frame of Claude for an issue. The review itself still changes no file.
+- After a fix, the next review is a new round. The panel copies the prompt of round 2. `get_review` marks the hunks that changed since the last round, and gives the fixed issues to check. A fixed issue that the review gives again is a step again. After 3 rounds, the panel tells the user to think about the approach again, and asks before it copies the prompt.
+- The feedback of the user from all tasks of the folder: the page shows the rate of the issues with no action for each area. After 10 decided issues, an area with more than 10% with no action gets the button "Turn off". The cap on the steps moves to the last rank before the rate with no action passes 10%.
+- "Copy for the pull request" adds the issues of the review with their states and the reasons of the user.
+- A plan cannot use the ids I1, I2 and so on, because the steps of the issues use them.
+- `submit_review` refuses a race issue without `get_threads`, because a race starts from the threads of DataFlow (P20). The badge "Engine" now marks an issue that a fact of DataFlow gives. An issue that Claude found with the help of facts of DataFlow has the badge "Model".
+- `submit_review` refuses an issue at the line of a callout that the user closed, if the issue can give the problem of the callout again. Such an issue needs new evidence and the verdict plausible, and then it goes into the second list.
+- The skill `shotgun-review` makes 1 issue of 2 candidates with 1 cause, if 1 fix removes the 2 failure scenarios. It also judges a race of 2 runs of 1 worker, for example after a change drops the handle with no join. DataFlow does not give such a race yet (item 50 of `dataflow-gaps-2.md`).
+- The new script `scripts/measure-review.mjs` measures the review skill on 12 cases in the fixture `battery` (P36). Of these cases, 8 have 1 known bug each, and 4 have no bug. It gives the recall, the precision and the cost of each effort. `scripts/harness.mjs` has the shared parts of the scripts that run Claude Code.
+- The first measurement had 108 runs. Each effort from low to high found each of the 8 bugs in all 3 runs, and gave no clear false alarm. A review at low took about 1 minute, and a review at medium or high took about 2 minutes. The CLI gave a cost of $0.23 for low and of about $0.83 for medium and high. The cases are small, so they do not show a difference between the efforts.
+- Tests: 152 unit tests. `scripts/test-claude.mjs` has the steps 13 to 15. The user writes a fix, and Claude writes a fix at level 2 with a receipt. The test closes an issue with "Not a problem", runs round 2, and checks the commit message after the end of the task. Run 3 passed all 195 checks.
+
 ### Phase 12: review
 
 Stage 6 is the review (the decisions 35 to 39). A new session of Claude Code reviews the whole diff of the task with the effort and the focus of the user. Shotgun shows the issues in 2 lists.

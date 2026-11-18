@@ -13,7 +13,7 @@ The full names of the tools start with `mcp__plugin_dataflow_dataflow__shotgun_`
 
 - Call `shotgun_get_session` first for each request about Shotgun. It gives the active task, its stage, the brief, the rule of the guard and the next work.
 - Give your results only with the tools of Shotgun. Do not change the files in the folder `.shotgun`.
-- The guard of Shotgun stops each change of a file in the stages 1 to 4 and in stage 6. In stage 5, it lets you change only the files of the scope of your open step. If the guard stops a change, do not try a different way, for example a shell command. Tell the user the reason of the guard.
+- The guard of Shotgun stops each change of a file in the stages 1 to 4 and in stage 6. In stage 5, it lets you change only the files of the scope of your open step. The same rule applies to the step of an issue in stage 6. If the guard stops a change, do not try a different way, for example a shell command. Tell the user the reason of the guard.
 - A gate is a decision of the user. Only the user selects a gate, with a button of Shotgun. Tell the user which gate comes next.
 - The user can return the task to an earlier stage at any time. Then the task is in that stage again, and the work of the later stages stays. Do a stage again only when the user asks, for example "Survey my brief.".
 - The tools of Shotgun check your data. If a tool gives problems, correct all of them, and call the tool again.
@@ -105,7 +105,9 @@ After the last step, the user selects "The build is done". Then the task goes to
 
 The review runs in a new session of Claude Code, because a new session did not write the code of the task. The user selects the effort and the focus in the panel of Shotgun. Then the user copies the prompt of the review, and pastes it into a new session. Use the skill `shotgun-review` when the user asks for the review, or when a prompt names the skill `shotgun-review`.
 
-The guard stops each change of a file in stage 6. The user works through the issues, and closes an issue that is not a problem with a reason. Then the user selects "The task is done".
+Each issue of the list of steps is a step of the user, with the id of the issue, for example `I3`. The steps go in sequence, as in the build, and the gate of a step fixes its issue. The user can change the level of the step of an issue, as in the build. Then the skills `shotgun-errand` and `shotgun-frame` apply, for example for "Do step I3" or "Give me a frame for step I3". The user can also make an issue of the second list a step.
+
+The guard stops each change of a file in stage 6. Only an open step of yours for an issue lets you change the files of its scope. The user works through the issues, and closes an issue that is not a problem with a reason. Then the user selects "The task is done".
 
 ## The commit message
 

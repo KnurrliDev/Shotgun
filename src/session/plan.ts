@@ -24,6 +24,7 @@ export const MAX_DECISIONS = 3; // the open decisions of Claude in a step (P27)
 export const MAX_USER_DECISIONS = 3; // the decisions that the user adds to a step (P29)
 export const MAX_DECISION_QUESTION = 200;
 export const MAX_DECISION_ANSWER = 500;
+export const ISSUE_LEVEL = 4; // the level of the step of an issue of the review (decision 37)
 const MAX_OPTIONS = 4;
 const MAX_OPTION = 120;
 
@@ -56,6 +57,7 @@ export interface PlanStep {
 	readonly checks: readonly string[];
 	readonly note?: string; // a note of Claude for the user
 	readonly looseEnd?: string; // a step of a loose end that the user handed to Claude, for example E3 (decision 21)
+	readonly issue?: string; // a step that fixes an issue of the review in stage 6. Its id is the id of the issue (P22)
 	// the open decisions of Claude. undefined: a plan of version 0.1.0 or a loose end, with the level of the heat only (P34)
 	readonly decisions?: readonly PlanDecision[];
 }
@@ -166,11 +168,15 @@ export interface StepLevel {
 // no open decision, it is at most 2: Claude writes the step, and the user walks the receipt (decision 31). Level 5 stays
 // a step of the user (decision 33). A step with no field decisions has the level of the heat only (P34)
 export function levelOf(step: PlanStep, risk: RiskFile | undefined, levels: LevelsFile | undefined): StepLevel {
+	const user = levels?.levels[step.id]?.level;
+	// the step of an issue is a step of the user by default, also with no open decision (decision 37)
+	if (step.issue) {
+		return { level: user ?? ISSUE_LEVEL, rule: ISSUE_LEVEL, heat: null, isCapped: false, ...(user ? { user } : {}) };
+	}
 	const heat = risk?.steps[step.id]?.level ?? null;
 	const decisions = decisionsOf(step, levels);
 	const isCapped = !!decisions && heat !== null && heat > 2 && heat < 5 && !decisions.some((d) => d.answer === undefined);
 	const rule: Level | null = isCapped ? 2 : heat;
-	const user = levels?.levels[step.id]?.level;
 	return { level: user ?? rule, rule, heat, isCapped, ...(user ? { user } : {}) };
 }
 
@@ -211,6 +217,10 @@ export function checkPlan(raw: Record<string, unknown>, ctx: SurveyContext, orde
 		}
 		const item = s as Record<string, unknown>;
 		const id = idOf(item.id, label, 'S1');
+		// the steps of the issues of the review use the ids of the issues (P22)
+		if (id && /^I\d+$/i.test(id)) {
+			problems.push(`${label}: the ids I1, I2 and so on are for the issues of the review. Give a different id, for example S1.`);
+		}
 		const title = textField(item, 'title', label, MAX_TITLE);
 		const text = textField(item, 'text', label, MAX_TEXT);
 		const note = textField(item, 'note', label, MAX_NOTE, true);

@@ -84,6 +84,7 @@ export function isFromView(value: unknown): value is FromView {
 		case 'showLedger':
 		case 'copyLedger':
 		case 'copyReviewPrompt':
+		case 'stepGate':
 			return true;
 		case 'setReviewOptions':
 			return typeof m.effort === 'string' && m.effort.length <= 16 && Array.isArray(m.areas) && m.areas.length <= 16
@@ -91,6 +92,8 @@ export function isFromView(value: unknown): value is FromView {
 		case 'closeIssue':
 		case 'reopenIssue':
 			return typeof m.id === 'string' && m.id.length <= 16;
+		case 'setIssueStep':
+			return typeof m.id === 'string' && m.id.length <= 16 && typeof m.isStep === 'boolean';
 		case 'showHint':
 			return typeof m.step === 'string' && m.step.length <= 64 && Number.isInteger(m.hole) && (m.hole as number) >= 1 && Number.isInteger(m.level)
 				&& (m.level as number) >= 1 && (m.level as number) <= 4;

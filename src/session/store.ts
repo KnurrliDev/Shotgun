@@ -3,7 +3,8 @@ import { EventEmitter } from 'events';
 import * as path from 'path';
 import { BRIEF_FILE, briefTemplate, PartId } from './brief';
 import {
-	BUILD_FILE, BuildFile, BuildStep, BuildWriter, ChangeMark, currentStep, CurrentStep, MAX_CHANGE_NOTE, parseBuild, Receipt, receiptCounts, scopeOf, stateOf,
+	BUILD_FILE, BuildFile, buildNext, BuildStep, BuildWriter, ChangeMark, currentStep, CurrentStep, MAX_CHANGE_NOTE, parseBuild, Receipt, receiptCounts, refOf, scopeOf,
+	stateOf,
 } from './build';
 import { CALLOUTS_FILE, CalloutsFile, EMPTY_CALLOUTS, LineAnswer, parseCallouts, StepCallouts } from './callouts';
 import type { Hole } from './frame';
@@ -22,8 +23,8 @@ import {
 	parseRisk, Plan, PlanFile, PlanStep, RiskFile, UserLevel, writerOf,
 } from './plan';
 import {
-	applyReview, AREAS, EFFORTS, EMPTY_REVIEW, IssueInput, MAX_FOCUS_TEXT, MAX_ISSUE_REASON, parseReview, REVIEW_FILE, ReviewFile, ReviewIssue, ReviewOptions,
-	ReviewRound, TaskBase,
+	applyReview, AREAS, EFFORTS, EMPTY_REVIEW, feedbackOf, IssueInput, MAX_FOCUS_TEXT, MAX_ISSUE_REASON, parseReview, REVIEW_FILE, ReviewFile, ReviewIssue, ReviewOptions,
+	issueSteps, ReviewFeedback, ReviewRound, TaskBase, workPlanOf,
 } from './review';
 import type { Level } from './risk';
 import { Gate, passGate, returnTo, Stage, START } from './stages';
@@ -60,7 +61,24 @@ export interface Snapshot {
 	readonly loose: LooseFile | undefined; // the loose ends of the steps
 	readonly message: MessageCheck | undefined; // the check of Claude of the commit message
 	readonly review: ReviewFile | undefined; // the base of the task, and the effort, the focus and the issues of the review in stage 6
+	readonly feedback: ReviewFeedback | undefined; // the feedback of the user from the reviews of all tasks of the folder (P35)
 	readonly problems: readonly string[]; // the stage files that Shotgun cannot read
+}
+
+// The steps of the build tools in a snapshot: the steps of the plan, and in stage 6 also the steps of the issues (P22)
+export const workPlan = (snapshot: Snapshot): Plan | undefined => workPlanOf(snapshot.plan, snapshot.review, snapshot.task?.stage);
+
+// The stages with steps: stage 5, the build, and stage 6, the review, for the steps of the issues
+export const isStepStage = (task: TaskFile | undefined): boolean => !!task && !task.isDone && (task.stage === 'build' || task.stage === 'review');
+
+// The next work in the stages with steps, and the request in words for Claude Code. undefined: the text of the stage. In
+// stage 6, the steps of the issues give the next work after the first review
+export function stepNext(snapshot: Snapshot, current: CurrentStep | undefined): { next: string; request?: string } | undefined {
+	const task = snapshot.task;
+	if (!task || !isStepStage(task) || (task.stage === 'review' && issueSteps(snapshot.review).length === 0)) {
+		return undefined;
+	}
+	return buildNext(current, task.stage === 'review');
 }
 
 // The start of a step of the build. base: the name of the mark of DataFlow. baseError: why the step has no base
@@ -92,7 +110,7 @@ export class SessionStore {
 		this.state = {
 			root, task: undefined, isPaused: false, tasks: [], decisions: [], questions: [], survey: undefined, engine: undefined, answers: {},
 			order: undefined, plan: undefined, risk: undefined, levels: undefined, build: undefined, callouts: undefined, loose: undefined, message: undefined,
-			review: undefined, problems: [],
+			review: undefined, feedback: undefined, problems: [],
 		};
 	}
 
@@ -137,6 +155,19 @@ export class SessionStore {
 			}
 		}
 		tasks.sort((a, b) => b.created.localeCompare(a.created));
+		// the feedback of the user from the reviews of all tasks (P35). A review that Shotgun cannot read does not count
+		const reviews: ReviewFile[] = [];
+		for (const t of dir ? tasks : []) {
+			const text = readText(path.join(dir!, t.id, REVIEW_FILE));
+			try {
+				if (text !== undefined) {
+					reviews.push(parseReview(text, t.id));
+				}
+			} catch {
+				// the active task gives the problem below
+			}
+		}
+		const feedback = reviews.some((r) => r.issues.length > 0) ? feedbackOf(reviews) : undefined;
 
 		let active: ActiveFile = { version: FILE_VERSION, task: null, isPaused: false };
 		const activeText = dir ? readText(path.join(dir, ACTIVE_FILE)) : undefined;
@@ -224,14 +255,21 @@ export class SessionStore {
 			loose,
 			message,
 			review,
+			feedback,
 			problems,
 		});
 	}
 
-	// The current step of the build: the first step of the plan that is not done
+	// The current step of the build: the started step, else the first step that is not done. In stage 6, the steps of the
+	// issues come after the steps of the plan
 	get current(): CurrentStep | undefined {
-		const { plan, risk, levels, build } = this.state;
-		return currentStep(plan, risk, levels, build);
+		const { risk, levels, build } = this.state;
+		return currentStep(this.workPlan, risk, levels, build);
+	}
+
+	// The steps of the plan, and in stage 6 also the steps of the issues of the review (P22)
+	get workPlan(): Plan | undefined {
+		return workPlanOf(this.state.plan, this.state.review, this.state.task?.stage);
 	}
 
 	// The order of the active task: order.json, else the tasks of the survey in their sequence
@@ -414,16 +452,15 @@ export class SessionStore {
 	}
 
 	// The level of the user for a step. undefined: the level of the rules again. The ledger records each change with the
-	// level of the rules at that time. In stage 5, the user changes the level of a step that Claude did not start, also of
-	// the current step of the user (decision 17). Then the step starts again with the writer of its new level. The result:
-	// the old state of the step in the build, for example with its base, or undefined
+	// level of the rules at that time. In the stages 5 and 6, a level changes only before Claude starts the step, also
+	// for an open step of the user (decision 17). Then the step starts again with the writer of its new level. The result: the old state of the step in the build, for example with its base, or undefined
 	setLevel(step: string, level: Level | undefined): BuildStep | undefined {
 		const task = this.requireLevelStage(step);
 		const old = this.state.levels?.levels[step];
 		if (old?.level === level) {
 			return undefined;
 		}
-		const removed = task.stage === 'build' ? this.state.build?.steps[step] : undefined;
+		const removed = task.stage !== 'plan' ? this.state.build?.steps[step] : undefined;
 		const rule = levelOf(this.requireStep(step), this.state.risk, this.state.levels).rule;
 		this.writeLevel(task.id, step, level, old?.note);
 		if (removed) {
@@ -505,13 +542,14 @@ export class SessionStore {
 		});
 	}
 
-	// Writes the decisions of the user for a step, and records the change. In stage 5, a step with a new writer starts again
+	// Writes the decisions of the user for a step, and records the change. In the stages 5 and 6, a step with a new writer
+	// starts again
 	private changeDecisions(task: TaskFile, step: PlanStep, value: Partial<UserLevel>, decision: DecisionInput): BuildStep | undefined {
 		const before = writerOf(levelOf(step, this.state.risk, this.state.levels).level);
 		const next = this.userLevel(step.id, value);
 		const levels: LevelsFile = { version: FILE_VERSION, levels: next };
 		const after = writerOf(levelOf(step, this.state.risk, levels).level);
-		const removed = task.stage === 'build' && before !== after ? this.state.build?.steps[step.id] : undefined;
+		const removed = task.stage !== 'plan' && before !== after ? this.state.build?.steps[step.id] : undefined;
 		writeTextAtomic(path.join(this.requireDir(), task.id, LEVELS_FILE), jsonText(levels));
 		if (removed) {
 			this.removeStep(task.id, step.id);
@@ -524,8 +562,8 @@ export class SessionStore {
 	// The note of the user for a step, for example the reason of a different level. An empty note removes the note
 	setLevelNote(step: string, note: string): void {
 		const task = this.requireTask();
-		if (task.isDone || (task.stage !== 'plan' && task.stage !== 'build')) {
-			throw new Error('You can change a note only in stage 4, the plan, and in stage 5, the build.');
+		if (task.isDone || (task.stage !== 'plan' && task.stage !== 'build' && task.stage !== 'review')) {
+			throw new Error('You can change a note only in the stages 4, 5 and 6.');
 		}
 		this.requireStep(step);
 		const text = note.trim().replace(/\s+/g, ' ');
@@ -580,22 +618,66 @@ export class SessionStore {
 	}
 
 	// A review of Claude in stage 6, from submit_review: the round with its effort, focus, changed lines and hunks, and the
-	// issues after the checks
-	writeReview(round: Omit<ReviewRound, 'time' | 'cap'>, issues: readonly IssueInput[]): { review: ReviewFile; added: number; repeated: number } {
+	// issues after the checks. A fixed issue that the review gives again is a step again. removed: the started steps of the
+	// issues that left the list of steps, so that the tool deletes their bases
+	writeReview(round: Omit<ReviewRound, 'time' | 'cap'>, issues: readonly IssueInput[])
+		: { review: ReviewFile; added: number; repeated: number; removed: { id: string; step: BuildStep }[] } {
 		const task = this.requireStage('review', 'Claude gives the review only in stage 6, the review.');
-		const result = applyReview(this.state.review ?? EMPTY_REVIEW, round, issues, this.time());
-		this.writeReviewFile(task.id, result.review);
+		// the issues with a step that the user started stay, also when the review does not give them again
+		const started = Object.entries(this.state.build?.steps ?? {}).filter(([, s]) => s.state !== 'todo' && s.state !== 'done').map(([key]) => key);
+		const result = applyReview(this.state.review ?? EMPTY_REVIEW, round, issues, this.time(), { started: new Set(started), capLimit: this.state.feedback?.cap });
+		const removed = this.writeReviewSteps(task.id, result.review);
 		const open = result.review.issues.filter((i) => i.lastRound === round.n && i.state === 'open');
 		this.append(task.id, {
 			kind: 'review', by: 'claude', round: round.n, effort: round.effort, issues: issues.length,
 			steps: open.filter((i) => i.list === 'steps').length, second: open.filter((i) => i.list === 'second').length,
 		});
 		this.load();
-		return result;
+		return { ...result, removed };
 	}
 
-	// The user closes an issue of the review with "Not a problem" and a reason, or opens it again with no reason (P22)
-	setIssueClosed(id: string, reason: string | undefined): void {
+	// The user makes an open issue of the second list a step, or puts it back into the second list (P22). A new step goes
+	// to the end of the list of steps. The result: the removed step with its base, if the user started it
+	setIssueStep(id: string, isStep: boolean): { id: string; step: BuildStep } | undefined {
+		const task = this.requireStage('review', 'The issues of the review are only in stage 6, the review.');
+		const review = this.state.review;
+		const issue = review?.issues.find((i) => i.id === id);
+		if (!review || !issue) {
+			throw new Error(`The review has no issue ${id}.`);
+		}
+		if (issue.state !== 'open') {
+			throw new Error(`The issue ${id} is ${issue.state}.`);
+		}
+		let next: ReviewIssue;
+		if (isStep) {
+			if (issue.list === 'steps') {
+				return undefined;
+			}
+			const { secondReason: _old, ...rest } = issue;
+			next = { ...rest, list: 'steps', isUserStep: true };
+		} else {
+			if (!issue.isUserStep) {
+				throw new Error(`The issue ${id} is a step of the review. To remove it, close it with "Not a problem" and your reason.`);
+			}
+			// as with a new level: only a step that Claude did not start (decision 17)
+			const b = this.state.build?.steps[id];
+			if (b && b.state !== 'todo' && !(b.state === 'open' && b.writer === 'user')) {
+				throw new Error(`Claude started the step of ${id}. Accept the receipt, or fill the holes of the frame, first.`);
+			}
+			const { isUserStep: _old, ...rest } = issue;
+			const reason = issue.verdict === 'plausible' ? 'plausible' : issue.origin === 'pre-existing' ? 'pre-existing' : 'cap';
+			next = { ...rest, list: 'second', secondReason: reason };
+		}
+		const issues = isStep ? [...review.issues.filter((i) => i !== issue), next] : review.issues.map((i) => (i === issue ? next : i));
+		const removed = this.writeReviewSteps(task.id, { ...review, issues });
+		this.append(task.id, { kind: 'issue-step', by: 'user', issue: id, title: issue.title, isStep });
+		this.load();
+		return removed[0];
+	}
+
+	// The user closes an issue of the review with "Not a problem" and a reason, or opens it again with no reason (P22). The
+	// result: the removed step of the issue with its base, if the user started it
+	setIssueClosed(id: string, reason: string | undefined): { id: string; step: BuildStep } | undefined {
 		const task = this.requireStage('review', 'The issues of the review are only in stage 6, the review.');
 		const review = this.state.review;
 		const issue = review?.issues.find((i) => i.id === id);
@@ -605,7 +687,7 @@ export class SessionStore {
 		let next: ReviewIssue;
 		if (reason === undefined) {
 			if (issue.state !== 'closed') {
-				return;
+				return undefined;
 			}
 			const { closed: _old, ...rest } = issue;
 			next = { ...rest, state: 'open' };
@@ -618,32 +700,33 @@ export class SessionStore {
 				throw new Error(`A reason has a maximum of ${MAX_ISSUE_REASON} characters.`);
 			}
 			if (issue.state === 'closed' && issue.closed?.reason === text) {
-				return;
+				return undefined;
 			}
 			next = { ...issue, state: 'closed', closed: { reason: text, time: this.time() } };
 		}
-		this.writeReviewFile(task.id, { ...review, issues: review.issues.map((i) => (i === issue ? next : i)) });
+		const removed = this.writeReviewSteps(task.id, { ...review, issues: review.issues.map((i) => (i === issue ? next : i)) });
 		this.append(task.id, reason === undefined ? { kind: 'issue-open', by: 'user', issue: id }
 			: { kind: 'issue-close', by: 'user', issue: id, title: issue.title, reason: next.closed!.reason });
 		this.load();
+		return removed[0];
 	}
 
 	// Opens the current step of the build: Claude opens an errand, or Shotgun opens a step of the user. Claude can open its
 	// step again after the receipt, for example to fix an issue. Then the step keeps its base and the old receipt until
 	// the new receipt
 	startStep(id: string, start: StepStart): BuildStep {
-		const task = this.requireStage('build', 'A step opens only in stage 5, the build.');
+		const task = this.requireStepStage('A step opens only in the stages 5 and 6.');
 		const current = this.requireCurrent(id);
 		const old = current.build;
 		if (current.state === 'open') {
-			throw new Error(`Step ${current.n} is open already.`);
+			throw new Error(`Step ${current.ref} is open already.`);
 		}
 		if ((current.state === 'receipt' && start.writer !== 'claude') || (current.state === 'holes' && start.writer !== 'frame')) {
-			throw new Error(`Step ${current.n} has ${current.state === 'receipt' ? 'a receipt' : 'a frame'} of Claude.`);
+			throw new Error(`Step ${current.ref} has ${current.state === 'receipt' ? 'a receipt' : 'a frame'} of Claude.`);
 		}
 		// the writer can change while a step opens, for example after "I want a frame" or a different level
 		if (start.writer !== current.writer) {
-			throw new Error(`Step ${current.n} changed while it opened. Its writer is ${current.writer} now, not ${start.writer}.`);
+			throw new Error(`Step ${current.ref} changed while it opened. Its writer is ${current.writer} now, not ${start.writer}.`);
 		}
 		// Claude opens a step again after its receipt, or for a different frame
 		const isAgain = current.state === 'receipt' || current.state === 'holes';
@@ -676,10 +759,10 @@ export class SessionStore {
 
 	// The receipt of an errand of Claude. The scope of the step closes, and the user walks the receipt
 	writeReceipt(id: string, receipt: Receipt): void {
-		const task = this.requireStage('build', 'A receipt comes only in stage 5, the build.');
+		const task = this.requireStepStage('A receipt comes only in the stages 5 and 6.');
 		const current = this.requireCurrent(id);
 		if (current.state !== 'open' || current.writer !== 'claude') {
-			throw new Error(`Step ${current.n} is not open for Claude.`);
+			throw new Error(`Step ${current.ref} is not open for Claude.`);
 		}
 		this.writeStep(task.id, id, { ...current.build!, state: 'receipt', receipt });
 		const counts = receiptCounts(receipt);
@@ -693,17 +776,17 @@ export class SessionStore {
 	// The user selects "I want a frame" for the current step of level 4 (decision 16). The step of the user starts again as a
 	// frame of Claude. The result: the old state of the step, for example with the base of the step of the user
 	requestFrame(id: string): BuildStep | undefined {
-		const task = this.requireStage('build', 'A frame is only for stage 5, the build.');
+		const task = this.requireStepStage('A frame is only for the stages 5 and 6.');
 		const current = this.requireCurrent(id);
 		if (current.level !== 4) {
-			throw new Error(`Step ${current.n} has risk level ${current.level ?? '?'}. A frame on request is only for a step of level 4. Level 3 has a frame always.`);
+			throw new Error(`Step ${current.ref} has risk level ${current.level ?? '?'}. A frame on request is only for a step of level 4. Level 3 has a frame always.`);
 		}
 		if (current.writer !== 'user' || (current.state !== 'todo' && current.state !== 'open')) {
-			throw new Error(`Step ${current.n} is not a step of the user that Claude can frame now.`);
+			throw new Error(`Step ${current.ref} is not a step of the user that Claude can frame now.`);
 		}
 		// each open decision is a hole of the frame (decision 32)
 		if (decisionsOf(current.step, this.state.levels) && openDecisions(current.step, this.state.levels).length === 0) {
-			throw new Error(`Step ${current.n} has no open decision, so a frame has no hole. Add a decision on the plan page first.`);
+			throw new Error(`Step ${current.ref} has no open decision, so a frame has no hole. Add a decision on the plan page first.`);
 		}
 		const old = current.build;
 		this.writeStep(task.id, id, { state: 'todo', writer: 'frame', level: current.level, scope: [...(old?.scope ?? scopeOf(current.step))], round: 0, isFrameRequested: true });
@@ -714,10 +797,10 @@ export class SessionStore {
 
 	// The frame of Claude for the open step: the holes with their hints. The scope closes, and the user fills the holes
 	writeFrame(id: string, holes: readonly Omit<Hole, 'shown'>[], note: string | undefined): void {
-		const task = this.requireStage('build', 'A frame comes only in stage 5, the build.');
+		const task = this.requireStepStage('A frame comes only in the stages 5 and 6.');
 		const current = this.requireCurrent(id);
 		if (current.state !== 'open' || current.writer !== 'frame' || !current.build) {
-			throw new Error(`Step ${current.n} is not open for a frame of Claude.`);
+			throw new Error(`Step ${current.ref} is not open for a frame of Claude.`);
 		}
 		const { frameNote: _old, ...rest } = current.build;
 		this.writeStep(task.id, id, { ...rest, state: 'holes', holes: holes.map((h) => ({ ...h, shown: 0 })), ...(note ? { frameNote: note } : {}) });
@@ -727,11 +810,11 @@ export class SessionStore {
 
 	// The user opens the hints of a hole up to a level, from 1 to 4. Level 4 is the answer of Claude
 	setHint(id: string, hole: number, level: number): Hole {
-		const task = this.requireStage('build', 'A hint is only in stage 5, the build.');
+		const task = this.requireStepStage('A hint is only in the stages 5 and 6.');
 		const current = this.requireCurrent(id);
 		const found = current.build?.holes?.find((h) => h.n === hole);
 		if (current.state !== 'holes' || !current.build || !found) {
-			throw new Error(`Step ${current.n} has no hole ${hole} to fill now.`);
+			throw new Error(`Step ${current.ref} has no hole ${hole} to fill now.`);
 		}
 		if (!Number.isInteger(level) || level < 1 || level > 4) {
 			throw new Error('A hint level is from 1 to 4.');
@@ -749,7 +832,7 @@ export class SessionStore {
 	// The facts of DataFlow at the start of a step of the user or of the holes of a frame. A callout needs a fact that
 	// is not in these keys
 	startCallouts(step: string, keys: readonly string[]): void {
-		const task = this.requireStage('build', 'Callouts are only for stage 5, the build.');
+		const task = this.requireStepStage('Callouts are only for the stages 5 and 6.');
 		const file = this.state.callouts ?? EMPTY_CALLOUTS;
 		const value: StepCallouts = { started: this.time(), startKeys: [...new Set(keys)], callouts: [], nextId: 1 };
 		this.writeCalloutsFile(task.id, { ...file, steps: { ...file.steps, [step]: value } });
@@ -758,7 +841,7 @@ export class SessionStore {
 
 	// The callouts of a step after a check of the facts. The ledger does not record a check: it is no decision
 	writeStepCallouts(step: string, value: StepCallouts): void {
-		const task = this.requireStage('build', 'Callouts are only for stage 5, the build.');
+		const task = this.requireStepStage('Callouts are only for the stages 5 and 6.');
 		const file = this.state.callouts ?? EMPTY_CALLOUTS;
 		this.writeCalloutsFile(task.id, { ...file, steps: { ...file.steps, [step]: value } });
 		this.load();
@@ -766,7 +849,7 @@ export class SessionStore {
 
 	// "Not a problem": the user closes a callout with a reason, or opens it again with no reason
 	closeCallout(step: string, id: string, reason: string | undefined): void {
-		const task = this.requireStage('build', 'Callouts are only for stage 5, the build.');
+		const task = this.requireStepStage('Callouts are only for the stages 5 and 6.');
 		const { file, value, callout } = this.requireCallout(step, id);
 		const text = (reason ?? '').trim().replace(/\s+/g, ' ');
 		if (reason !== undefined && (!text || text.length > MAX_CHANGE_NOTE)) {
@@ -788,7 +871,7 @@ export class SessionStore {
 
 	// The words of Claude for a callout
 	setExplanation(step: string, id: string, text: string): void {
-		const task = this.requireStage('build', 'Callouts are only for stage 5, the build.');
+		const task = this.requireStepStage('Callouts are only for the stages 5 and 6.');
 		const { file, value, callout } = this.requireCallout(step, id);
 		const callouts = value.callouts.map((c) => (c === callout ? { ...c, explanation: { text, time: this.time() } } : c));
 		this.writeCalloutsFile(task.id, { ...file, steps: { ...file.steps, [step]: { ...value, callouts } } });
@@ -798,7 +881,7 @@ export class SessionStore {
 
 	// The answer of Claude to a question of the user about a line. The result: the answer with its id
 	addLineAnswer(answer: Omit<LineAnswer, 'id' | 'time'>): LineAnswer {
-		const task = this.requireStage('build', 'The answers on a line are only for stage 5, the build.');
+		const task = this.requireStepStage('The answers on a line are only for the stages 5 and 6.');
 		const file = this.state.callouts ?? EMPTY_CALLOUTS;
 		const next = file.answers.reduce((max, a) => Math.max(max, Number.parseInt(a.id.slice(1), 10) || 0), 0) + 1;
 		const value: LineAnswer = { id: `A${next}`, ...answer, time: this.time() };
@@ -810,7 +893,7 @@ export class SessionStore {
 
 	// The user resolves a question about a line
 	resolveAnswer(id: string): void {
-		const task = this.requireStage('build', 'The answers on a line are only for stage 5, the build.');
+		const task = this.requireStepStage('The answers on a line are only for the stages 5 and 6.');
 		const file = this.state.callouts ?? EMPTY_CALLOUTS;
 		const found = file.answers.find((a) => a.id === id);
 		if (!found) {
@@ -826,7 +909,7 @@ export class SessionStore {
 
 	// The loose ends of a step at its gate (phase 9). The engine finds them, so the ledger records no decision
 	addLooseEnds(step: string, finds: readonly LooseFind[]): void {
-		const task = this.requireStage('build', 'The loose ends are only for stage 5, the build.');
+		const task = this.requireStepStage('The loose ends are only for the stages 5 and 6.');
 		this.writeLooseFile(task.id, addLooseEnds(this.state.loose ?? EMPTY_LOOSE, step, finds, this.time()));
 		this.load();
 	}
@@ -834,7 +917,7 @@ export class SessionStore {
 	// The user hands a loose end to Claude (decision 21): it becomes the next step of the plan, with risk level 2. The
 	// result: the new step
 	handLooseEnd(id: string): PlanStep {
-		const task = this.requireStage('build', 'The loose ends are only for stage 5, the build.');
+		const task = this.requireStepStage('The loose ends are only for the stages 5 and 6.');
 		const plan = this.state.plan;
 		if (!plan) {
 			throw new Error('The active task has no plan.');
@@ -861,7 +944,7 @@ export class SessionStore {
 
 	// The user closes a loose end with a reason, or opens it again with no reason
 	closeLooseEnd(id: string, reason: string | undefined): void {
-		const task = this.requireStage('build', 'The loose ends are only for stage 5, the build.');
+		const task = this.requireStepStage('The loose ends are only for the stages 5 and 6.');
 		const end = this.requireLooseEnd(id);
 		const file = this.state.loose ?? EMPTY_LOOSE;
 		if (reason === undefined) {
@@ -936,16 +1019,22 @@ export class SessionStore {
 	// The gate of a step: the user accepts the receipt of Claude, or the user ends a step of the user. The next step of
 	// the plan is then the current step
 	finishStep(id: string, gate: StepGate): BuildStep {
-		const task = this.requireStage('build', 'A step ends only in stage 5, the build.');
+		const task = this.requireStepStage('A step ends only in the stages 5 and 6.');
 		const current = this.requireCurrent(id);
 		if (gate === 'accept-receipt' && current.state !== 'receipt') {
-			throw new Error(`Step ${current.n} has no receipt to accept.`);
+			throw new Error(`Step ${current.ref} has no receipt to accept.`);
 		}
 		if (gate === 'step-done' && !((current.writer === 'user' && current.state === 'open') || (current.writer === 'frame' && current.state === 'holes'))) {
-			throw new Error(`Step ${current.n} is not an open step of the user, and it has no frame to fill.`);
+			throw new Error(`Step ${current.ref} is not an open step of the user, and it has no frame to fill.`);
 		}
 		const step: BuildStep = { ...current.build!, state: 'done', done: this.time() };
 		this.writeStep(task.id, id, step);
+		// the step of an issue fixes the issue. The next review checks the fix (P23)
+		const review = this.state.review;
+		if (current.step.issue && review) {
+			const fixed = this.time();
+			this.writeReviewFile(task.id, { ...review, issues: review.issues.map((i) => (i.id === current.step.issue ? { ...i, state: 'fixed' as const, fixed } : i)) });
+		}
 		const counts = receiptCounts(current.build?.receipt);
 		this.append(task.id, { kind: 'step-gate', by: 'user', step: id, gate, notWalked: counts.changes - counts.walked });
 		this.load();
@@ -1063,6 +1152,15 @@ export class SessionStore {
 		return task;
 	}
 
+	// The active task in stage 5, or in stage 6 for the steps of the issues, else an error with the message
+	private requireStepStage(message: string): TaskFile {
+		const task = this.requireTask();
+		if (task.isDone || (task.stage !== 'build' && task.stage !== 'review')) {
+			throw new Error(message);
+		}
+		return task;
+	}
+
 	// The active task in this stage, else an error with the message
 	private requireStage(stage: Stage, message: string): TaskFile {
 		const task = this.requireTask();
@@ -1073,23 +1171,23 @@ export class SessionStore {
 	}
 
 	private requireStep(step: string): PlanStep {
-		const found = this.state.plan?.steps.find((s) => s.id === step);
+		const found = this.workPlan?.steps.find((s) => s.id === step);
 		if (!found) {
 			throw new Error(`The plan has no step ${step}.`);
 		}
 		return found;
 	}
 
-	// The active task in a stage where the user changes the level of the step: stage 4, or stage 5 for a step that Claude
-	// did not start (decision 17)
+	// The active task in a stage where the user changes the level of the step. This is stage 4, or a step that Claude did
+	// not start: in stage 5 (decision 17), or for an issue in stage 6
 	private requireLevelStage(step: string): TaskFile {
 		const task = this.requireTask();
-		this.requireStep(step);
+		const planStep = this.requireStep(step);
 		if (!task.isDone && task.stage === 'plan') {
 			return task;
 		}
-		if (task.isDone || task.stage !== 'build') {
-			throw new Error('You can change a level only in stage 4, the plan, and in stage 5, the build.');
+		if (task.isDone || !(task.stage === 'build' || (task.stage === 'review' && planStep.issue))) {
+			throw new Error('You can change a level only in stage 4, the plan, in stage 5, the build, and for the steps of the issues in stage 6.');
 		}
 		const state = stateOf(this.state.build, step);
 		const b = this.state.build?.steps[step];
@@ -1132,41 +1230,62 @@ export class SessionStore {
 		writeTextAtomic(path.join(this.requireDir(), id, CALLOUTS_FILE), jsonText(value));
 	}
 
-	// Removes the state of a step from the build: the step starts again with the writer of its level
-	private removeStep(id: string, step: string): void {
+	// Removes the state of steps from the build: each step starts again with the writer of its level
+	private removeStep(id: string, ...remove: readonly string[]): void {
 		const steps: Record<string, BuildStep> = { ...(this.state.build?.steps ?? {}) };
-		delete steps[step];
+		for (const step of remove) {
+			delete steps[step];
+		}
 		writeTextAtomic(path.join(this.requireDir(), id, BUILD_FILE), jsonText({ version: FILE_VERSION, steps } satisfies BuildFile));
+	}
+
+	// Writes the review. Then it removes each step of an issue that does not agree with the review from the build. This is
+	// the step of an issue that is not a step now, for example after "Not a problem". It is also the done step of an issue
+	// that is open again. The result: the removed steps that are not done, so that the extension deletes their bases. The
+	// gate of a done step deleted its base already
+	private writeReviewSteps(id: string, review: ReviewFile): { id: string; step: BuildStep }[] {
+		const steps = new Set(issueSteps(review).map((s) => s.id));
+		const issues = new Map(review.issues.map((i) => [i.id, i]));
+		const plan = new Set((this.state.plan?.steps ?? []).map((s) => s.id));
+		const removed = Object.entries(this.state.build?.steps ?? {})
+			.filter(([key, step]) => issues.has(key) && !plan.has(key) && (!steps.has(key) || (issues.get(key)!.state === 'open' && step.state === 'done')))
+			.map(([key, step]) => ({ id: key, step }));
+		this.writeReviewFile(id, review);
+		if (removed.length > 0) {
+			this.removeStep(id, ...removed.map((r) => r.id));
+		}
+		return removed.filter((r) => r.step.state !== 'done');
 	}
 
 	// The step of the build with the id, if it is the current step
 	private requireCurrent(id: string): CurrentStep {
 		const current = this.current;
-		const n = this.state.plan?.steps.findIndex((s) => s.id === id) ?? -1;
+		const n = this.workPlan?.steps.findIndex((s) => s.id === id) ?? -1;
 		if (n < 0) {
 			throw new Error(`The plan has no step ${id}.`);
 		}
 		if (!current) {
-			throw new Error('Each step of the plan is done.');
+			throw new Error('Each step is done.');
 		}
 		if (current.step.id !== id) {
-			throw new Error(`Step ${n + 1} is not the current step. The steps go in sequence, and the current step is step ${current.n}, "${current.step.title}".`);
+			throw new Error(`Step ${refOf(this.workPlan!.steps[n], n + 1)} is not the current step. The steps go in sequence, and the current step is step ${current.ref}, `
+				+ `"${current.step.title}".`);
 		}
 		return current;
 	}
 
 	// A change of the receipt of the current step, while the user walks the receipt
 	private requireChange(id: string, change: string): { task: TaskFile; step: BuildStep; receipt: Receipt; found: Receipt['changes'][number] } {
-		const task = this.requireStage('build', 'A receipt is only in stage 5, the build.');
+		const task = this.requireStepStage('A receipt is only in the stages 5 and 6.');
 		const current = this.requireCurrent(id);
 		const step = current.build;
 		const receipt = step?.receipt;
 		if (current.state !== 'receipt' || !step || !receipt) {
-			throw new Error(`Step ${current.n} has no receipt to walk now.`);
+			throw new Error(`Step ${current.ref} has no receipt to walk now.`);
 		}
 		const found = receipt.changes.find((c) => c.id === change);
 		if (!found) {
-			throw new Error(`The receipt of step ${current.n} has no change ${change}.`);
+			throw new Error(`The receipt of step ${current.ref} has no change ${change}.`);
 		}
 		return { task, step, receipt, found };
 	}

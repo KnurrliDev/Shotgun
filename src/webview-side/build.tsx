@@ -316,16 +316,20 @@ function StepDecisions({ step }: { step: CurrentStepView }) {
 					</li>
 				))}
 			</ul>
-			<p class="muted small">{text} An answer is in words on the plan page, and the writer puts it into the code.</p>
+			<p class="muted small">
+				{text}{step.issue ? '' : ' An answer is in words on the plan page, and the writer puts it into the code.'}
+			</p>
 		</>
 	);
 }
 
-function CurrentStep({ step, request, maxNote }: { step: CurrentStepView; request?: string; maxNote: number }) {
+// The current step. In stage 6, the step of an issue has the id of the issue, for example "Step I3"
+export function CurrentStep({ step, request, maxNote }: { step: CurrentStepView; request?: string; maxNote: number }) {
+	const name = step.issue ? `Step ${step.ref}` : `Step ${step.n} of ${step.total}`;
 	return (
-		<section class={`current-step lv-${step.level ?? 0}`} aria-label={`Step ${step.n} of ${step.total}`}>
+		<section class={`current-step lv-${step.level ?? 0}`} aria-label={name}>
 			<div class="row-head">
-				<span class="name">Step {step.n} of {step.total}</span>
+				<span class="name">{name}</span>
 				<StateChip state={step.state} writer={step.writer} />
 				<span class={`level-name small lv-${step.level ?? 0}`}>{step.levelName}</span>
 			</div>
@@ -334,7 +338,7 @@ function CurrentStep({ step, request, maxNote }: { step: CurrentStepView; reques
 			<p class="places">
 				{/* in a step of the user and in the holes of a frame, the user writes, so the places open the text editor (decision 34) */}
 				{step.places.map((p) => (p.isNew ? <span class="mono small">{p.name}</span> : (
-					<PlaceLink place={p} note={`Step ${step.n} of ${step.total} · ${step.title}`}
+					<PlaceLink place={p} note={`${name} · ${step.title}`}
 						editor={step.writer === 'user' || (step.writer === 'frame' && step.state === 'holes')} />
 				)))}
 			</p>
@@ -362,7 +366,7 @@ function CurrentStep({ step, request, maxNote }: { step: CurrentStepView; reques
 					<button type="button" class="btn secondary small" onClick={() => post({ type: 'requestFrame', step: step.id })}>I want a frame</button>
 					<p class="muted small">
 						Claude writes the lines with no decision, and each decision is a hole for you. Your click records the decision. Then tell Claude:
-						"Give me a frame for step {step.n}."
+						"Give me a frame for step {step.ref}."
 					</p>
 				</div>
 			)}
@@ -433,7 +437,7 @@ function AnswerRow({ answer }: { answer: LineAnswerView }) {
 }
 
 // The navigator of stage 5: the voice of the callouts, the callouts on the lines of the user, and the questions on lines
-function Navigator({ nav }: { nav: NavigatorView }) {
+export function Navigator({ nav }: { nav: NavigatorView }) {
 	const [selected, setSelected] = useState<string | undefined>(undefined);
 	const callout = nav.callouts.find((c) => c.id === selected);
 	const firstOpen = nav.callouts.find((c) => c.status === 'open');

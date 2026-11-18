@@ -81,7 +81,22 @@ export function ledgerRows(files: readonly { readonly file: string; readonly run
 }
 
 // The text for a pull request: the decisions of the user, and the lines of each writer
-export function ledgerMarkdown(title: string, decisions: readonly string[], rows: readonly LedgerRow[]): string {
+// An issue of the review for the pull request (P24)
+export interface LedgerIssue {
+	readonly id: string;
+	readonly title: string;
+	readonly severity: string;
+	readonly category: string;
+	readonly list: 'steps' | 'second';
+	readonly state: 'open' | 'fixed' | 'closed';
+	readonly reason?: string; // the reason of the user for "Not a problem"
+}
+
+const ISSUE_STATE = { open: 'open', fixed: 'fixed', closed: 'not a problem' } as const;
+
+// The Markdown of the ledger for a pull request. issues: the issues of the review in stage 6 with their states and the
+// reasons of the user (P24)
+export function ledgerMarkdown(title: string, decisions: readonly string[], rows: readonly LedgerRow[], issues: readonly LedgerIssue[] = []): string {
 	const sum = (key: 'user' | 'walked' | 'notWalked') => rows.reduce((n, r) => n + r[key], 0);
 	const linesText = (n: number) => `${n} ${n === 1 ? 'line' : 'lines'}`;
 	const lines = [
@@ -99,6 +114,19 @@ export function ledgerMarkdown(title: string, decisions: readonly string[], rows
 		'| --- | --- | --- | --- |',
 		...rows.map((r) => `| \`${r.file}\` | ${r.user} | ${r.walked} | ${r.notWalked} |`),
 		'',
+		...(issues.length > 0 ? [
+			'### Issues of the review',
+			'',
+			...(['steps', 'second'] as const).flatMap((list) => {
+				const of = issues.filter((i) => i.list === list);
+				return of.length === 0 ? [] : [
+					list === 'steps' ? 'The list of steps:' : 'The second list:',
+					'',
+					...of.map((i) => `- ${i.id} (${i.severity}, ${i.category}): ${i.title}. ${ISSUE_STATE[i.state]}${i.reason ? `: ${i.reason}` : ''}`),
+					'',
+				];
+			}),
+		] : []),
 		'Shotgun recorded these decisions and lines while the user and Claude Code worked on the task.',
 	];
 	return lines.join('\n');

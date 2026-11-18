@@ -29,9 +29,9 @@ function LooseEndCard({ end }: { end: LooseEndView }) {
 				<span class={`badge ${isClaude ? 'claude' : 'engine'}`}>{isClaude ? 'Model' : 'Engine'}</span>
 				<span>{end.proof.map((p) => <span class="block">{p}</span>)}</span>
 			</div>
-			<p class="muted small">From step {end.stepN}.</p>
+			<p class="muted small">From step {end.step}.</p>
 			{end.state === 'handed' && end.handed && (
-				<p class="small">Step {end.handed.n} of Claude: <span class="muted">{HANDED_TEXT[end.handed.state]}</span></p>
+				<p class="small">Step {end.handed.ref} of Claude: <span class="muted">{HANDED_TEXT[end.handed.state]}</span></p>
 			)}
 			{end.state === 'closed' && <p class="muted small">You closed this loose end. Your reason: "{end.reason}". The ledger keeps it.</p>}
 			<div class="buttons">

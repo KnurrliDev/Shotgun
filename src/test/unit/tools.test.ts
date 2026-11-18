@@ -78,6 +78,19 @@ suite('Tools of Shotgun', () => {
 		assert.match(out.hookSpecificOutput.permissionDecisionReason, /the folder \.shotgun keeps the files of Shotgun/);
 	});
 
+	test('In stage 6, only an open step of Claude for an issue opens a scope, and a step of the user gives its reason (phase 13)', () => {
+		const file = path.join(root, 'src', 'a.cpp');
+		const state: GuardState = {
+			folders: [root], shotgunDir: path.join(root, '.shotgun'), task: { title: 'Fix', stage: 'review', isDone: false }, isPaused: false, isCaseSensitive: false,
+		};
+		const scope = { scope: { files: [file], names: ['src/a.cpp'] }, step: 'the fix of issue I1', closed: '' };
+		assert.deepStrictEqual(decide({ tool: 'Edit', file, cwd: root }, { ...state, build: scope }), { decision: 'none', why: 'scope' });
+		const outside = decide({ tool: 'Edit', file: path.join(root, 'src', 'b.cpp'), cwd: root }, { ...state, build: scope });
+		assert.match(outside.decision === 'deny' ? outside.reason : '', /the fix of issue I1 is open, and its scope is src\/a\.cpp\. The file .* is not in the scope/);
+		const user = decide({ tool: 'Edit', file, cwd: root }, { ...state, build: { step: 'the fix of issue I1', closed: 'The user writes the fix of issue I1.' } });
+		assert.match(user.decision === 'deny' ? user.reason : '', /stage 6 of 6, the review\. The user writes the fix of issue I1\. For work outside/);
+	});
+
 	test('The guard resolves a relative path with the folder of the session, and Windows paths have no case', () => {
 		const state: GuardState = {
 			folders: ['C:\\Work\\Project'], shotgunDir: 'C:\\Work\\Project\\.shotgun', task: { title: 'Fix', stage: 'brief', isDone: false },

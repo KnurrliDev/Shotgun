@@ -30,10 +30,11 @@ export interface TaskView {
 	survey?: SurveyView; // stage 2 and later: the survey of Claude
 	order?: OrderView; // stage 3 and later: the order of the user
 	plan?: PlanView; // stage 4 and later: the plan of Claude with the risk levels
-	build?: BuildView; // stage 5: the steps of the build and the current step
+	build?: BuildView; // stage 5: the steps of the build and the current step. Stage 6: also the steps of the issues (P22)
 	review?: ReviewView; // stage 6: the effort, the focus and the issues of the review
 	ledger?: LedgerView; // the stages 5 and 6, and after the end of the task: the ledger and the commit message
 	gate?: GateView; // the gate of the stage, if this version of Shotgun has it
+	stepGate?: GateView; // stage 6: the gate of the current step of an issue. Its button posts stepGate
 	isDone: boolean;
 	isPaused: boolean;
 }
@@ -241,6 +242,8 @@ export interface PlanView {
 export interface BuildStepView {
 	id: string;
 	n: number; // the place of the step in the plan, from 1
+	ref: string; // the step in a text: its number, or the id of the issue for the step of an issue, for example I3
+	issue?: string; // the id of the issue for the step of an issue in stage 6
 	title: string;
 	level: number | null;
 	levelName: string; // for example "Low, level 2 of 5"
@@ -392,7 +395,9 @@ export interface LooseEndView {
 	line?: number;
 	state: 'open' | 'handed' | 'closed';
 	stepN: number; // the number of the step that made the loose end
-	handed?: { id: string; n: number; state: 'todo' | 'open' | 'receipt' | 'holes' | 'done' }; // the step of Claude for the loose end
+	step: string; // the step that made the loose end in a text: its number, or the id of the issue
+	// the step of Claude for the loose end
+	handed?: { id: string; n: number; ref: string; state: 'todo' | 'open' | 'receipt' | 'holes' | 'done' };
 	reason?: string; // the reason of the user for a closed loose end
 }
 
@@ -482,6 +487,22 @@ export interface IssueView {
 	reason?: string; // the reason of the user for "Not a problem"
 	evidence?: string; // the new evidence of Claude for an issue that the user closed before
 	round: number;
+	isUserStep?: boolean; // the user made the issue of the second list a step
+	step?: IssueStepView; // the step of an issue of the list of steps that the user did not close (P22)
+}
+
+// The step of an issue in stage 6: its state in the build, its level and its writer
+export interface IssueStepView {
+	state: 'todo' | 'open' | 'receipt' | 'holes' | 'done';
+	isCurrent: boolean;
+	level: number | null;
+	levelName: string; // for example "High, level 4 of 5"
+	writer: 'claude' | 'user' | 'frame';
+	writerText: string; // for example "You write it"
+	user?: number; // the level of the user
+	heatLevel?: number; // the level that the heat of the places gives. Only a hint: the level of the step is 4 (P22)
+	isLevelEditable: boolean; // a step that Claude did not start: the buttons Lower and Raise, and the answers to the decisions
+	decisions?: StepDecisionView[]; // the open decisions of the fix with the answers of the user, as on the plan page
 }
 
 export interface EffortView {
@@ -507,7 +528,16 @@ export interface ReviewView {
 	allAreas: AreaView[];
 	maxText: number;
 	maxReason: number;
+	maxAnswer: number; // the limits of the decisions of the steps of the issues
+	maxQuestion: number;
+	maxUserDecisions: number;
 	prompt: string; // the prompt of the review for a new session of Claude Code
+	nextRound: number; // the round of the next review (P23)
+	isNewRound: boolean; // the next review is a new round that checks the fixes
+	toCheck: number; // the fixed issues that the next round checks
+	roundWarning?: string; // after 3 rounds: think about the approach again. The extension asks before it copies the prompt
+	feedback?: FeedbackView; // the feedback of the user from the reviews of all tasks of the folder (P35)
+	brief?: { specs: string[]; scope: string[]; done: string[] }; // the parts of the brief for the issues of the area The brief
 	base?: string; // for example "1a2b3c4, 2 files with changes that were not committed"
 	baseError?: string; // why the review has no base commit
 	round?: { n: number; time: string; effortName: string; areaNames: string[]; cap: number; changedLines: number; note?: string };
@@ -515,6 +545,14 @@ export interface ReviewView {
 	second: IssueView[]; // the second list
 	open: number; // the open issues of the list of steps
 	closed: number;
+}
+
+// The issues of the list of steps that the user decided in all tasks of the folder: fixed, or closed with no action (P35)
+export interface FeedbackView {
+	decided: number;
+	areas: { id: string; name: string; decided: number; noAction: number; rate: string; isTooNoisy: boolean; isInFocus: boolean }[];
+	cap?: number; // the cap on the steps from the feedback
+	text: string; // the feedback in 1 sentence
 }
 
 export interface GateView {
@@ -613,4 +651,6 @@ export type FromView =
 	| { type: 'setReviewOptions'; effort: string; areas: string[]; text: string } // the effort and the focus of the next review
 	| { type: 'copyReviewPrompt' } // the prompt of the review for a new session of Claude Code
 	| { type: 'closeIssue'; id: string } // "Not a problem": the extension asks for the reason
-	| { type: 'reopenIssue'; id: string };
+	| { type: 'reopenIssue'; id: string }
+	| { type: 'setIssueStep'; id: string; isStep: boolean } // "Make it a step", or "Back to the second list"
+	| { type: 'stepGate' }; // the gate of the current step in stage 6: "The step is done" or "Accept the receipt"

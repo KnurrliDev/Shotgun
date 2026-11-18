@@ -327,6 +327,14 @@ The items 36 and 37 are differences between the code and `docs/api-gaps-strategy
 - **Possible fix:** do not run `diagnoseFunction` with `UncheckedOptionalAccessModel` on a function with an error, for example an expression in its body with `containsErrors()`. The 3 calls are in `analysis.hpp`, `calls.hpp` and `flow.hpp`. Add the text above as a test of the engine.
 - **Status, 14 November 2026:** fixed in DataFlow 0.6.1, with a test of the engine.
 
+### 50. A worker has no race with a second run of itself
+
+- **Data:** `get_threads` gives 1 run of each worker thread, with its handle and its joins. In the fixture `battery`, the worker `solve_power_plan()` starts through `tf::Executor::async` on line 96. Its handle is `home_battery_ctl.charging_future`, and its join is "get on line 109". Each item gives pairs of an access of the caller and an access of the worker.
+- **Data:** the test of phase 13 of Shotgun found a race on 17 November 2026 that `get_threads` does not give. The change of the task resets the handle at the cycle limit with no join. The next cycle then starts a second run of the worker while the first run still runs. The 2 runs write the same `Optimizer` on the lines 65 and 74 with no lock.
+- **Use in Shotgun:** the finders of races in the review start from the facts of `get_threads` (P20). A race of 2 runs of a worker gets only the badge "Model". A change that drops a handle with no join is a usual fault.
+- **Until the fix:** the skill `shotgun-review` tells the finders to judge the accesses of 2 runs of a worker against each other. They do this if the change can start a second run before the first run ends. Such a race has the source `model`.
+- **Possible fix:** find each reset, move or new value of a handle with no join before it, on a path that can start the worker again. Then give the pairs of the accesses of the worker with themselves, for example with a new value of `pair`.
+
 ## Marks
 
 ### 44. A mark cannot keep a path that is not there

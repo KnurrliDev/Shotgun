@@ -136,8 +136,12 @@ function TextEntry({ value, maxLength, placeholder, label, onSave, onCancel }: {
 	);
 }
 
+// The parts of a step and of the limits for the decisions, for a step of the plan or for the step of an issue
+type DecisionStep = Pick<PlanStepView, 'id' | 'decisions' | 'isLevelEditable'>;
+type DecisionLimits = Pick<PlanView, 'maxAnswer' | 'maxQuestion' | 'maxUserDecisions'>;
+
 // 1 decision of a step: its question, the options of Claude and the answer of the user (P29)
-function DecisionRow({ step, decision, isEditable, maxAnswer }: { step: PlanStepView; decision: StepDecisionView; isEditable: boolean; maxAnswer: number }) {
+function DecisionRow({ step, decision, isEditable, maxAnswer }: { step: DecisionStep; decision: StepDecisionView; isEditable: boolean; maxAnswer: number }) {
 	const [isEditing, setEditing] = useState(false);
 	useEffect(() => setEditing(false), [step.id, decision.id, decision.answer]);
 	const answer = (text: string) => post({ type: 'answerDecision', step: step.id, decision: decision.id, text });
@@ -172,8 +176,8 @@ function DecisionRow({ step, decision, isEditable, maxAnswer }: { step: PlanStep
 
 // The decisions of a step (decision 31). Each open decision is a choice of the user: a hole of the frame, or code of the
 // user. A step with no open decision gets at most level 2, so Claude writes it. A step of a plan of version 0.1.0 has no
-// decisions (P34)
-function DecisionsBlock({ step, view }: { step: PlanStepView; view: PlanView }) {
+// decisions (P34). isIssue: the step of an issue in stage 6 keeps level 4 with no open decision (decision 37)
+export function DecisionsBlock({ step, view, isIssue = false }: { step: DecisionStep; view: DecisionLimits; isIssue?: boolean }) {
 	const [isAdding, setAdding] = useState(false);
 	useEffect(() => setAdding(false), [step.id]);
 	const decisions = step.decisions;
@@ -190,7 +194,7 @@ function DecisionsBlock({ step, view }: { step: PlanStepView; view: PlanView }) 
 			</div>
 			<p class="muted small">
 				{decisions.length === 0 ? 'Claude found no open decision in this step. ' : 'An open decision is your choice: a hole of the frame, or code that you write. '}
-				A step with no open decision gets at most level 2, so Claude writes it. Answer a decision in words, and Claude writes its code.
+				{isIssue ? '' : 'A step with no open decision gets at most level 2, so Claude writes it. '}Answer a decision in words, and Claude writes its code.
 			</p>
 			{decisions.length > 0 && (
 				<ul class="decisions">

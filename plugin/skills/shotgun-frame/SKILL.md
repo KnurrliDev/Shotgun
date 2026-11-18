@@ -1,11 +1,13 @@
 ---
 name: shotgun-frame
-description: 'Write the frame of a step of the build of the active Shotgun task in stage 5. A frame has all lines of the step, and a hole for each open decision of the step, with 4 hints. Use this skill when the user asks for a frame, for example "Give me a frame for step 4". Also use it for a different frame, for example "Give me a different frame for step 4".'
+description: 'Write the frame of a step of the active Shotgun task in stage 5, or of the step of an issue in stage 6. A frame has all lines of the step, and a hole for each open decision of the step, with 4 hints. Use this skill for a frame, for example "Give me a frame for step 4" or "Give me a frame for step I3". Also use it for a different frame, for example "Give me a different frame for step 4".'
 ---
 
 # A frame of Shotgun
 
 The build is stage 5 of a Shotgun task. A step of risk level 3 gets a frame. A step of level 4 gets a frame only after the user selects "I want a frame" in the panel of Shotgun.
+
+In stage 6, the review, each issue of the list of steps is a step with the id of the issue, for example `I3`. Its open decisions are the decisions of the fix. The same rules apply to its frame.
 
 The plan names the open decisions of each step. In a frame, each open decision is exactly 1 hole, and you write all other lines of the step. The user fills each hole, and owns the decisions of the step. The hints of each hole come with the frame, so the user can get help with no request to you.
 

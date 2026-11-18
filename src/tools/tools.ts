@@ -2,7 +2,7 @@ import * as path from 'path';
 import type { ExtensionTool } from '../dataflow/dataflow-api';
 import type { CommitMessage } from '../git/message';
 import { parseBrief, partSummary, questionLine } from '../session/brief';
-import { buildGuard, buildNext, CurrentStep, receiptCounts, stateOf } from '../session/build';
+import { buildGuard, CurrentStep, receiptCounts, stateOf } from '../session/build';
 import type { Voice } from '../session/callouts';
 import type { LineStore } from '../session/lines';
 import { changedTasks, Order, orderWarnings } from '../session/order';
@@ -10,7 +10,7 @@ import { levelOf } from '../session/plan';
 import { absolutePath, IS_CASE_SENSITIVE } from '../session/paths';
 import { CATEGORIES, MAX_ISSUES, ORIGINS, SEVERITIES, SOURCES, VERDICTS } from '../session/review';
 import { GATE_LABEL, GATE_OF, STAGE_INFO, STAGES } from '../session/stages';
-import type { Snapshot, SessionStore } from '../session/store';
+import { isStepStage, SessionStore, Snapshot, stepNext, workPlan } from '../session/store';
 import { SIZES } from '../session/survey';
 import { submitBrief, submitQuestions } from './brief';
 import { BaseApi, getStep, START_STEP_TOOL, startStep, StepChanges, submitErrand, submitFrame } from './build';
@@ -101,11 +101,13 @@ export function sessionData(snapshot: Snapshot, brief?: { file: string; text: st
 		next = 'The user selects "Shotgun: Continue" to continue the task.';
 	} else {
 		guard = STAGE_INFO[task.stage].guard;
-		next = task.stage === 'build' ? buildNext(current).next : STAGE_INFO[task.stage].next;
+		next = stepNext(snapshot, current)?.next ?? STAGE_INFO[task.stage].next;
 	}
 	const parsed = brief ? parseBrief(brief.text) : undefined;
-	const done = (snapshot.plan?.steps ?? []).filter((s) => stateOf(snapshot.build, s.id) === 'done').length;
-	const request = buildNext(current).request;
+	// stage 6: the steps of the issues of the review
+	const steps = (task?.stage === 'review' ? workPlan(snapshot)?.steps.filter((s) => s.issue) : snapshot.plan?.steps) ?? [];
+	const done = steps.filter((s) => stateOf(snapshot.build, s.id) === 'done').length;
+	const request = stepNext(snapshot, current)?.request;
 	return {
 		folder: snapshot.root ?? null,
 		task: task ? {
@@ -156,12 +158,12 @@ export function sessionData(snapshot: Snapshot, brief?: { file: string; text: st
 				tool: 'Call shotgun_get_plan for the steps with their levels.',
 			},
 		} : {}),
-		...(task && snapshot.plan && task.stage === 'build' ? {
+		...(task && steps.length > 0 && (task.stage === 'build' || task.stage === 'review') ? {
 			build: {
 				done,
-				total: snapshot.plan.steps.length,
+				total: steps.length,
 				current: current ? {
-					n: current.n, id: current.step.id, title: current.step.title, level: current.level, writer: current.writer, state: current.state,
+					n: current.n, id: current.step.id, ...(current.step.issue ? { issue: current.step.issue } : {}), title: current.step.title, level: current.level, writer: current.writer, state: current.state,
 					...(current.build?.receipt ? { receipt: receiptCounts(current.build.receipt) } : {}),
 				} : null,
 				...(request ? { request } : {}),
@@ -711,7 +713,10 @@ export function shotgunTools(deps: ToolDeps): ExtensionTool[] {
 				const folders = deps.folders();
 				const snapshot = deps.store.snapshot;
 				const root = snapshot.root;
-				const build = snapshot.task?.stage === 'build' && root && snapshot.plan ? buildGuard(deps.store.current, START_STEP_TOOL) : undefined;
+				// stage 6: only a step of an issue opens a scope
+				const current = deps.store.current;
+				const isSteps = isStepStage(snapshot.task) && (snapshot.task?.stage === 'build' || !!current);
+				const build = isSteps && root && workPlan(snapshot) ? buildGuard(current, START_STEP_TOOL) : undefined;
 				const decision = decide(input, {
 					folders, shotgunDir: deps.store.dir, task: snapshot.task, isPaused: snapshot.isPaused, isCaseSensitive: IS_CASE_SENSITIVE,
 					...(build && root ? {
@@ -745,7 +750,7 @@ export function shotgunTools(deps: ToolDeps): ExtensionTool[] {
 			call: (args) => {
 				deps.prompts.add(textOf(args.prompt));
 				const snapshot = deps.store.snapshot;
-				const now = snapshot.task?.stage === 'build' ? buildNext(deps.store.current).next : undefined;
+				const now = stepNext(snapshot, deps.store.current)?.next;
 				return contextOutput(contextText(snapshot.task, snapshot.isPaused, now), textOf(args.event));
 			},
 		},
