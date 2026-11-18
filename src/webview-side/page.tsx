@@ -8,6 +8,7 @@ import { PlanPage } from './plan';
 import { ReviewLedger, ReviewPage } from './review';
 import { applyStyles } from './styles';
 import { SurveyPage } from './survey';
+import { post } from './vscode';
 
 // The script of the page in the editor area. Phase 1 shows the active task, its decisions, the tasks of the folder and
 // the setup. The later phases add the full pages of the survey, the order, the plan and the ledger.
@@ -33,8 +34,19 @@ function LedgerScreen({ task, model }: { task: TaskView; model: ViewModel }) {
 	);
 }
 
-function Page() {
-	const model = useModel();
+// The option of the STE output (decision 41). It is above each page, because the pages of the stages 2 to 6 have no setup
+function SteOption({ isOn }: { isOn: boolean }) {
+	return (
+		<div class="page-options">
+			<label class="option">
+				<input type="checkbox" checked={isOn} onChange={(e) => post({ type: 'setSteOutput', isOn: e.currentTarget.checked })} />
+				<span>Claude writes in Simplified Technical English (STE) while a task is active</span>
+			</label>
+		</div>
+	);
+}
+
+function Page({ model }: { model: ViewModel | undefined }) {
 	const [tab, setTab] = useState<'review' | 'plan' | 'ledger' | undefined>(undefined);
 	// "Show the ledger" of the panel, and a click on a CodeLens line in the text editor
 	useEffect(() => {
@@ -145,4 +157,14 @@ function Page() {
 	);
 }
 
-render(<Page />, document.getElementById('root')!);
+function Shell() {
+	const model = useModel();
+	return (
+		<>
+			{model && <SteOption isOn={model.isSteOutput} />}
+			<Page model={model} />
+		</>
+	);
+}
+
+render(<Shell />, document.getElementById('root')!);

@@ -5,7 +5,7 @@ import * as path from 'path';
 import { readText } from '../../session/files';
 import { GATE_OF, STAGES } from '../../session/stages';
 import { SessionStore } from '../../session/store';
-import { contextOutput, contextText, GET_SESSION_TOOL } from '../../tools/context';
+import { contextOutput, contextText, GET_SESSION_TOOL, STE_RULES } from '../../tools/context';
 import { decide, GuardState, hookOutput } from '../../tools/guard';
 import { PromptLog } from '../../tools/prompts';
 import { shotgunTools, ToolDeps } from '../../tools/tools';
@@ -121,6 +121,29 @@ suite('Tools of Shotgun', () => {
 		assert.match(context('UserPromptSubmit').hookSpecificOutput.additionalContext, /the user paused the task "Cycle limit"/);
 		assert.strictEqual(contextText(undefined, false), undefined);
 		assert.strictEqual(contextOutput(undefined, 'UserPromptSubmit'), '{}');
+	});
+
+	test('The context gives the STE rules only with the option on, for an active task that is not paused (decision 41)', () => {
+		let isOn = true;
+		const context = (): string | undefined => {
+			const hook = shotgunTools({ ...testDeps(store, root, new PromptLog(), []), isSteOutput: () => isOn }).find((t) => t.name === 'session_context')!;
+			return JSON.parse(hook.call({ event: 'UserPromptSubmit', cwd: root }) as string).hookSpecificOutput?.additionalContext;
+		};
+		assert.strictEqual(context(), undefined);
+		store.newTask('Cycle limit');
+		const text = context()!;
+		assert.ok(text.startsWith('Shotgun: the active task is "Cycle limit"'));
+		assert.ok(text.endsWith(`\n\n${STE_RULES}`));
+		// Claude Code keeps at most 10000 characters of the context of a hook
+		assert.ok(text.length < 10000);
+		// a brief must keep the words of the user, and a subagent does not get the context of the hook
+		assert.match(STE_RULES, /Do not change code, names, paths, commands, values, quotations or the words of the user/);
+		assert.match(STE_RULES, /each subagent/);
+		isOn = false;
+		assert.ok(!context()!.includes(STE_RULES));
+		isOn = true;
+		store.setPaused(true);
+		assert.ok(!context()!.includes(STE_RULES));
 	});
 
 	test('get_session gives the task, its stage and gates, the guard and the next work', () => {

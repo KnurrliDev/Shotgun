@@ -597,6 +597,7 @@ export interface ViewModel {
 	decisions: DecisionView[]; // the newest first
 	setup: SetupRow[];
 	isReady: boolean; // all parts of the setup are OK
+	isSteOutput: boolean; // the option of the page: while a task is active, Claude writes all text in STE (decision 41)
 	problems: string[]; // the stage files that Shotgun cannot read
 }
 
@@ -639,6 +640,7 @@ export type FromView =
 	| { type: 'requestFrame'; step: string } // the button "I want a frame"
 	| { type: 'showHint'; step: string; hole: number; level: number } // level 4: the answer of Claude fills the hole
 	| { type: 'setVoice'; voice: 'quiet' | 'normal' | 'talkative' }
+	| { type: 'setSteOutput'; isOn: boolean }
 	| { type: 'closeCallout'; step: string; id: string } // "Not a problem": the extension asks for the reason
 	| { type: 'reopenCallout'; step: string; id: string }
 	| { type: 'showInDataFlow'; path: string; line: number; source: 'threads' | 'logic' | 'hidden' } // after a click of the user

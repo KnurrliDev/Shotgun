@@ -339,6 +339,10 @@ progress.walk-track::-webkit-progress-value { border-radius: 2px; background: va
 .tab.on { color: var(--vscode-foreground); border-bottom-color: var(--vscode-focusBorder); }
 .tab:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
 .page-tabs { max-width: 1100px; margin: 12px auto 0; padding: 0 28px; box-sizing: border-box; }
+.page-options { display: flex; justify-content: flex-end; max-width: 1100px; margin: 10px auto 0; padding: 0 28px; box-sizing: border-box; }
+.option { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--vscode-descriptionForeground); cursor: pointer; }
+.option input { margin: 0; accent-color: var(--vscode-focusBorder); cursor: pointer; }
+.option input:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
 .loose-ends { margin: 4px 0 0; padding: 0; list-style: none; }
 .loose-end { padding: 6px 0; }
 .loose-end + .loose-end { border-top: 1px solid color-mix(in srgb, var(--sg-border) 50%, transparent); }

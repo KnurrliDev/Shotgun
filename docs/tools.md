@@ -60,7 +60,7 @@ The skills tell Claude that only you pass a gate and change a risk level. Claude
 | Hook | Time | Tool | Function |
 | --- | --- | --- | --- |
 | PreToolUse | Before Edit, MultiEdit, Write and NotebookEdit | `shotgun_guard` | The guard decides about the file change. A deny gives the reason to Claude, and the ledger records it. |
-| UserPromptSubmit | Before each prompt | `shotgun_session_context` | Gives the stage of the active task and the next work to Claude. Shotgun keeps the prompt in memory for the check of a brief from the chat. |
+| UserPromptSubmit | Before each prompt | `shotgun_session_context` | Gives the stage of the active task and the next work to Claude. If `shotgun.steOutput` is on, it also gives the STE rules. Shotgun keeps the prompt in memory for the check of a brief from the chat. |
 
 The hooks have the type `mcp_tool`: Claude Code calls the tool in the MCP server of DataFlow. If VS Code does not run, the MCP server does not answer, and Claude Code continues the change. [The guard](usage.md#the-guard) tells the limits of the guard.
 
@@ -324,7 +324,7 @@ The PreToolUse hook of the plugin calls this tool before each file change. The t
 
 ### session_context
 
-The UserPromptSubmit hook of the plugin calls this tool before each prompt. The tool gives the stage of the active task and the next work to Claude. Claude does not call it.
+The UserPromptSubmit hook of the plugin calls this tool before each prompt. The tool gives the stage of the active task and the next work to Claude. If `shotgun.steOutput` is on, and the task is active and not paused, the tool also gives the STE rules. Claude does not call it.
 
 | Parameter | Type | Function |
 | --- | --- | --- |

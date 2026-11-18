@@ -430,6 +430,11 @@ The guard helps you, but it is not a security boundary:
 | --- | --- |
 | `shotgun.voice` | The voice of the callouts: `quiet`, `normal` or `talkative`. Default: `normal`. |
 | `shotgun.pauseSeconds` | The time in seconds with no edit that makes a pause. Callouts come only at a pause. Default: 2. |
+| `shotgun.steOutput` | While a task is active and not paused, Claude writes all text in ASD-STE100 Simplified Technical English (STE). Default: off. |
+
+The check box at the top of the Shotgun page changes `shotgun.steOutput`. The setting applies to all of your projects.
+
+When the setting is on, Shotgun gives the STE rules to Claude with each prompt. Claude uses them for its replies, code comments, commit messages and documents. Claude does not change code, names, paths, commands, values, quotations or your words. The rules are instructions, and Shotgun does not check the text of Claude.
 
 ## Files
 

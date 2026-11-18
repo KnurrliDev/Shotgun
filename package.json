@@ -246,6 +246,12 @@
 					],
 					"description": "The voice of the callouts: the kinds of the new facts of DataFlow that show on the lines that you write."
 				},
+				"shotgun.steOutput": {
+					"type": "boolean",
+					"default": false,
+					"scope": "application",
+					"description": "While a Shotgun task is active and not paused, Claude writes all text in ASD-STE100 Simplified Technical English (STE)."
+				},
 				"shotgun.pauseSeconds": {
 					"type": "number",
 					"default": 2,

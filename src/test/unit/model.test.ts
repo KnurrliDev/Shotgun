@@ -123,6 +123,12 @@ suite('View model', () => {
 		assert.strictEqual(order.task!.gate, undefined);
 	});
 
+	test('The model gives the option of the STE output, and the option is off by default', () => {
+		const input = { version: '0.1.0', snapshot: snapshot(), dataflow: ready, claude: connected };
+		assert.strictEqual(buildModel(input).isSteOutput, false);
+		assert.strictEqual(buildModel({ ...input, isSteOutput: true }).isSteOutput, true);
+	});
+
 	test('The status bar', () => {
 		assert.strictEqual(statusOf(snapshot()).text, 'Shotgun');
 		assert.strictEqual(statusOf(snapshot({ task: task() })).text, 'Shotgun: stage 2 of 6, the survey');
@@ -146,6 +152,8 @@ suite('View model', () => {
 		assert.ok(isFromView({ type: 'openPlace', path: path.join(root, 'a.cpp'), line: 3 }));
 		assert.ok(isFromView({ type: 'saveAnswer', id: 'Q1', text: '' }));
 		assert.ok(isFromView({ type: 'checkHooks' }));
+		assert.ok(isFromView({ type: 'setSteOutput', isOn: true }));
+		assert.ok(!isFromView({ type: 'setSteOutput', isOn: 'yes' }));
 		assert.ok(!isFromView({ type: 'command', command: 'deleteAll' }));
 		assert.ok(!isFromView({ type: 'copy', text: 'x'.repeat(2001) }));
 		assert.ok(!isFromView({ type: 'openPlace', path: 'a.cpp', line: 0 }));

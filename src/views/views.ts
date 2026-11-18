@@ -70,6 +70,8 @@ export function isFromView(value: unknown): value is FromView {
 			return typeof m.step === 'string' && m.step.length <= 64;
 		case 'setVoice':
 			return isVoice(m.voice);
+		case 'setSteOutput':
+			return typeof m.isOn === 'boolean';
 		case 'closeCallout':
 		case 'reopenCallout':
 			return typeof m.step === 'string' && m.step.length <= 64 && typeof m.id === 'string' && m.id.length <= 16;

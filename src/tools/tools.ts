@@ -72,6 +72,7 @@ export interface ToolDeps {
 	readonly lines: LineStore; // the writer of each changed line
 	readonly changes: StepChanges; // the files that changed while a step was open
 	readonly voice?: () => Voice; // the voice of the callouts, from the settings of the user
+	readonly isSteOutput?: () => boolean; // the option of the page: Claude writes all text in STE (decision 41)
 	// the tools of DataFlow that the MCP clients called since a time (decision 13). undefined: DataFlow does not tell them
 	readonly calls?: (since: number) => ReadonlySet<string> | undefined;
 	// the commit message of the user from Source Control. undefined: no repository of git
@@ -751,7 +752,7 @@ export function shotgunTools(deps: ToolDeps): ExtensionTool[] {
 				deps.prompts.add(textOf(args.prompt));
 				const snapshot = deps.store.snapshot;
 				const now = stepNext(snapshot, deps.store.current)?.next;
-				return contextOutput(contextText(snapshot.task, snapshot.isPaused, now), textOf(args.event));
+				return contextOutput(contextText(snapshot.task, snapshot.isPaused, now, deps.isSteOutput?.() === true), textOf(args.event));
 			},
 		},
 	];

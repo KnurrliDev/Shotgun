@@ -54,6 +54,7 @@ export interface ModelInput {
 	// the settings of the callouts (decision 19)
 	readonly voice?: Voice;
 	readonly pauseSeconds?: number;
+	readonly isSteOutput?: boolean; // the option of the page: Claude writes all text in STE (decision 41)
 	// the lines of each writer in each file, for the ledger
 	readonly ledgerLines?: readonly { readonly file: string; readonly runs: readonly LineRun[] }[];
 	// the commit message in the input box of Source Control. undefined: no repository of git
@@ -1112,6 +1113,7 @@ export function buildModel(input: ModelInput): ViewModel {
 		decisions,
 		setup,
 		isReady: setup.every((r) => r.isOk),
+		isSteOutput: input.isSteOutput === true,
 		problems: [...snapshot.problems],
 	};
 }

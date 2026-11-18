@@ -215,6 +215,7 @@ class Shotgun implements vscode.Disposable {
 				saveFiles: (files) => this.saveFiles(files),
 				lines: this.lines,
 				voice: () => this.voice(),
+				isSteOutput: () => this.isSteOutput(),
 				calls: (since) => this.toolCalls.since(since),
 				message: () => {
 					const root = this.store.snapshot.root;
@@ -282,6 +283,11 @@ class Shotgun implements vscode.Disposable {
 	private pauseSeconds(): number {
 		const value = vscode.workspace.getConfiguration('shotgun').get<number>('pauseSeconds', DEFAULT_PAUSE_SECONDS);
 		return typeof value === 'number' && Number.isFinite(value) ? Math.min(60, Math.max(0.5, value)) : DEFAULT_PAUSE_SECONDS;
+	}
+
+	// The option of the page: while a task is active, Claude writes all text in STE (decision 41)
+	private isSteOutput(): boolean {
+		return vscode.workspace.getConfiguration('shotgun').get<boolean>('steOutput', false) === true;
 	}
 
 	// The current step with callouts: a step of the user, or a frame with its holes
@@ -1871,6 +1877,9 @@ class Shotgun implements vscode.Disposable {
 				case 'setVoice':
 					await this.setVoice(message.voice);
 					break;
+				case 'setSteOutput':
+					await vscode.workspace.getConfiguration('shotgun').update('steOutput', message.isOn, vscode.ConfigurationTarget.Global);
+					break;
 				case 'closeCallout':
 					await this.closeCallout(message.step, message.id);
 					break;
@@ -1980,6 +1989,7 @@ class Shotgun implements vscode.Disposable {
 			readLines: (f) => this.textOf(f)?.split(/\r?\n/),
 			voice: this.voice(),
 			pauseSeconds: this.pauseSeconds(),
+			isSteOutput: this.isSteOutput(),
 			ledgerLines: this.lines.paths.map((f) => ({ file: f, runs: this.lines.runs(f) })),
 			...(commit ? { commit } : {}),
 		});

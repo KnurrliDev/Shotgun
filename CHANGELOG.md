@@ -4,6 +4,7 @@
 
 - GUI code gets lower levels (decision 40). DataFlow can take a function as GUI code, and then all its heat points count half, except the points of data that threads share. In GUI code, callers that the call graph cannot see do not give level 3 or higher. The plan page shows the reason of GUI code first. This needs a release of DataFlow with the GUI facts. With DataFlow 0.7.0 or earlier, the levels do not change.
 - `src/dataflow/dataflow-api.d.ts` has the GUI facts of the API of DataFlow.
+- The Shotgun page has a check box for the STE output (decision 41). While a task is active and not paused, the prompt hook gives Claude the rules of ASD-STE100 Simplified Technical English (STE) with each prompt. The new setting `shotgun.steOutput` keeps the choice for all projects. The default is off.
 
 ## 0.3.0
 
