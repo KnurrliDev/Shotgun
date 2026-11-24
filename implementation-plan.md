@@ -972,6 +972,13 @@ The design canvas has the prototype: the row "Stage 6: review, in the flow of th
 
 The full test in a real project of the user stays open.
 
+**Release 0.5.0, 24 November 2026:** Shotgun 0.5.0 has the decisions 43 and 44: the flow of the review with the issues page, the plan of the fixes and the fixes, and the writer at each level. It needs DataFlow 0.6.2 or later. Shotgun 0.4.0 updates itself to this release.
+
+- Tests: 171 unit tests passed. `scripts/test-claude.mjs` passed all 208 checks with the build of commit 171fb51. Only the version changed after that build.
+- Package: `npm run package` makes `shotgun-0.5.0.vsix`, with 66 files and 319 KB, and its signature `shotgun-0.5.0.vsix.sig`. The signature is correct with the public key of the code.
+- A check of the package: a script installed the VSIX packages of DataFlow 0.8.0 and Shotgun 0.5.0 into a test build of VS Code 1.147.0. All 20 checks passed. The 2 new checks find the plan of the fixes in the plan skill, and the parts of a round in the code.
+- Full test: the user asked for the release after the test with Claude Code. No full test in a real project of the user was done for this release.
+
 ## 9. Tests
 
 | Kind | Tests |

@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.5.0
 
-Stage 6 now has the flow of the stages 2 to 5 (decision 43). Each round of the review has 4 parts: the review, the issues, the plan of the fixes and the fixes. At each level, the user can also select a different writer for a step (decision 44).
+Shotgun 0.5.0 needs DataFlow 0.6.2 or later. Shotgun 0.4.0 updates itself to this version. Stage 6 now has the flow of the stages 2 to 5 (decision 43). Each round of the review has 4 parts: the review, the issues, the plan of the fixes and the fixes. At each level, the user can also select a different writer for a step (decision 44).
 
 - The issues page shows the list to fix in the sequence of the user, as the order page shows the tasks. The user moves an issue up or down, keeps it for later with **Not now**, closes it with **Not a problem** and a reason, writes a note for the plan, and adds an issue (U1, U2 and so on). The gate is **Accept the issues**. A check gives a warning for an important new issue that the review confirmed, if the user keeps it for later.
 - After this gate, the user tells Claude "Plan the fixes.". The new tool `submit_fix_plan` gives the steps F1, F2 and so on. Each step names the issues that it fixes, and each issue to fix needs a step. The rules of stage 4 give the levels. The new page of the fix plan shows the plan as the plan page does. The gate is **Accept the fix plan**. Before this gate, **Back to the issues** lets the user change the issues again. A new plan of the fixes keeps a level, a writer or an answer of the user only for a step with the same id, title and issues.
