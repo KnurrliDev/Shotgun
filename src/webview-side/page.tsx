@@ -5,7 +5,7 @@ import { CommandButton, Decisions, NoTask, Problems, SetupList, StageBar, TaskLi
 import { LedgerPage } from './ledger';
 import { OrderPage } from './order';
 import { PlanPage } from './plan';
-import { ReviewLedger, ReviewPage } from './review';
+import { FixPlanPage, ReviewLedger, ReviewPage } from './review';
 import { applyStyles } from './styles';
 import { SurveyPage } from './survey';
 import { post } from './vscode';
@@ -47,23 +47,30 @@ function SteOption({ isOn }: { isOn: boolean }) {
 }
 
 function Page({ model }: { model: ViewModel | undefined }) {
-	const [tab, setTab] = useState<'review' | 'plan' | 'ledger' | undefined>(undefined);
-	// "Show the ledger" of the panel, and a click on a CodeLens line in the text editor
+	const [tab, setTab] = useState<'review' | 'fixes' | 'plan' | 'ledger' | undefined>(undefined);
+	// the listener gets the last model from a ref, because it starts only 1 time
+	const last = useRef(model);
+	last.current = model;
+	// "Show the ledger" of the panel, and a click on a CodeLens line in the text editor. In stage 6, a step of the fixes
+	// shows the page of the fix plan
 	useEffect(() => {
 		const listener = (event: MessageEvent<ToView>) => {
 			if (event.data?.type === 'showLedger') {
 				setTab('ledger');
 			} else if (event.data?.type === 'selectStep') {
-				setTab('plan');
+				const id = event.data.id;
+				setTab(last.current?.task?.review?.fixPlan?.steps.some((s) => s.id === id) ? 'fixes' : 'plan');
 			}
 		};
 		window.addEventListener('message', listener);
 		return () => window.removeEventListener('message', listener);
 	}, []);
-	// a new stage or a different task starts with the default tab of its page, for example the review in stage 6. The first
-	// model is no change: "Show the ledger" can come before it
+	// a new stage or a different task starts with the default tab of its page, for example the review in stage 6. In stage
+	// 6, a new part of the round also starts with its default tab. The first model is no change: "Show the ledger" can come
+	// before it
 	const shownStage = useRef<string | undefined>(undefined);
-	const stageKey = model?.task ? `${model.task.id}:${model.task.stage}` : undefined;
+	const review = model?.task?.review;
+	const stageKey = model?.task ? `${model.task.id}:${model.task.stage}${review ? `:${review.roundNumber}:${review.phase}` : ''}` : undefined;
 	useEffect(() => {
 		if (stageKey !== undefined && shownStage.current !== undefined && stageKey !== shownStage.current) {
 			setTab(undefined);
@@ -76,11 +83,18 @@ function Page({ model }: { model: ViewModel | undefined }) {
 		return <div class="page"><p class="muted">Shotgun starts.</p></div>;
 	}
 	const { task } = model;
-	// stage 6: the review, the plan and the ledger. The review comes first
+	// stage 6: the review or the issues, the fix plan, the plan and the ledger (decision 43). The part of the round gives
+	// the first tab: the fix plan in the plan of the fixes and in the fixes, else the review or the issues
 	if (task?.review) {
-		const shown = tab ?? 'review';
-		const tabs: ['review' | 'plan' | 'ledger', string][] = [['review', 'Review'], ...(task.plan ? [['plan', 'Plan'] as ['plan', string]] : []),
-			...(task.ledger ? [['ledger', 'Ledger'] as ['ledger', string]] : [])];
+		const { phase } = task.review;
+		const hasFixPlan = !!task.review.fixPlan || phase === 'plan';
+		const shown = tab ?? (hasFixPlan && (phase === 'plan' || phase === 'fixes') ? 'fixes' : 'review');
+		const tabs: ['review' | 'fixes' | 'plan' | 'ledger', string][] = [
+			['review', phase === 'review' ? 'Review' : 'Issues'],
+			...(hasFixPlan ? [['fixes', 'Fix plan'] as ['fixes', string]] : []),
+			...(task.plan ? [['plan', 'Plan'] as ['plan', string]] : []),
+			...(task.ledger ? [['ledger', 'Ledger'] as ['ledger', string]] : []),
+		];
 		return (
 			<>
 				<div class="tabs page-tabs" role="tablist" aria-label="The pages of stage 6">
@@ -89,7 +103,8 @@ function Page({ model }: { model: ViewModel | undefined }) {
 					))}
 				</div>
 				{shown === 'ledger' && task.ledger ? <ReviewLedger task={task} model={model} />
-					: shown === 'plan' && task.plan ? <PlanPage task={task} model={model} /> : <ReviewPage task={task} model={model} />}
+					: shown === 'plan' && task.plan ? <PlanPage task={task} model={model} />
+						: shown === 'fixes' && hasFixPlan ? <FixPlanPage task={task} model={model} /> : <ReviewPage task={task} model={model} />}
 			</>
 		);
 	}

@@ -21,7 +21,7 @@ import { commitMessageData, submitMessageCheck } from './ledger';
 import { orderData, submitTaskSurvey } from './order';
 import { planData, submitPlan } from './plan';
 import type { PromptLog } from './prompts';
-import { ReviewApi, reviewData, submitReview } from './review';
+import { ReviewApi, reviewData, submitFixPlan, submitReview } from './review';
 import { EngineApi, submitSurvey } from './survey';
 
 export { IS_CASE_SENSITIVE };
@@ -105,8 +105,8 @@ export function sessionData(snapshot: Snapshot, brief?: { file: string; text: st
 		next = stepNext(snapshot, current)?.next ?? STAGE_INFO[task.stage].next;
 	}
 	const parsed = brief ? parseBrief(brief.text) : undefined;
-	// stage 6: the steps of the issues of the review
-	const steps = (task?.stage === 'review' ? workPlan(snapshot)?.steps.filter((s) => s.issue) : snapshot.plan?.steps) ?? [];
+	// stage 6: the steps of the fixes (decision 43)
+	const steps = (task?.stage === 'review' ? workPlan(snapshot)?.steps.filter((s) => s.fixes || s.issue) : snapshot.plan?.steps) ?? [];
 	const done = steps.filter((s) => stateOf(snapshot.build, s.id) === 'done').length;
 	const request = stepNext(snapshot, current)?.request;
 	return {
@@ -164,7 +164,7 @@ export function sessionData(snapshot: Snapshot, brief?: { file: string; text: st
 				done,
 				total: steps.length,
 				current: current ? {
-					n: current.n, id: current.step.id, ...(current.step.issue ? { issue: current.step.issue } : {}), title: current.step.title, level: current.level, writer: current.writer, state: current.state,
+					n: current.n, id: current.step.id, ...(current.step.issue ? { issue: current.step.issue } : {}), ...(current.step.fixes ? { fixes: current.step.fixes } : {}), title: current.step.title, level: current.level, writer: current.writer, state: current.state,
 					...(current.build?.receipt ? { receipt: receiptCounts(current.build.receipt) } : {}),
 				} : null,
 				...(request ? { request } : {}),
@@ -308,7 +308,8 @@ export function shotgunTools(deps: ToolDeps): ExtensionTool[] {
 			title: 'Shotgun step',
 			description: 'Gives a step of the build, in stage 5: by default the current step. It gives the text, the places, the checks, the level, '
 				+ 'the writer, the state and the scope of the step, and its receipt with the marks and the notes of the user: the issues and '
-				+ 'the questions. The steps go in sequence. Claude writes only the steps of risk level 1 and 2.',
+				+ 'the questions. The steps go in sequence. Claude writes only a step with the writer Claude, and the frame of a step with the '
+				+ 'writer frame. The level gives the first writer, and the user can select a different writer at each level.',
 			inputSchema: {
 				type: 'object',
 				properties: { step: { type: 'string', description: 'The id of the step, for example S5, or its number. Default: the current step.' } },
@@ -320,9 +321,10 @@ export function shotgunTools(deps: ToolDeps): ExtensionTool[] {
 			name: 'start_step',
 			title: 'Shotgun: open a step',
 			description: 'Opens the current step of the build for your errand or your frame, in stage 5, before you change a file. Shotgun saves '
-				+ 'the files of its scope, keeps their text as the base of the step, and the guard opens the scope. An errand is for risk level 1 '
-				+ 'and 2. A frame is for level 3, and for level 4 after the user selects "I want a frame". Call it again after the receipt to '
-				+ 'fix the issues of the user, or for a different frame: the step keeps its base.',
+				+ 'the files of its scope, keeps their text as the base of the step, and the guard opens the scope. The writer of the step selects '
+				+ 'the kind: an errand for the writer Claude, a frame for the writer frame. The level of the step gives the first writer, and the '
+				+ 'user can select a different writer at each level in the panel. Call it again after the receipt to fix the issues of the user, '
+				+ 'or for a different frame: the step keeps its base.',
 			inputSchema: {
 				type: 'object',
 				properties: {
@@ -392,8 +394,9 @@ export function shotgunTools(deps: ToolDeps): ExtensionTool[] {
 			name: 'submit_frame',
 			title: 'Shotgun: give the frame',
 			description: 'Closes the open frame step after you wrote the frame, in stage 5. Each open decision of the step is exactly 1 hole: a '
-				+ 'marker /*@hole N: question */ in the place of the whole code of the decision, for example a condition with its branch. The '
-				+ 'frame has all other lines. Give each hole with its number, its decision, its question and 4 hints: a nudge with no code, a '
+				+ 'marker /*@hole N: question */ in the place of the whole code of the decision, for example a condition with its branch. A step '
+				+ 'with no open decision gets 1 to 3 holes in its logic, with no decision. The frame has all other lines. Give each hole with its '
+				+ 'number, its decision if it has one, its question and 4 hints: a nudge with no code, a '
 				+ 'pointer to the facts with places, an example from the project with its place and code, and 1 possible answer. Shotgun refuses '
 				+ 'an answer that is only a type, a name, a literal or a list of parameters. Do not give the answers in the chat.',
 			inputSchema: {
@@ -538,7 +541,8 @@ export function shotgunTools(deps: ToolDeps): ExtensionTool[] {
 			description: 'Gives the review data of stage 6, when the user asks "Review my task.": the effort and the focus of the user, the base '
 				+ 'commit of the task, the changed files with their hunks, heat and writers, the ripple, the brief, the steps of the plan, and the '
 				+ 'earlier issues with the reasons of the user. Load the skill shotgun-review first. For the text of the diff, call get_diff of '
-				+ 'DataFlow with the base commit.',
+				+ 'DataFlow with the base commit. After the user accepted the issues, it also gives the issues to fix in the sequence of the user '
+				+ 'with the notes of the user, for "Plan the fixes.", and the plan of the fixes.',
 			inputSchema: { type: 'object', properties: {} },
 			isReadOnly: true,
 			call: () => reviewData({ ...deps, review: deps.review ?? (() => undefined) }),
@@ -549,8 +553,8 @@ export function shotgunTools(deps: ToolDeps): ExtensionTool[] {
 			description: 'Gives the issues of your review of the task to Shotgun, in stage 6, after the verify pass of the skill shotgun-review. '
 				+ 'Give each issue that the verify pass kept, the most severe first, with a maximum of 32. Each issue has a place in the diff of '
 				+ 'the task or in its ripple, a failure scenario, a verdict, and the read tools of DataFlow that show it. Shotgun puts each issue '
-				+ 'into the list of steps or into the second list. A new review of the same round replaces the open issues of the round. '
-				+ 'Change no file.',
+				+ 'into the list to fix or into the list for later. The user then puts the issues to fix in sequence, and asks for the plan of '
+				+ 'the fixes. A new review of the same round replaces the open issues of the round. Change no file.',
 			inputSchema: {
 				type: 'object',
 				properties: {
@@ -602,6 +606,67 @@ export function shotgunTools(deps: ToolDeps): ExtensionTool[] {
 				required: ['issues'],
 			},
 			call: (args) => submitReview({ ...deps, review: deps.review ?? (() => undefined) }, args),
+		},
+		{
+			name: 'submit_fix_plan',
+			title: 'Shotgun: give the plan of the fixes',
+			description: 'Gives your plan of the fixes to Shotgun, in stage 6, after the user accepted the issues of the round. The user asks '
+				+ '"Plan the fixes.". Call get_review first: it gives the issues to fix in the sequence of the user, with the notes of the user. '
+				+ 'Give the steps in that sequence. Each step names the issues that it fixes. 1 step can fix 2 issues, and 1 issue can need 2 '
+				+ 'steps. The places of a step are all places that its fix changes, also a file that the issue does not name. Shotgun gives the '
+				+ 'steps the ids F1, F2 and so on, and a risk level from the facts of DataFlow and the open decisions, as in stage 4. A new plan '
+				+ 'replaces the plan of the round before the gate of the user. Change no file.',
+			inputSchema: {
+				type: 'object',
+				properties: {
+					steps: {
+						type: 'array',
+						maxItems: 12,
+						items: {
+							type: 'object',
+							properties: {
+								title: { type: 'string' },
+								fixes: { type: 'array', items: { type: 'string' }, description: 'The ids of the issues to fix that the step fixes, for example ["I1", "U1"].' },
+								places: {
+									type: 'array',
+									items: {
+										type: 'object',
+										properties: {
+											file: { type: 'string', description: 'The file, relative to the first folder of the project.' },
+											lines: { type: 'array', items: { type: 'integer' }, minItems: 2, maxItems: 2, description: '[first, last], from 1.' },
+											code: { type: 'string', description: 'A short text of the code in the lines, copied exactly.' },
+											new: { type: 'boolean', description: 'True for a new file. Then give no lines and no code.' },
+											insert: { type: 'boolean', description: 'True if the new lines go next to these lines, and these lines do not change.' },
+										},
+										required: ['file'],
+									},
+									description: 'All places that the fix of the step changes, 1 to 8.',
+								},
+								text: { type: 'string', description: 'The fix and its result, in 1 to 3 sentences. Give no answer to an open decision.' },
+								checks: { type: 'array', items: { type: 'string' }, description: '1 to 5 checks for the user after the step, for example that the failure scenario cannot occur.' },
+								note: { type: 'string', description: 'A short note for the user, for example a place that the issue does not name.' },
+								decisions: {
+									type: 'array',
+									maxItems: 3,
+									items: {
+										type: 'object',
+										properties: {
+											question: { type: 'string', description: 'The decision as a short question.' },
+											options: { type: 'array', items: { type: 'string' }, maxItems: 4, description: 'Optional: the options that you see, with no choice.' },
+										},
+										required: ['question'],
+									},
+									description: 'The open decisions of the fix, 0 to 3: the choices that the issue, the note of the user and the brief do not settle. Give an '
+										+ 'empty list for a fix with no open decision.',
+								},
+							},
+							required: ['title', 'fixes', 'places', 'text', 'checks', 'decisions'],
+						},
+					},
+				},
+				required: ['steps'],
+			},
+			call: (args) => submitFixPlan({ ...deps, review: deps.review ?? (() => undefined) }, args),
 		},
 		{
 			name: 'submit_survey',
@@ -714,7 +779,7 @@ export function shotgunTools(deps: ToolDeps): ExtensionTool[] {
 				const folders = deps.folders();
 				const snapshot = deps.store.snapshot;
 				const root = snapshot.root;
-				// stage 6: only a step of an issue opens a scope
+				// stage 6: only a step of the fixes opens a scope
 				const current = deps.store.current;
 				const isSteps = isStepStage(snapshot.task) && (snapshot.task?.stage === 'build' || !!current);
 				const build = isSteps && root && workPlan(snapshot) ? buildGuard(current, START_STEP_TOOL) : undefined;

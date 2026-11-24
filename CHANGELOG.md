@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+Stage 6 now has the flow of the stages 2 to 5 (decision 43). Each round of the review has 4 parts: the review, the issues, the plan of the fixes and the fixes. At each level, the user can also select a different writer for a step (decision 44).
+
+- The issues page shows the list to fix in the sequence of the user, as the order page shows the tasks. The user moves an issue up or down, keeps it for later with **Not now**, closes it with **Not a problem** and a reason, writes a note for the plan, and adds an issue (U1, U2 and so on). The gate is **Accept the issues**. A check gives a warning for an important new issue that the review confirmed, if the user keeps it for later.
+- After this gate, the user tells Claude "Plan the fixes.". The new tool `submit_fix_plan` gives the steps F1, F2 and so on. Each step names the issues that it fixes, and each issue to fix needs a step. The rules of stage 4 give the levels. The new page of the fix plan shows the plan as the plan page does. The gate is **Accept the fix plan**. Before this gate, **Back to the issues** lets the user change the issues again. A new plan of the fixes keeps a level, a writer or an answer of the user only for a step with the same id, title and issues.
+- The steps of the fixes go in sequence, as the steps of the build, with receipts, frames, callouts and loose ends. When each step of an issue is done, the issue is fixed. The gate **The fixes are done** ends the round, and the next round checks the fixes. The text editor shows the steps of the fixes with CodeLens lines.
+- The gate **The task is done** is beside the gate of each part of the round, and it never waits.
+- An issue is no longer a step of the user at level 4. An open round of a task of Shotgun 0.4.0 or earlier starts on the issues page.
+- At each level, the user can select a different writer for a step: **I write it**, **Frame** or **Claude writes it**, on the plan page and in the panel. The level stays, and the ledger records the choice. A frame for a step with no open decision has 1 to 3 holes in the logic of the step. The choice **Frame** replaces the button **I want a frame** of level 4.
+- The gate **Accept the plan** names the open decisions of each step that Claude writes, also of a step with a writer that the user selected.
+- A step of a plan cannot have the id F1, F2 and so on, because these ids are for the steps of the fixes.
+- The skills `shotgun`, `shotgun-plan`, `shotgun-review`, `shotgun-errand`, `shotgun-frame` and `shotgun-explain` have the new flow. After the update, start a new session of Claude Code, so that it loads the new skills.
+- `scripts/test-claude.mjs` takes stage 6 through the issues page, the plan of the fixes, the fixes and round 2. In stage 5, it selects the writer "Frame". It makes 18 runs of Claude Code.
+
 ## 0.4.0
 
 Shotgun 0.4.0 needs DataFlow 0.6.2 or later. It is the first version that updates itself from the releases on GitHub. Install its VSIX one time by hand. Then Shotgun installs the later versions by itself.

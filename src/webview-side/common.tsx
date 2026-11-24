@@ -123,6 +123,29 @@ function EditorIcon() {
 	);
 }
 
+// The writer of a step: the level gives the first writer, and the user can select a different writer at each level
+// (decision 44). A click on the writer of the level removes the choice
+type StepWriterName = 'user' | 'frame' | 'claude';
+const WRITER_LABEL: Readonly<Record<StepWriterName, string>> = { user: 'I write it', frame: 'Frame', claude: 'Claude writes it' };
+export function WriterChoice({ step, writer, first }: { step: string; writer: StepWriterName | undefined; first: StepWriterName | undefined }) {
+	return (
+		<div class="writer-choice">
+			<div class="pills" role="radiogroup" aria-label="The writer of the step">
+				{(['user', 'frame', 'claude'] as const).map((w) => (
+					<button type="button" role="radio" class={writer === w ? 'pill on' : 'pill'} aria-checked={writer === w}
+						onClick={() => post({ type: 'setWriter', step, writer: w === first ? null : w })}>
+						{WRITER_LABEL[w]}
+					</button>
+				))}
+			</div>
+			<p class="muted small">
+				{first ? `The level gives "${WRITER_LABEL[first]}". ` : ''}At each level, you can ask for a frame or for an implementation of Claude. The
+				level stays, and the ledger records your choice.
+			</p>
+		</div>
+	);
+}
+
 // A request that the user types in Claude Code. A click puts the words into the clipboard. It does not start Claude
 export function TellClaude({ text }: { text: string }) {
 	return (
@@ -247,12 +270,16 @@ function BriefStage({ brief, request }: { brief: BriefView; request?: string }) 
 }
 
 // The gate of the stage: a decision of the user. The button records it, and it never starts Claude
-// message: gate for the gate of the stage, stepGate for the gate of the current step in stage 6
-export function GateBlock({ gate, message = 'gate' }: { gate: GateView; message?: 'gate' | 'stepGate' }) {
+// message: gate for the gate of the stage, stepGate for the gate of the current step in stage 6, and taskDone for the gate
+// "The task is done" beside the gate of the part of the round in stage 6 (decision 43). isSecondary: a button that is
+// not the next gate
+export function GateBlock({ gate, message = 'gate', isSecondary = false }: { gate: GateView; message?: 'gate' | 'stepGate' | 'taskDone'; isSecondary?: boolean }) {
 	return (
 		<div class="gate">
 			{gate.warning && <p class="notice">{gate.warning}</p>}
-			<button type="button" class="btn primary" disabled={!gate.isEnabled} onClick={() => post({ type: message })}>{gate.label}</button>
+			<button type="button" class={`btn ${isSecondary ? 'secondary' : 'primary'}`} disabled={!gate.isEnabled} onClick={() => post({ type: message })}>
+				{gate.label}
+			</button>
 			<p class="muted small">{gate.isEnabled ? gate.note : gate.reason}</p>
 			{gate.after && (
 				<>

@@ -12,7 +12,7 @@ const SURVEY_CHANGED = 'Survey my changed tasks.';
 const edit = (change: OrderEditView) => post({ type: 'editOrder', edit: change });
 const count = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
-function Chevron({ isUp }: { isUp: boolean }) {
+export function Chevron({ isUp }: { isUp: boolean }) {
 	return (
 		<svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
 			stroke-linejoin="round">

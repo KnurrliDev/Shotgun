@@ -14,23 +14,25 @@ A task goes through 6 stages:
 | 2 Survey | Claude | Claude reads the code. It gives the facts, the tasks and the hooks: the places where new code goes into the code that is there. |
 | 3 Order | You | You put the tasks in sequence. You can rewrite a task, add a task, or keep a task for later. |
 | 4 Plan | Claude | Claude makes the steps of the plan. Shotgun gives each step a risk level from the facts of DataFlow. |
-| 5 Build | You and Claude | The risk level of a step selects its writer. You write the steps with the most risk. |
-| 6 Review | Claude, then you | A new session of Claude Code reviews the whole diff with your effort and focus. You work through the issues. |
+| 5 Build | You and Claude | The risk level of a step gives its first writer. You write the steps with the most risk. |
+| 6 Review | You and Claude | A new session of Claude Code reviews the whole diff with your effort and focus. You put the issues to fix in sequence, Claude plans the fixes, and the fixes go step by step. |
 
 A gate ends each stage, and only you pass a gate. A button of Shotgun records a decision of yours. It never starts Claude: you type each request in Claude Code. You can return the task to an earlier stage at any time.
 
-The plan names the open decisions of each step: the choices that your brief and your answers do not settle. A step with no open decision gets at most level 2, so Claude writes it. On the plan page, you can answer a decision in words, or add a decision of yours. In the build, the risk level of a step selects its writer:
+The plan names the open decisions of each step: the choices that your brief and your answers do not settle. A step with no open decision gets at most level 2, so Claude writes it. On the plan page, you can answer a decision in words, or add a decision of yours. In the build, the risk level of a step gives its first writer:
 
 | Level | Writer |
 | --- | --- |
 | 1 and 2 | Claude does the step as an errand. You walk its receipt, and put a mark on each change. The receipt shows the choice of Claude for each open decision. |
 | 3 | Claude writes a frame with a hole for each open decision. You fill the holes, with 4 hints for each hole. |
-| 4 | You write the step. You can ask for a frame. |
+| 4 | You write the step. |
 | 5 | You write the step, also with no open decision. Claude changes no file, but it answers your questions. |
 
-The guard of Shotgun stops each file change of Claude in the stages 1 to 4 and in stage 6. In the build and in the steps of the issues, it lets Claude change only the files of its open step. While you write, Shotgun shows the new facts of DataFlow on your lines as callouts, for example a race. The ledger keeps your decisions and the writer of each changed line.
+At each level, you can select a different writer for a step: **I write it**, **Frame** or **Claude writes it**. The level stays, and the ledger records your choice.
 
-In stage 6, you select the effort and the focus of the review, and paste its prompt into a new session of Claude Code. The new session did not write the code, so it reviews with a fresh view. It checks each candidate in a verify pass, and gives each issue with a failure scenario and the evidence of DataFlow. Shotgun shows the confirmed new issues in the list of steps, and the other issues in a second list. Each issue of the list of steps is a step of yours, as in the build. You close an issue that is not a problem with a reason, and the next review gets it. After your fixes, the next round checks them.
+The guard of Shotgun stops each file change of Claude in the stages 1 to 4 and in stage 6. In the build and in the steps of the fixes, it lets Claude change only the files of its open step. While you write, Shotgun shows the new facts of DataFlow on your lines as callouts, for example a race. The ledger keeps your decisions and the writer of each changed line.
+
+In stage 6, you select the effort and the focus of the review, and paste its prompt into a new session of Claude Code. The new session did not write the code, so it reviews with a fresh view. It checks each candidate in a verify pass, and gives each issue with a failure scenario and the evidence of DataFlow. Shotgun shows the confirmed new issues in the list to fix, and the other issues in the list for later. On the issues page, you put the issues to fix in sequence, as the tasks of the order. You close an issue that is not a problem with a reason, and the next review gets it. Then Claude plans the fixes, as the plan of stage 4, and the steps of the fixes go in sequence, as the build. After your fixes, the next round checks them.
 
 Shotgun needs DataFlow 0.6.2 or later, VS Code 1.143 or later, and Claude Code 2.1.323 or later. DataFlow works only on Windows 64-bit, so Shotgun works only there too.
 

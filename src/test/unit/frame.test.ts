@@ -155,17 +155,24 @@ suite('Frames', () => {
 		]);
 		const ok = checkFrame({ holes: [HINTS(1, 'When does the loop stop?', 'i >= plan.limit'), HINTS(2, 'What happens at the limit?', 'break;')] }, ctx);
 		assert.deepStrictEqual([ok.problems, ok.holes.map((h) => h.decision)], [[], ['D1', 'D2']]);
-		assert.deepStrictEqual(checkFrame({ holes: [HINTS(1, 'When does the loop stop?', 'i >= plan.limit')] }, { ...ctx, decisions: [] }).problems[0],
-			'The step has no open decision, so a frame has no hole. The user can add a decision on the plan page.');
+		// a step with no open decision, by the choice of the user: 1 to 3 holes in its logic, with no decision (decision 44)
+		const free = checkFrame({ holes: [HINTS(1, 'When does the loop stop?', 'i >= plan.limit'), HINTS(2, 'What happens at the limit?', 'break;')] },
+			{ ...ctx, decisions: [] });
+		assert.deepStrictEqual([free.problems, free.holes.map((h) => h.decision)], [[], [undefined, undefined]]);
+		const four = [...FRAME, '/*@hole 3: Which value? */', '/*@hole 4: Which log? */'];
+		assert.ok(checkFrame({ holes: [] }, { ...ctx, readLines: () => four, decisions: [] }).problems
+			.includes('The step has no open decision, so its frame has 1 to 3 holes in the logic of the step. The frame has 4 holes.'));
 	});
 
-	test('The writer: level 3 gets a frame, and level 4 gets a frame only after the button of the user', () => {
+	test('The writer: the level gives the first writer, and the user selects a different writer at each level (decision 44)', () => {
 		assert.deepStrictEqual([1, 2, 3, 4, 5].map((l) => buildWriterOf(l as 1 | 2 | 3 | 4 | 5)), ['claude', 'claude', 'frame', 'user', 'user']);
-		assert.strictEqual(buildWriterOf(4, true), 'frame');
-		assert.strictEqual(buildWriterOf(5, true), 'user');
+		assert.deepStrictEqual([buildWriterOf(5, 'claude'), buildWriterOf(1, 'frame'), buildWriterOf(2, 'user'), buildWriterOf(null, 'claude')],
+			['claude', 'frame', 'user', 'claude']);
 		assert.strictEqual(isFromView({ type: 'showHint', step: 'S1', hole: 1, level: 4 }), true);
 		assert.strictEqual(isFromView({ type: 'showHint', step: 'S1', hole: 1, level: 5 }), false);
 		assert.strictEqual(isFromView({ type: 'requestFrame', step: 'S1' }), true);
+		assert.deepStrictEqual([isFromView({ type: 'setWriter', step: 'S1', writer: 'claude' }), isFromView({ type: 'setWriter', step: 'S1', writer: null }),
+			isFromView({ type: 'setWriter', step: 'S1', writer: 'robot' })], [true, true, false]);
 	});
 
 	suite('A frame in the build', () => {
@@ -214,12 +221,6 @@ suite('Frames', () => {
 			assert.strictEqual(buildNext(current).request, 'Give me a frame for step 1.');
 			assert.match(buildGuard(current, 'start').closed, /a frame of Claude\. Open it with start and the kind frame first/);
 			await assert.rejects(call('start_step', { step: 'S1', kind: 'errand' }), /Step 1 is a frame: write only the lines with no decision/);
-			// a frame needs an open decision (decision 32): with each decision answered, Claude cannot open the frame
-			store.answerDecision('S1', 'D1', 'At the limit of the plan.');
-			store.answerDecision('S1', 'D2', 'Stop with the partial result.');
-			await assert.rejects(call('start_step', { step: 'S1', kind: 'frame' }), /Step 1 has no open decision, so a frame has no hole/);
-			store.answerDecision('S1', 'D1', '');
-			store.answerDecision('S1', 'D2', '');
 			const opened = await call('start_step', { step: 'S1', kind: 'frame' });
 			assert.match(String(opened.next), /Each open decision of the step is exactly 1 hole: D1 "When does the loop stop\?", D2 "What happens at the limit\?"/);
 			assert.deepStrictEqual(guard(solver()), {});
@@ -276,41 +277,50 @@ suite('Frames', () => {
 			]);
 		});
 
-		test('A step of level 4: "I want a frame" gives it to Claude as a frame, and a new level in stage 5 starts the step again', async () => {
+		test('The writer at each level: "I want a frame" with no open decision, Claude at level 5, and a new level keeps the writer (decision 44)', async () => {
 			store.startStep('S1', { writer: 'frame', level: 3, scope: ['src/solver.cpp'] });
 			store.writeFrame('S1', [], undefined);
 			store.finishStep('S1', 'step-done');
 			// S2 is open for the user, as the extension opens it
 			store.startStep('S2', { writer: 'user', level: 4, scope: ['tests/limit_test.cpp'], base: 'sg.base.S2' });
-			assert.strictEqual(model().task?.build?.current?.canRequestFrame, true);
-			await assert.rejects(call('start_step', { step: 'S2', kind: 'frame' }), /For a frame of Claude, the user selects "I want a frame" in the panel of Shotgun first/);
-			// "I want a frame" needs an open decision (decision 32)
+			let current = model().task?.build?.current;
+			assert.deepStrictEqual([current?.canSetWriter, current?.firstWriter, current?.writer], [true, 'user', 'user']);
+			await assert.rejects(call('start_step', { step: 'S2', kind: 'frame' }),
+				/The user writes step 2, at risk level 4\. Do not change its files\. Tell the user: at each level, the user can select "Frame" or "Claude writes it"/);
+			// "I want a frame" also with no open decision: the frame gets 1 to 3 holes in the logic of the step
 			store.answerDecision('S2', 'D1', 'The limit 3.');
-			assert.strictEqual(model().task?.build?.current?.canRequestFrame, false);
-			assert.throws(() => store.requestFrame('S2'), /Step 2 has no open decision, so a frame has no hole\. Add a decision on the plan page first\./);
-			store.answerDecision('S2', 'D1', '');
 			const old = store.requestFrame('S2');
 			assert.strictEqual(old?.base, 'sg.base.S2');
-			const current = store.current!;
-			assert.deepStrictEqual([current.writer, current.state, current.build?.isFrameRequested], ['frame', 'todo', true]);
-			assert.strictEqual(model().task?.build?.current?.writerText, 'You asked for a frame. Claude writes the frame, and you fill its holes');
-			// an open for the user that started before the request does not change the step
+			assert.deepStrictEqual([store.current?.writer, store.current?.state, store.current?.level], ['frame', 'todo', 4]);
+			assert.strictEqual(model().task?.build?.current?.writerText, 'You selected this writer. Claude writes the frame, and you fill its holes');
+			// an open for the user that started before the choice does not change the step
 			assert.throws(() => store.startStep('S2', { writer: 'user', level: 4, scope: ['tests/limit_test.cpp'], base: 'sg.base.S2' }),
 				/Step 2 changed while it opened\. Its writer is frame now, not user\./);
-			assert.deepStrictEqual([store.current?.writer, store.current?.state, store.current?.build?.isFrameRequested], ['frame', 'todo', true]);
-			// a new level in stage 5 removes the frame request: the step starts again with the writer of its level
-			const removed = store.setLevel('S2', 2);
-			assert.strictEqual(removed?.isFrameRequested, true);
-			assert.deepStrictEqual([store.current?.writer, store.current?.state], ['claude', 'todo']);
-			// a step that is done, or that Claude started, keeps its level
+			// a new level keeps the writer that the user selected
+			store.setLevel('S2', 5);
+			assert.deepStrictEqual([store.current?.writer, store.current?.level], ['frame', 5]);
+			// Claude writes a step of level 5, by the choice of the user
+			store.setWriter('S2', 'claude');
+			assert.deepStrictEqual([store.current?.writer, model().task?.build?.current?.firstWriter], ['claude', 'user']);
+			// the writer of the level removes the choice
+			store.setWriter('S2', 'user');
+			assert.strictEqual(store.snapshot.levels?.levels.S2?.writer, undefined);
+			store.setWriter('S2', 'frame');
+			const opened = await call('start_step', { step: 'S2', kind: 'frame' });
+			assert.match(String(opened.next), /The step has no open decision, and the user asked for a frame\. Give 1 to 3 holes in the logic of the step/);
+			// a step that is done, or that Claude started, keeps its level and its writer
 			assert.throws(() => store.setLevel('S1', 4), /The step is done, so its level stays\./);
-			await call('start_step', { step: 'S2' });
-			assert.throws(() => store.setLevel('S2', 4), /Claude started the step, so its level stays\./);
-			const plan = model().task?.plan?.steps.map((s) => s.isLevelEditable);
-			assert.deepStrictEqual(plan, [false, false, true]);
-			assert.deepStrictEqual(store.snapshot.decisions.filter((d) => d.kind === 'frame-request' || (d.kind === 'level' && d.step === 'S2')).map((d) => d.kind),
-				['level', 'frame-request', 'level']);
-			assert.match(readFileSync(path.join(root, '.shotgun', 'a-cycle-limit-for-the-solver', 'decisions.jsonl'), 'utf8'), /"kind":"frame-request"/);
+			assert.throws(() => store.setWriter('S2', 'user'), /Claude started the step, so its level stays\./);
+			current = model().task?.build?.current;
+			assert.strictEqual(current?.canSetWriter, false);
+			assert.deepStrictEqual(model().task?.plan?.steps.map((s) => s.isLevelEditable), [false, false, true]);
+			assert.deepStrictEqual(store.snapshot.decisions.filter((d) => d.kind === 'writer').map((d) => decisionText(d)), [
+				'You selected the writer of step S2: "Claude writes the frame, and you fill its holes". The level gives "You write it".',
+				'You selected the writer of step S2: "Claude writes it". The level gives "You write it".',
+				'Step S2 has the writer of its level again: "You write it".',
+				'You selected the writer of step S2: "Claude writes the frame, and you fill its holes". The level gives "You write it".',
+			]);
+			assert.match(readFileSync(path.join(root, '.shotgun', 'a-cycle-limit-for-the-solver', 'decisions.jsonl'), 'utf8'), /"kind":"writer"/);
 		});
 
 		test('An errand with an open decision: Claude gives its choice, and the receipt shows it (P31)', async () => {

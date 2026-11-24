@@ -270,7 +270,7 @@ suite('Build', () => {
 		}
 		const current = store.current!;
 		assert.deepStrictEqual([current.step.id, current.writer, current.state], ['S3', 'user', 'todo']);
-		await assert.rejects(call('start_step', { step: 'S3' }), /Step 3 has risk level 4, so the user writes it\./);
+		await assert.rejects(call('start_step', { step: 'S3' }), /The user writes step 3, at risk level 4\. Do not change its files\./);
 		assert.match(guard(path.join(root, 'README.md')).hookSpecificOutput.permissionDecisionReason, /The current step is step 3 of 3, "The note in the README", and the user writes it\./);
 		assert.match(buildNext(current).next, /^The user writes step 3 of 3, "The note in the README", at risk level 4, and then selects "The step is done"\./);
 		store.startStep('S3', { writer: 'user', level: 4, scope: ['README.md'], base: markName('x', 'S3') });

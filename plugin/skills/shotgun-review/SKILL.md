@@ -5,11 +5,11 @@ description: 'Review the whole diff of the active Shotgun task in stage 6, with 
 
 # The review of Shotgun
 
-Stage 6 of a Shotgun task is the review. You review the whole diff of the task, and you give the issues to Shotgun. Then the user works through the issues. The user starts the review in a new session of Claude Code, so this session did not write the code of the task.
+Stage 6 of a Shotgun task is the review. You review the whole diff of the task, and you give the issues to Shotgun. Then the user puts the issues to fix in sequence, and a later request plans the fixes. The user starts the review in a new session of Claude Code, so this session did not write the code of the task.
 
 You change no file in the review, and you decide nothing. The guard of Shotgun stops each change of a file. If the guard stops a change, do not try a different way, for example a shell command. Your subagents also change no file, and they run no shell command that changes a file.
 
-The design comes from research on code review with LLMs: many candidates, a check of each candidate, and few issues for the user. A false issue costs the user a step, so precision comes first.
+The design comes from research on code review with LLMs: many candidates, a check of each candidate, and few issues for the user. A false issue costs the user time, so precision comes first.
 
 ## The tools
 
@@ -33,16 +33,16 @@ Load the tools with 1 call of `ToolSearch`, with `select:` and the full names. E
 ## Procedure
 
 1. Call `shotgun_get_session`. Make sure that the stage is 6. If the stage is 5, stop, and tell the user to select "The build is done" in the panel of Shotgun.
-2. Call `shotgun_get_review`. Its effort and its focus are the choice of the user. Use them, also if the prompt gives a different effort or focus.
+2. Call `shotgun_get_review`. Its effort and its focus are the choice of the user. Use them, also if the prompt gives a different effort or focus. If its `phase` is `plan` or `fixes`, stop: the user accepted the issues of this round, and the next review comes after the gate "The fixes are done". Tell the user.
 3. Plan the finders from the effort. The table in the section "The effort" gives them. From round 2, also obey the section "A later round".
 4. Start the finders as subagents with the tool Agent, all in 1 message, so that they run in parallel. Give each finder the prompt in the section "The prompt of a finder". Each subagent gives its result to you when it ends. Wait for these results. Do not use `ScheduleWakeup`, `CronCreate` or a `sleep` command to wait, because a scheduled task can start a new turn after the end of the review.
 5. Collect the candidates of all finders. 2 candidates at the same place with the same defect are 1 candidate. 2 candidates with the same cause are also 1 candidate, if 1 fix removes the 2 failure scenarios. Give the place of the cause, and put the second result into the summary. Do not vote: a candidate of only 1 finder stays.
 6. Check each candidate. At the effort low, give each candidate a short verdict yourself. From the effort medium, start 1 verifier subagent for each candidate, all in 1 message. Give each verifier the prompt in the section "The prompt of a verifier". Wait for their results as in step 4.
 7. Remove each rejected candidate. Keep each confirmed candidate. Keep a plausible candidate with the verdict `plausible`, except at the effort low.
 8. Put the issues in sequence: the important issues first, then the minor issues.
-9. Call `shotgun_submit_review` with the issues, a maximum of 32. Shotgun puts each issue into the list of steps or into the second list.
+9. Call `shotgun_submit_review` with the issues, a maximum of 32. Shotgun puts each issue into the list to fix or into the list for later.
 10. If Shotgun gives problems, correct all of them. Then call the tool again.
-11. Tell the user the number of issues in each list in 1 or 2 sentences. The panel and the page of Shotgun show the issues.
+11. Tell the user the number of issues in each list in 1 or 2 sentences. The issues page of Shotgun shows the issues. Do not plan the fixes, and change no file.
 
 ## The effort
 
@@ -132,7 +132,7 @@ The candidate: <the candidate of the finder, with its place, its scenario and it
 
 ## A later round
 
-After the user fixes issues, the next review is a new round, and it checks the fixes. `shotgun_get_review` then gives `roundNote` and `fixedIssues`.
+After the gate "The fixes are done", the next review is a new round, and it checks the fixes. `shotgun_get_review` then gives `roundNote` and `fixedIssues`.
 
 - Give the finders only the hunks with `"isChangedSinceLastRound": true`, and their ripple. The other hunks had a review in an earlier round.
 - Check each issue of `fixedIssues` in a verifier subagent, all in 1 message with the verifiers of the candidates. Give the verifier the prompt in the section "The prompt of a fix check".
@@ -173,7 +173,7 @@ Each issue for `shotgun_submit_review` has these fields:
 - `source`: `engine` if a fact of DataFlow gives the defect, for example a race or a check of `get_threads` for the 2 accesses. Else `model`, also if facts of DataFlow helped you. A race of 2 runs of 1 worker has the source `model`.
 - `place`: the file, the lines and a short text of the code.
 - `fixPlaces`: up to 4 more places of the same class of bug. Report the class 1 time, not each line.
-- `decisions`: 0 to 3 open decisions of the fix, as questions. Give no choice of yours.
+- `decisions`: 0 to 3 open decisions of the fix, as questions. Give no choice of yours. The plan of the fixes gets them.
 - `tools`: the read tools of DataFlow that show the issue. A subagent of this session called them, so Shotgun accepts them. A race needs `get_threads`.
 - `repeats`: the id of an earlier issue, if the issue is the same problem. Shotgun keeps its id and its state.
 - `evidence`: the new evidence for an earlier issue or a callout that the user closed. Give such an issue only with the verdict `plausible`.
@@ -182,4 +182,4 @@ Give a review with no issue as an empty list. A short `note` can tell the user t
 
 ## After the review
 
-The panel of Shotgun shows the list of steps and the second list. Each issue of the list of steps is a step of the user. The user works through the steps, and closes an issue that is not a problem with a reason. The next review gets the reasons, and checks the fixes. The user selects "The task is done". Then the user writes the commit message, and can ask for a check of it.
+The issues page of Shotgun shows the list to fix and the list for later. The user puts the issues to fix in sequence, keeps an issue for later, closes an issue that is not a problem with a reason, writes a note for the plan, and can add an issue. Then the user selects "Accept the issues", and asks for the plan of the fixes, for example "Plan the fixes". The skill `shotgun-plan` gives the rules for that plan. The steps of the fixes go in sequence, as the steps of the build. After the gate "The fixes are done", the next review checks the fixes, and gets the reasons of the user. With no new issue, the user selects "The task is done". Then the user writes the commit message, and can ask for a check of it.

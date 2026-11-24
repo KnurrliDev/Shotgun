@@ -87,7 +87,8 @@ export interface QuestionsFile {
 // - mark: the user put a mark on a change of a receipt. todo: the user removed the mark
 // - change-note: the note of the user for a change of a receipt. An empty text removes the note
 // - step-gate: the user accepted a receipt, or the user ended a step of the user. notWalked: the changes with no mark
-// - frame-request: the user selected "I want a frame" for a step of level 4 (decision 16)
+// - frame-request: the user selected "I want a frame" for a step of level 4 (decision 16), in Shotgun 0.4.0 or earlier
+// - writer: the user selected the writer of a step at its level (decision 44). first: the writer of the level
 // - frame: Claude gave the frame of a step, with the number of its holes
 // - hint: the user opened a hint of a hole. level 4: the answer of Claude filled the hole
 // - callout-close: the user closed a callout with "Not a problem" and a reason. callout-open: the user opened it again
@@ -101,6 +102,10 @@ export interface QuestionsFile {
 // - issue-step: the user made an issue of the second list a step (isStep true), or put it back into the second list
 export const DECISION_ACTIONS = ['answer', 'open', 'add', 'remove'] as const;
 export type DecisionAction = (typeof DECISION_ACTIONS)[number];
+
+// The writer of a step in the ledger: the user, a frame of Claude, or Claude
+export type WriterName = 'user' | 'frame' | 'claude';
+const isWriterName = (value: unknown): value is WriterName => value === 'user' || value === 'frame' || value === 'claude';
 
 export type Decision =
 	| { readonly version: 1; readonly time: string; readonly kind: 'task'; readonly by: 'user' | 'claude'; readonly title: string }
@@ -151,6 +156,11 @@ export type Decision =
 		readonly gate: StepGate; readonly notWalked: number;
 	}
 	| { readonly version: 1; readonly time: string; readonly kind: 'frame-request'; readonly by: 'user'; readonly step: string }
+	// the writer that the user selects for a step at each level (decision 44). null: the writer of the level again
+	| {
+		readonly version: 1; readonly time: string; readonly kind: 'writer'; readonly by: 'user'; readonly step: string;
+		readonly writer: WriterName | null; readonly first: WriterName;
+	}
 	| { readonly version: 1; readonly time: string; readonly kind: 'frame'; readonly by: 'claude'; readonly step: string; readonly round: number; readonly holes: number }
 	| { readonly version: 1; readonly time: string; readonly kind: 'hint'; readonly by: 'user'; readonly step: string; readonly hole: number; readonly level: number }
 	| {
@@ -178,7 +188,21 @@ export type Decision =
 	}
 	| { readonly version: 1; readonly time: string; readonly kind: 'issue-close'; readonly by: 'user'; readonly issue: string; readonly title: string; readonly reason: string }
 	| { readonly version: 1; readonly time: string; readonly kind: 'issue-open'; readonly by: 'user'; readonly issue: string }
-	| { readonly version: 1; readonly time: string; readonly kind: 'issue-step'; readonly by: 'user'; readonly issue: string; readonly title: string; readonly isStep: boolean };
+	| { readonly version: 1; readonly time: string; readonly kind: 'issue-step'; readonly by: 'user'; readonly issue: string; readonly title: string; readonly isStep: boolean }
+	// the flow of a round of the review (decision 43): the gates of the user, the edits of the issues page, and the plan of
+	// the fixes of Claude. count: the issues to fix, or the steps of the fixes
+	| { readonly version: 1; readonly time: string; readonly kind: 'review-gate'; readonly by: 'user'; readonly round: number; readonly gate: ReviewGate; readonly count: number }
+	| { readonly version: 1; readonly time: string; readonly kind: 'issue-move'; readonly by: 'user'; readonly issue: string; readonly position: number }
+	| { readonly version: 1; readonly time: string; readonly kind: 'issue-note'; readonly by: 'user'; readonly issue: string; readonly text: string }
+	| {
+		readonly version: 1; readonly time: string; readonly kind: 'user-issue'; readonly by: 'user'; readonly issue: string; readonly action: 'add' | 'remove';
+		readonly text: string;
+	}
+	| { readonly version: 1; readonly time: string; readonly kind: 'fix-plan'; readonly by: 'claude'; readonly round: number; readonly steps: number };
+
+// The gates of a round of the review (decision 43). issues-again: the user returns from the plan of the fixes to the issues
+export const REVIEW_GATES = ['accept-issues', 'issues-again', 'accept-fix-plan', 'fixes-done'] as const;
+export type ReviewGate = (typeof REVIEW_GATES)[number];
 
 // The gates of a step: the gate of an errand, and the gate of a step of the user
 export const STEP_GATES = ['accept-receipt', 'step-done'] as const;
@@ -363,6 +387,10 @@ function parseDecision(value: unknown): Decision | undefined {
 				? { version: FILE_VERSION, time, kind: 'change-note', by: 'user', step: value.step, change: value.change, text: value.text } : undefined;
 		case 'frame-request':
 			return value.by === 'user' && isText(value.step) ? { version: FILE_VERSION, time, kind: 'frame-request', by: 'user', step: value.step } : undefined;
+		case 'writer':
+			return value.by === 'user' && isText(value.step) && (value.writer === null || isWriterName(value.writer)) && isWriterName(value.first)
+				? { version: FILE_VERSION, time, kind: 'writer', by: 'user', step: value.step, writer: value.writer as WriterName | null, first: value.first as WriterName }
+				: undefined;
 		case 'frame':
 			return value.by === 'claude' && isText(value.step) && typeof value.round === 'number' && typeof value.holes === 'number'
 				? { version: FILE_VERSION, time, kind: 'frame', by: 'claude', step: value.step, round: value.round, holes: value.holes } : undefined;
@@ -421,6 +449,21 @@ function parseDecision(value: unknown): Decision | undefined {
 		case 'issue-step':
 			return value.by === 'user' && isText(value.issue) && typeof value.title === 'string' && typeof value.isStep === 'boolean'
 				? { version: FILE_VERSION, time, kind: 'issue-step', by: 'user', issue: value.issue, title: value.title, isStep: value.isStep } : undefined;
+		case 'review-gate':
+			return value.by === 'user' && typeof value.round === 'number' && (REVIEW_GATES as readonly unknown[]).includes(value.gate) && typeof value.count === 'number'
+				? { version: FILE_VERSION, time, kind: 'review-gate', by: 'user', round: value.round, gate: value.gate as ReviewGate, count: value.count } : undefined;
+		case 'issue-move':
+			return value.by === 'user' && isText(value.issue) && typeof value.position === 'number'
+				? { version: FILE_VERSION, time, kind: 'issue-move', by: 'user', issue: value.issue, position: value.position } : undefined;
+		case 'issue-note':
+			return value.by === 'user' && isText(value.issue) && typeof value.text === 'string'
+				? { version: FILE_VERSION, time, kind: 'issue-note', by: 'user', issue: value.issue, text: value.text } : undefined;
+		case 'user-issue':
+			return value.by === 'user' && isText(value.issue) && (value.action === 'add' || value.action === 'remove') && typeof value.text === 'string'
+				? { version: FILE_VERSION, time, kind: 'user-issue', by: 'user', issue: value.issue, action: value.action, text: value.text } : undefined;
+		case 'fix-plan':
+			return value.by === 'claude' && typeof value.round === 'number' && typeof value.steps === 'number'
+				? { version: FILE_VERSION, time, kind: 'fix-plan', by: 'claude', round: value.round, steps: value.steps } : undefined;
 		case 'step-gate':
 			return value.by === 'user' && isText(value.step) && (STEP_GATES as readonly unknown[]).includes(value.gate) && typeof value.notWalked === 'number'
 				? {

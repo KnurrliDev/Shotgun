@@ -1,13 +1,13 @@
 ---
 name: shotgun-plan
-description: 'Make the plan of the active Shotgun task in stage 4: the steps in the sequence of the order of the user. Use this skill when the user asks for the plan, for example "Make the plan". Also use it when the user asks for a change of the plan, for example "Split step 2 into 2 steps".'
+description: 'Make the plan of the active Shotgun task in stage 4: the steps in the sequence of the order of the user. Also make the plan of the fixes in stage 6. Use this skill when the user asks for the plan, for example "Make the plan", or for the plan of the fixes, for example "Plan the fixes". Also use it when the user asks for a change of a plan, for example "Split step 2 into 2 steps".'
 ---
 
 # The plan of Shotgun
 
-The plan is stage 4 of a Shotgun task. You make the steps of the plan in the sequence of the order of the user, and you name the open decisions of each step. Shotgun gives each step a risk level from the facts of DataFlow and from its open decisions. In stage 5, the level of a step selects its writer. The writer is you, the user, or a frame of you with a hole for each open decision.
+The plan is stage 4 of a Shotgun task. You make the steps of the plan in the sequence of the order of the user, and you name the open decisions of each step. Shotgun gives each step a risk level from the facts of DataFlow and from its open decisions. In stage 5, the level of a step gives its first writer. The writer is you, the user, or a frame of you with a hole for each open decision. At each level, the user can select a different writer.
 
-A step with no open decision gets at most level 2, so you write it, and the user walks the receipt. A step with an open decision keeps the level of the heat. Thus the open decisions select the work of the user. Name them with care.
+A step with no open decision gets at most level 2, so the level gives you as the writer, and the user walks the receipt. A step with an open decision keeps the level of the heat. Thus the open decisions select the work of the user. Name them with care.
 
 You change no file in this stage. The guard of Shotgun stops each change. If the guard stops a change, do not try a different way, for example a shell command.
 
@@ -18,6 +18,8 @@ You change no file in this stage. The guard of Shotgun stops each change. If the
 - `mcp__plugin_dataflow_dataflow__shotgun_submit_task_survey` gives the survey of 1 task with no survey.
 - `mcp__plugin_dataflow_dataflow__shotgun_submit_plan` gives the plan to Shotgun.
 - `mcp__plugin_dataflow_dataflow__shotgun_get_plan` gives the plan with the level of each step.
+- `mcp__plugin_dataflow_dataflow__shotgun_get_review` gives the issues to fix in stage 6, in the sequence of the user, with the notes of the user.
+- `mcp__plugin_dataflow_dataflow__shotgun_submit_fix_plan` gives the plan of the fixes to Shotgun in stage 6.
 - The read tools of DataFlow give the facts of the C and C++ code:
   - `mcp__plugin_dataflow_dataflow__list_functions` gives the functions of a file with their lines.
   - `mcp__plugin_dataflow_dataflow__get_place` gives the function, the statements, the threads and the locks of a line.
@@ -92,3 +94,28 @@ When the user asks for a change of the plan, for example "Split step 2 into 2 st
 1. Call `shotgun_get_plan`.
 2. Make the change. Keep the id of each step that stays. A level of the user stays with the id of its step.
 3. Call `shotgun_submit_plan` with all steps. The new plan replaces the old plan.
+
+## The plan of the fixes in stage 6
+
+In stage 6, the user accepts the issues of a round of the review. Then the user asks for the plan of the fixes, for example "Plan the fixes". The rules of the plan apply, with these changes.
+
+1. Call `shotgun_get_session`. Make sure that the stage is 6.
+2. Call `shotgun_get_review`. Make sure that `phase` is `plan`. If `phase` is `issues`, stop, and tell the user to select "Accept the issues" on the issues page of Shotgun.
+3. Read the code of each issue of `issuesToFix` with the read tools of DataFlow and with the tool Read. An issue of the user has `"byUser": true` and only a text. Find its places in the code.
+4. Write the steps of the fixes in the sequence of `issuesToFix`. Each issue needs 1 step or more. 1 step can fix 2 issues, for example 2 issues with the same cause.
+5. Obey the note of the user for an issue, `userNote`. The note is a decision of the user.
+6. Call `shotgun_submit_fix_plan` with all steps, a maximum of 12.
+7. If Shotgun gives problems, correct all of them. Then call the tool again.
+8. Tell the user the number of steps and the open decisions. The page of the fix plan shows them with the risk levels. The next gate is "Accept the fix plan". Only the user selects a gate.
+
+A step of the fixes has the fields of a step of the plan, with these changes:
+
+- `fixes`: the ids of the issues that the step fixes, for example `["I1", "U1"]`.
+- No `id`, `task` or `hooks`. Shotgun gives the steps the ids F1, F2 and so on. The numbers go on from the earlier rounds.
+- `places`: all places that the fix changes, also a place that the issue does not name, for example a header file. The fix places of the review, `fixPlacesOfTheReview`, are only hints.
+- `text` and `checks`: the fix and its result. A check can make sure that the failure scenario of the issue cannot occur.
+- `decisions`: the open decisions of the fix. The review can give questions, `decisionsOfTheReview`. Keep such a question only if the brief, the answers and the notes of the user do not settle it.
+
+Shotgun gives each step of the fixes a risk level with the rules of stage 4. Do not choose a level.
+
+To change the plan of the fixes before the gate, call `shotgun_submit_fix_plan` again with all steps. The new plan replaces the old plan of the round.

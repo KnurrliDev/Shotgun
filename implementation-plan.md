@@ -1,7 +1,7 @@
 # Shotgun: implementation plan
 
 - Date: 13 November 2026, changed on 17 November 2026
-- Status: the phases 0 to 13 are done, except the full tests of the phases 10 and 13 in a real project of the user. Phase 11 tuned the risk levels and the holes of the frames. Phase 12 added stage 6, the review, and phase 13 added the steps of the issues and the measurement of the review. On 17 November 2026, the decisions 35 to 39 changed the design of stage 6, and a research report gave the evidence. Section 8 gives the status of each phase.
+- Status: the phases 0 to 13 are done, except the full tests of the phases 10 and 13 in a real project of the user. Phase 11 tuned the risk levels and the holes of the frames. Phase 12 added stage 6, the review, and phase 13 added the steps of the issues and the measurement of the review. On 17 November 2026, the decisions 35 to 39 changed the design of stage 6, and a research report gave the evidence. On 24 November 2026, phase 14 gave stage 6 the flow of the stages 2 to 5 (decision 43), and the writer at each level (decision 44). Section 8 gives the status of each phase.
 - Sources:
   - the design canvas: https://claude.ai/artifact/Sxm9DJ8WPE6LAFqW8PVD6z
   - `dataflow-gaps.md` and `dataflow-gaps-2.md` in this folder
@@ -82,6 +82,8 @@ These items are not in the scope of version 1:
 40. GUI code gets a large heat penalty. DataFlow takes a function as GUI code if its class is a GUI class or derives from one, for example `QWidget`, `SWidget` or `wxWindow`. A function that mostly calls a GUI API such as ImGui is also GUI code. All heat points of GUI code count half, except the points of data that threads share. In GUI code, callers that the call graph cannot see do not give level 3 or higher, because slots and event overrides always have such callers. The session of DataFlow makes the part of DataFlow.
 41. The Shotgun page has a check box for the STE output. While a task is active and not paused, the prompt hook gives Claude the rules of ASD-STE100 Simplified Technical English with each prompt. The rules apply to 1 prompt, so they stop when the user turns the check box off. Claude also gives the rules to each subagent. The words of the user do not change. The setting `shotgun.steOutput` applies to all projects of the user, and it is off by default.
 42. Shotgun updates itself from its releases on GitHub, with the design of the updater of DataFlow. An installed package looks for the latest release 1 minute after its start in a window, and then each 6 hours. All windows share a state file and a lock, so one window downloads the package. Shotgun installs a package only with a correct Ed25519 signature of its name, its version and its SHA-256. Thus an old package cannot come back as a new version. Shotgun has its own key pair, and the private key is not in the repository. The setting `shotgun.update.mode` is `auto`, `ask` or `off`, and `auto` asks first if the setting `extensions.autoUpdate` of VS Code is `false`. A development host and a test do not update themselves.
+43. Each round of stage 6 has the flow of the stages 2 to 5. A new session of Claude reviews the diff and gives the issues, as before. Then the user puts the issues to fix in sequence on the issues page, as on the order page. The user can keep an issue for later, close it with a reason, write a note for the plan, and add an issue. After the gate "Accept the issues", Claude writes the plan of the fixes, as in stage 4. A step of this plan names the issues that it fixes. Its places are all places that its fix changes, also a file that the review does not name. The rules of stage 4 give the levels. After the gate "Accept the fix plan", the steps of the fixes go in sequence, as the steps of the build. The gate "The fixes are done" ends the round. Before, each issue was 1 step of the user at level 4, and its scope had only the places of the issue.
+44. The user can select the writer of each step at each level: the user, a frame or Claude. The level gives only the first writer. The choice applies to a step that did not start, in the build and in the fixes of stage 6. The level stays as the record of the risk, and the ledger records the choice. A frame for a step with no open decision has 1 to 3 holes in the logic of the step.
 
 The user gave decision 10 on 13 November 2026, and the decisions 11 to 23 on 14 November 2026. The user gave the decisions 24 to 26 on 15 November 2026, and the decisions 27 to 34 on 16 November 2026. The user gave the decisions 35 to 39 on 17 November 2026, and the decisions 40 and 41 on 18 November 2026. Decision 38 applies the research report, which has 82 sources. The decisions 31 to 33 come from 13 frames of the runs of `scripts/test-claude.mjs`. Each of their 27 holes was 1 obvious line, and the text of the step gave most of the answers. Decision 10 changes the buttons of the canvas that started Claude. Section 12 lists these changes.
 
@@ -445,6 +447,7 @@ Each phase ends with its tests, its documents and an item of the changelog. The 
 | 11 Levels and holes | The level from the heat and the open decisions, `insert` for a new data member, and holes for the open decisions | Medium | Phase 10, decisions 31 to 33 |
 | 12 Review | Stage 6: the effort and the focus, the review of Claude with `get_review` and `submit_review`, the 2 lists of issues, and the gate | Large | Phase 10, the decisions 27, 35, 36 and 38 |
 | 13 Issues | The steps of the issues, the feedback, the next rounds, the commit message in stage 6, the measurement, a full test, and release 0.3.0 | Medium | Phase 12, the decisions 37 and 38 |
+| 14 Review flow | The issues page, the plan of the fixes, the fixes as steps of the build, and the writer at each level | Large | Phase 13, the decisions 43 and 44 |
 
 ### Phase 0: spikes
 
@@ -950,6 +953,24 @@ Open items of the measurement:
 - Package: `npm run package` makes `shotgun-0.4.0.vsix`, with 66 files and 305 KB, and its signature `shotgun-0.4.0.vsix.sig`. The signature is correct with the public key of the code.
 - A check of the package: a script installed the VSIX packages of DataFlow 0.7.0 and Shotgun 0.4.0 into a test build of VS Code 1.147.0. All 18 checks passed. The new check finds the updater with the key of the releases, its command and its setting.
 - Full test: the user works with the build of commit 8ee7a0e in a real project. Only the updater and the version changed after that build. The user selected the release of 0.4.0 on GitHub with no other full test.
+
+### Phase 14: the review in the flow of the stages 2 to 5
+
+The design canvas has the prototype: the row "Stage 6: review, in the flow of the stages 2 to 5".
+
+- **Issues:** after the review of a round, the page shows the issues to fix in the sequence of the user (decision 43). The user moves an issue, keeps it for later, closes it with a reason, writes a note for the plan, and adds an issue. The gate "Accept the issues" needs 1 issue to fix or more. With no issue to fix, the gate "The task is done" ends the task.
+- **Plan of the fixes:** the user tells Claude "Plan the fixes.". Claude gives the steps F1, F2 and so on with `submit_fix_plan`. Each step names the issues that it fixes, and each issue to fix has a step. The places, the checks and the open decisions get the checks of `submit_plan`. The rules of stage 4 give the levels. The page shows the plan as the plan page does. The gate is "Accept the fix plan".
+- **Fixes:** the steps of the fixes go in sequence, as the steps of the build, with receipts, frames, callouts and loose ends. The gate of the last step of an issue fixes the issue. The gate "The fixes are done" ends the round, and the next round checks the fixes.
+- **Writer:** the panel shows the writer of the current step. The user can select a different writer at each level (decision 44), also in the build. A frame for a step with no open decision has 1 to 3 holes.
+- **Done when:** the unit tests take a round from the issues through the plan of the fixes to the fixes. A step of level 5 goes to Claude, and a step of level 2 gets a frame, by the choice of the user.
+
+**Status, 24 November 2026:** done, with no commit yet. All 171 unit tests pass. A unit test takes a round from the issues through the plan of the fixes to the fixes, and into round 2. In it, the user gives a step of level 5 to Claude and a frame to a step of level 2. A harness showed the page and the panel for each part of the round, with no error in the console. `scripts/test-claude.mjs` passed all 208 checks with 18 runs of Claude Code, in 14 minutes:
+
+- The review gave 2 confirmed races as issues to fix. The test added the issue U1, a note, a move and a closed issue, and accepted the issues.
+- "Plan the fixes." gave 3 steps: F1 and F2 for the 2 races, and F3 for U1. The user wrote F1, and Claude wrote F2 with a receipt. F3 ended with no code.
+- Round 2 kept I2 as fixed and gave I1 again: the fix stops the solver only in the planning state. It gave 3 new issues for later.
+
+The full test in a real project of the user stays open.
 
 ## 9. Tests
 

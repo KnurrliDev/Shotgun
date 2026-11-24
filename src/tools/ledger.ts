@@ -57,7 +57,7 @@ export function commitMessageData(deps: LedgerDeps): Record<string, unknown> {
 		task: task!.title,
 		steps: (plan?.steps ?? []).map((s) => ({
 			id: s.id, title: s.title, level: levelOf(s, risk, levels).level, state: stateOf(build, s.id), ...(s.looseEnd ? { looseEnd: s.looseEnd } : {}),
-			...(s.issue ? { issue: s.issue } : {}),
+			...(s.issue ? { issue: s.issue } : {}), ...(s.fixes ? { fixes: s.fixes } : {}),
 		})),
 		...(current ? { openSteps: `Step ${current.ref} and later are not done. The message can tell only the work that is done.` } : {}),
 		decisionsOfTheUser: decisions.filter((d) => d.by === 'user').slice(-MAX_DECISIONS).map(decisionText),

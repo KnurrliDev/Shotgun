@@ -44,15 +44,16 @@ This document tells how to do a task with Shotgun and Claude Code. [Install Shot
 19. For an issue or a question, tell Claude "Fix the issues of step N." Then walk the new receipt.
 20. Select **Accept the receipt**.
 21. For a step of level 3, tell Claude "Give me a frame for step N." Each open decision of the step is a hole of the frame. Fill each hole. Then select **The step is done**.
-22. For a step of yours, write its code. Then select **The step is done**. At level 4, you can select **I want a frame** first.
+22. For a step of yours, write its code. Then select **The step is done**. At each level, you can select a different writer for the step: **I write it**, **Frame** or **Claude writes it**.
 23. While you write a step, read the callouts of DataFlow on your lines. Tell Claude "Explain the callout on line N." for the words of Claude. Ask Claude about a line, for example "Does the lambda on line 95 copy charge?".
 24. At the gate of each step, Shotgun gets the loose ends of the step from DataFlow. Hand a mechanical loose end to Claude, and tell Claude "Do the loose ends.".
 25. After the last step, select **The build is done**. The task goes to stage 6, the review.
 26. In the panel, select the effort and the focus of the review. Select **Copy the review prompt**, start a new session of Claude Code, and paste the prompt.
-27. Work through the steps of the issues, as through the steps of the build. Close an issue that is not a problem with **Not a problem** and your reason.
-28. After your fixes, copy the prompt of the next round into a new session. The next round checks the fixes.
-29. Select **The task is done**.
-30. Write the commit message in Source Control. Tell Claude "Check my commit message.". Then commit in Source Control.
+27. On the issues page, put the issues to fix in sequence. Keep an issue for later with **Not now**, close an issue that is not a problem with **Not a problem** and your reason, write a note for the plan, or add an issue of yours. Then select **Accept the issues**.
+28. Tell Claude "Plan the fixes." Check the steps of the fixes and their levels on the page of the fix plan, as on the plan page. Then select **Accept the fix plan**.
+29. Work through the steps of the fixes, as through the steps of the build. Then select **The fixes are done**.
+30. Copy the prompt of the next round into a new session. The next round checks the fixes. With no new issue, select **The task is done**.
+31. Write the commit message in Source Control. Tell Claude "Check my commit message.". Then commit in Source Control.
 
 At any time, click an earlier stage in the stage bar of the panel or of the page to return the task to that stage. You can also run **Shotgun: Return to a Stage...**.
 
@@ -183,9 +184,9 @@ GUI code gets less heat. DataFlow takes a function as GUI code if its class deri
 
 The open decisions of the step change the level of the rules too. A step with no open decision gets at most level 2, but level 5 stays. The next section tells more.
 
-In stage 5, the level selects the writer of the step. At the levels 1 and 2, Claude writes. At level 3, Claude writes a frame with a hole for each decision, and you fill the holes. At the levels 4 and 5, you write, and at level 4 you can ask for a frame. Only you change a level: in stage 4, and in stage 5 for a step that Claude did not start. The ledger records each level and each note of yours.
+In stage 5, the level gives the first writer of the step. At the levels 1 and 2, Claude writes. At level 3, Claude writes a frame with a hole for each decision, and you fill the holes. At the levels 4 and 5, you write. At each level, you can select a different writer on the plan page or in the panel: **I write it**, **Frame** or **Claude writes it**. The level stays, and the ledger records your choice. Only you change a level: in stage 4, and in stage 5 for a step that Claude did not start. The ledger records each level and each note of yours.
 
-In the stages 4 and 5, the text editor shows each place of a step with the color of its level, and a CodeLens line. A click on the CodeLens line shows the step on the page.
+In the stages 4 and 5, the text editor shows each place of a step with the color of its level, and a CodeLens line. In stage 6, it shows the steps of the plan of the fixes in the same way. A click on the CodeLens line shows the step on the page.
 
 ## Open decisions
 
@@ -193,7 +194,7 @@ The plan names the open decisions of each step: 0 to 3 choices that the brief, y
 
 The open decisions select your work:
 
-- A step with no open decision gets at most level 2, so Claude writes it, and you walk the receipt. The heat of the place does not change this.
+- A step with no open decision gets at most level 2, so the level gives Claude as the writer, and you walk the receipt. The heat of the place does not change this.
 - A step with an open decision keeps the level of the heat. At level 3, each open decision is a hole of the frame. At the levels 4 and 5, you write the step.
 - A step of level 5 stays your step, also with no open decision.
 
@@ -232,9 +233,9 @@ You write a step of the levels 3, 4 and 5. Shotgun keeps the text of the files o
 
 ## Frames
 
-A step of level 3 gets a frame. A step of level 4 gets a frame only after you select **I want a frame** in the panel.
+A step of level 3 gets a frame. At each level, you can select **Frame** for a step on the plan page or in the panel. Then the step also gets a frame.
 
-1. You tell Claude "Give me a frame for step N." Claude opens the step with the tool `shotgun_start_step` and the kind `frame`. A frame needs an open decision of the step, so a step with no open decision gets no frame.
+1. You tell Claude "Give me a frame for step N." Claude opens the step with the tool `shotgun_start_step` and the kind `frame`. A step with no open decision gets 1 to 3 holes in its logic, for example a condition with its branch or a loop.
 2. Claude writes all lines of the step that are not the code of an open decision. These are the declarations, the signatures, the calls that the plan names, and the code of each decision that you answered. In the place of the code of each open decision, Claude writes a marker in a comment, for example `/*@hole 1: What happens to the solve that still runs at the limit? */`.
 3. Claude gives the holes with the tool `shotgun_submit_frame`. Each open decision has exactly 1 hole. Each hole has 4 hints: a nudge, a pointer to the facts, an example from the project, and 1 possible answer. Shotgun checks each marker, each place and each decision.
 
@@ -297,9 +298,13 @@ In stage 6, a new session of Claude Code reviews the whole diff of the task. A n
 2. In the panel, select the effort and the focus of the review. You can also write a point of yours, for example "Look at the error paths.".
 3. Select **Copy the review prompt**. Start a new session of Claude Code in the folder of the project, and paste the prompt.
 4. Claude loads the skill `shotgun-review`. Its subagents find the candidates, and a verify pass checks each candidate. Then Claude gives the issues to Shotgun. Claude changes no file.
-5. Work through the steps of the issues. The panel shows the current step with its gate.
-6. After your fixes, select **Copy the prompt of round 2**, and paste it into a new session. The next round checks the fixes.
-7. Select **The task is done**.
+5. On the issues page, put the issues to fix in sequence. Then select **Accept the issues**.
+6. Tell Claude "Plan the fixes.". Check the plan of the fixes on the page. Then select **Accept the fix plan**.
+7. Work through the steps of the fixes, as through the steps of the build. Then select **The fixes are done**.
+8. Select **Copy the prompt of round 2**, and paste it into a new session. The next round checks the fixes.
+9. With no new issue, select **The task is done**.
+
+Each round of the review has these 4 parts, as the stages before it: the review, the issues, the plan of the fixes and the fixes. The panel and the page show the parts of the current round.
 
 The effort sets the finders, the context and the verify pass. It does not set the number of issues.
 
@@ -313,9 +318,9 @@ The effort sets the finders, the context and the verify pass. It does not set th
 
 Above high, a review finds few more issues, but it uses much more time and many more tokens.
 
-A measurement of Shotgun tested the efforts low, medium and high on 11 small changes of 1 to 4 hunks. Of these changes, 7 had 1 known bug each. Each effort found each of these bugs. Low and high put each find into the list of steps. Medium put 2 of its 21 finds into the second list. Medium and high also gave more issues that the test did not plan. A review at low took about 1 minute. A review at medium or high took about 2 minutes, and the CLI gave about 3.7 times the cost of low.
+A measurement of Shotgun tested the efforts low, medium and high on 11 small changes of 1 to 4 hunks. Of these changes, 7 had 1 known bug each. Each effort found each of these bugs. Low and high put each find into the list to fix. Medium put 2 of its 21 finds into the list for later. Medium and high also gave more issues that the test did not plan. A review at low took about 1 minute. A review at medium or high took about 2 minutes, and the CLI gave about 3.7 times the cost of low.
 
-A second measurement used 10 harder changes: bugs across 2 files, bugs in code that the change did not touch, and changes of 135 and 212 lines. Again, each effort found each of the 12 known bugs. Medium and high also found more small real problems that the test did not plan, and more problems that were in the code before the change. They gave no more false alarms in the list of steps than low. A review at medium took about 2 minutes, and the CLI gave about 4 times the cost of low. High gave no more than medium.
+A second measurement used 10 harder changes: bugs across 2 files, bugs in code that the change did not touch, and changes of 135 and 212 lines. Again, each effort found each of the 12 known bugs. Medium and high also found more small real problems that the test did not plan, and more problems that were in the code before the change. They gave no more false alarms in the list to fix than low. A review at medium took about 2 minutes, and the CLI gave about 4 times the cost of low. High gave no more than medium.
 
 Thus low can be enough for a fast check of a change. Medium finds more of the small problems. The 2 measurements used a small project of 543 lines, and did not test a large project.
 
@@ -334,33 +339,44 @@ Each issue has a place, a severity, a verdict, an origin and a failure scenario.
 
 Shotgun puts each issue into 1 of 2 lists:
 
-- The list of steps has the confirmed new issues, the important issues first. It has a cap of 3 issues, plus 1 for each 100 changed lines of the task, with a maximum of 10.
-- The second list has the plausible issues, the issues that were in the code before the task, and the issues above the cap.
+- The list to fix has the confirmed new issues, the important issues first. It has a cap of 3 issues, plus 1 for each 100 changed lines of the task, with a maximum of 10.
+- The list for later has the plausible issues, the issues that were in the code before the task, and the issues above the cap.
 
-**Not a problem** closes an issue with your reason. The ledger keeps the reason, and the next review gets it. Claude names a closed issue or the problem of a closed callout again only with new evidence, and then the issue goes into the second list. **Open again** opens a closed issue. A new review of the same round replaces the open issues of the last review. It keeps the issues that you closed and the steps that you started.
+A new review of the same round replaces the open issues of the last review, before the gate **Accept the issues**. It keeps the issues that you closed.
 
-### The steps of the issues
+### The issues page
 
-Each issue of the list of steps is a step of yours at level 4. The id of the step is the id of the issue, for example I3. The steps of the issues go in sequence, as the steps of the build, and the panel shows the current step with its own gate:
+The issues page shows the list to fix in your sequence, the list for later and the issues that you closed. Shotgun does not move an issue. You can:
 
-- Write the fix of the issue. Then select **The step is done**. Shotgun records your lines, and gives callouts and loose ends, as in the build. The gate fixes the issue.
-- You can ask Claude about the issue in the chat. At level 4, select **I want a frame**, and tell Claude "Give me a frame for step I3.". The frame has a hole for each open decision of the fix.
-- To let Claude fix the issue, select **Lower** on the page until level 2. Then tell Claude "Do step I3.", and walk the receipt.
-- On the page, answer an open decision of the fix in words, or add a decision of yours, as on the plan page.
-- **Make it a step** adds an issue of the second list at the end of the list of steps. **Back to the second list** removes it again, before Claude starts it.
-- **Not a problem** for a started step removes the step. Its changes stay in the files.
+- Move an issue to fix up or down. The plan of the fixes follows your sequence.
+- Select **Not now** to keep an issue to fix for later. **Fix it** puts an issue for later at the end of the list to fix.
+- Select **Not a problem** to close an issue with your reason. The ledger keeps the reason, and the next review gets it. Claude names a closed issue or the problem of a closed callout again only with new evidence, and then the issue goes into the list for later. **Open again** opens a closed issue.
+- Write a note for the plan, for example "Use an atomic.". Claude gets the note with the issue, and obeys it in the plan of the fixes. You can change a note until the gate **Accept the fix plan**.
+- Add an issue of yours, for example a problem that you saw in a test. It gets the id U1, U2 and so on, and Claude finds its places in the plan of the fixes. **Remove** removes it.
+
+If you keep an important new issue that the review confirmed for later, the check of the rule gives a warning. Then a modal message asks you before the gate **Accept the issues**. With no issue to fix, the gate is **The task is done**.
+
+### The plan of the fixes
+
+After the gate **Accept the issues**, tell Claude "Plan the fixes.". Claude reads the code of each issue, and gives the steps of the fixes in your sequence with the tool `shotgun_submit_fix_plan`. Each step names the issues that it fixes. 1 step can fix 2 issues, and 1 issue can need 2 steps. The places of a step are all places that its fix changes, also a file that the issue does not name. The steps have the ids F1, F2 and so on. The numbers go on from the earlier rounds.
+
+The page of the fix plan shows the steps as the plan page of stage 4. Shotgun gives each step a risk level with the rules of stage 4, from the heat of DataFlow and the open decisions. You can answer a decision, add a decision, change a level, and select a different writer. The page also shows the issues of each step. The gate **Accept the fix plan** needs a step for each issue to fix. Before this gate, you can tell Claude what to change, for example "Fix I1 and I3 in 1 step.". Shotgun gives the ids of the steps from their places in the plan. Thus a new plan keeps your level, your writer and your answers only for a step with the same id, the same title and the same issues. To change the issues again, select **Back to the issues** before this gate. Then the plan of the fixes of the round goes away, with your levels, writers and answers for its steps. The ledger keeps your earlier decisions.
+
+### The fixes
+
+The steps of the fixes go in sequence, as the steps of the build. The panel shows the current step with its own gate. The level gives the first writer, and at each level you can select a different writer. Tell Claude, for example, "Do step F2." or "Give me a frame for step F3.". Each step gives callouts and loose ends, as in the build. When each step of an issue is done, the issue is fixed. After the last step, select **The fixes are done**.
 
 ### Rounds
 
-After you fix an issue, the next review is a new round. The panel then shows **Copy the prompt of round 2**. The prompt tells Claude to review the fixes: the hunks that changed since the last round, with their ripple, and each fixed issue. If a fix is not correct, Claude gives its issue again, and the issue is a step again. A correct fix gets no issue.
+After the gate **The fixes are done**, the next review is a new round. The panel then shows **Copy the prompt of round 2**. The prompt tells Claude to review the fixes: the hunks that changed since the last round, with their ripple, and each fixed issue. If a fix is not correct, Claude gives its issue again, and the issue goes into the list to fix again. A correct fix gets no issue.
 
 After 3 rounds, the panel tells you to think about the approach of the task again, for example with a different plan. A modal message asks before it copies the prompt of round 4.
 
 ### Your feedback
 
-Each issue that you fix or close is feedback for the review. For each area of the focus, the page shows the issues of the list of steps that you closed with no action. It counts all tasks of the folder. After 10 decided issues, an area with more than 10% with no action gets the button **Turn off**. It removes the area from the focus of the next review. Your feedback also moves the cap on the steps to the last rank before the issues with no action pass 10%.
+Each issue that you fix or close is feedback for the review. For each area of the focus, the page shows the issues of the list to fix that you closed with no action. It counts all tasks of the folder. After 10 decided issues, an area with more than 10% with no action gets the button **Turn off**. It removes the area from the focus of the next review. Your feedback also moves the cap on the list to fix to the last rank before the issues with no action pass 10%.
 
-The gate **The task is done** never waits. With open issues in the list of steps, a modal message asks first, and the ledger keeps them as open.
+The gate **The task is done** never waits. It is beside the gate of each part of the round. With open issues to fix, a modal message asks first, and the ledger keeps them as open.
 
 ## Return to an earlier stage
 
@@ -374,7 +390,7 @@ You can return the active task to an earlier stage at any time, also a done task
 
 ## The guard
 
-Before each file change of Claude Code, the plugin of Shotgun asks the guard. In the stages 1 to 4 and in stage 6, the guard denies each change of a file of the project. Claude gets the reason. In stage 5, the guard lets Claude change only the files of the scope of its open step. The same rule applies to the step of an issue in stage 6. The ledger records each deny.
+Before each file change of Claude Code, the plugin of Shotgun asks the guard. In the stages 1 to 4 and in stage 6, the guard denies each change of a file of the project. Claude gets the reason. In stage 5, the guard lets Claude change only the files of the scope of its open step. The same rule applies to a step of the fixes in stage 6. The ledger records each deny.
 
 **Pause** stops the guard for work outside of the task, and **Continue** starts it again. The ledger records the pause.
 
@@ -399,10 +415,10 @@ The guard helps you, but it is not a security boundary:
 | Shotgun: Close Question | Closes a question of Claude about the brief. |
 | Shotgun: Answer Question | Gives your answer to a question of the survey. An empty answer removes the answer. |
 | Shotgun: Check the Hooks Again | Gets the facts of DataFlow for the hooks of the survey again, at their lines now. |
-| Shotgun: Set Risk Level | Sets your level for a step of the plan, or sets the level of the rules again. In stage 5, only for a step that Claude did not start. |
+| Shotgun: Set Risk Level | Sets your level for a step of the plan, or sets the level of the rules again. In stage 5, only for a step that Claude did not start. In stage 6, only for a step of the fixes that Claude did not start. |
 | Shotgun: Check the Levels Again | Gets the facts of DataFlow and the levels of the rules for the steps of the plan again. |
 | Shotgun: Mark a Change | Puts your mark on a change of the receipt of the current step, with a note for Claude. |
-| Shotgun: I Want a Frame | Gives the current step of level 4 to Claude as a frame. Then tell Claude "Give me a frame for step N." |
+| Shotgun: I Want a Frame | Gives the current step to Claude as a frame, at each level. Then tell Claude "Give me a frame for step N." |
 | Shotgun: Go to the Next Hole | Selects the next open hole of the frame. |
 | Shotgun: Go to the Hole Before | Selects the open hole before the cursor. |
 | Shotgun: Show the Next Hint | Shows the next hint of the hole at the cursor. The last hint puts the answer of Claude into the hole. |
@@ -452,13 +468,13 @@ When the setting is on, Shotgun gives the STE rules to Claude with each prompt. 
 | `.shotgun/<task>/order.json` | Your order of the tasks: the sequence, your texts, your new tasks, the tasks for later, and the surveys of Claude for the changed tasks. |
 | `.shotgun/<task>/plan.json` | The steps of the plan of Claude, with their open decisions. |
 | `.shotgun/<task>/risk.json` | The facts of DataFlow and the level of the heat for each step. |
-| `.shotgun/<task>/levels.json` | Your levels, your notes, your answers to the open decisions, and your decisions for the steps. |
+| `.shotgun/<task>/levels.json` | Your levels, your notes, your answers to the open decisions, your decisions for the steps, and the writers that you selected. |
 | `.shotgun/<task>/build.json` | The state of each step of the build, its scope and its base. Also the receipt with the notes of Claude and your marks, and the holes of a frame with their hints. |
 | `.shotgun/<task>/lines.json` | The writer of each changed line, with a hash of each line of the file. |
 | `.shotgun/<task>/callouts.json` | The facts of DataFlow at the start of each step, the callouts with your reasons and the words of Claude, and the answers on lines. |
 | `.shotgun/<task>/loose.json` | The loose ends of the steps, with their state, your reasons and the steps of Claude for them. |
 | `.shotgun/<task>/message.json` | The last check of Claude of your commit message. |
-| `.shotgun/<task>/review.json` | The base commit of the task, your effort and focus, and the rounds and the issues of the review, with your reasons. |
+| `.shotgun/<task>/review.json` | The base commit of the task, your effort and focus, and the rounds and the issues of the review, with your reasons. Also your sequence of the issues to fix, your notes, your issues, and the plans of the fixes. |
 | `.shotgun/<task>/decisions.jsonl` | The ledger: 1 line for each decision of the user and for each deny of the guard. |
 | `~/.shotgun/claude` | The plugin of Shotgun for Claude Code, in a local marketplace. |
 | `.claude/settings.local.json` | The local settings of Claude Code in the project. The connection turns the plugin of Shotgun on there. |

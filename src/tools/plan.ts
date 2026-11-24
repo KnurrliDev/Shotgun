@@ -159,7 +159,8 @@ export function stepsData(snapshot: Snapshot): Record<string, unknown>[] {
 			level: l.level,
 			rule: l.rule,
 			...(l.user ? { user: l.user } : {}),
-			writer: l.level ? LEVEL_INFO[l.level].writer : null,
+			// the writer that the user selected comes before the writer of the level (decision 44)
+			writer: levels?.levels[s.id]?.writer ?? (l.level ? LEVEL_INFO[l.level].writer : null),
 			reasons: levelReasons(s, risk, levels),
 			...(decisions ? { decisions } : {}),
 			...(note ? { userNote: note } : {}),

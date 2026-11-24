@@ -68,6 +68,8 @@ export function isFromView(value: unknown): value is FromView {
 				&& m.note.length <= 2000;
 		case 'requestFrame':
 			return typeof m.step === 'string' && m.step.length <= 64;
+		case 'setWriter':
+			return typeof m.step === 'string' && m.step.length <= 64 && (m.writer === null || m.writer === 'claude' || m.writer === 'frame' || m.writer === 'user');
 		case 'setVoice':
 			return isVoice(m.voice);
 		case 'setSteOutput':
@@ -93,9 +95,19 @@ export function isFromView(value: unknown): value is FromView {
 				&& m.areas.every((a) => typeof a === 'string' && a.length <= 16) && typeof m.text === 'string' && m.text.length <= 2000;
 		case 'closeIssue':
 		case 'reopenIssue':
+		case 'removeUserIssue':
 			return typeof m.id === 'string' && m.id.length <= 16;
 		case 'setIssueStep':
 			return typeof m.id === 'string' && m.id.length <= 16 && typeof m.isStep === 'boolean';
+		case 'moveIssue':
+			return typeof m.id === 'string' && m.id.length <= 16 && (m.step === -1 || m.step === 1);
+		case 'setIssueNote':
+			return typeof m.id === 'string' && m.id.length <= 16 && typeof m.note === 'string' && m.note.length <= 2000;
+		case 'addUserIssue':
+			return typeof m.text === 'string' && m.text.length <= 2000;
+		case 'reopenIssues':
+		case 'taskDone':
+			return true;
 		case 'showHint':
 			return typeof m.step === 'string' && m.step.length <= 64 && Number.isInteger(m.hole) && (m.hole as number) >= 1 && Number.isInteger(m.level)
 				&& (m.level as number) >= 1 && (m.level as number) <= 4;

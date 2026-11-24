@@ -27,15 +27,19 @@ export const isChangeMark = (value: unknown): value is ChangeMark => typeof valu
 // claude: an errand of Claude. frame: Claude writes the frame, and the user fills its holes. user: the user writes the step
 export type BuildWriter = 'claude' | 'user' | 'frame';
 
-// The writer of a step in the build. isFrameRequested: the user selected "I want a frame" for a step of level 4
-export function buildWriterOf(level: Level | null, isFrameRequested = false): BuildWriter {
+// The writer of a step in the build. The level gives the first writer, and the user can select a different writer at
+// each level (decision 44). chosen: the writer that the user selected
+export function buildWriterOf(level: Level | null, chosen?: BuildWriter): BuildWriter {
+	if (chosen) {
+		return chosen;
+	}
 	if (level === null) {
 		return 'user';
 	}
 	if (level <= 2) {
 		return 'claude';
 	}
-	return level === 3 || (level === 4 && isFrameRequested) ? 'frame' : 'user';
+	return level === 3 ? 'frame' : 'user';
 }
 
 const MAX_CHANGES = 50;
@@ -148,7 +152,7 @@ export interface BuildStep {
 	readonly receipt?: Receipt;
 	readonly holes?: readonly Hole[]; // the holes of the frame of Claude
 	readonly frameNote?: string; // the note of Claude for the frame
-	readonly isFrameRequested?: boolean; // the user selected "I want a frame" for a step of level 4
+	readonly isFrameRequested?: boolean; // the user selected "I want a frame" in Shotgun 0.4.0 or earlier. Now levels.json keeps the writer
 	readonly done?: string;
 }
 
@@ -161,7 +165,7 @@ export interface BuildFile {
 export interface CurrentStep {
 	readonly step: PlanStep;
 	readonly n: number; // the place of the step in the plan, from 1
-	readonly ref: string; // the step in a text: its number, or the id of the issue for the step of an issue, for example I3
+	readonly ref: string; // the step in a text: its number, or the id of a step of the fixes, for example F2
 	readonly total: number;
 	readonly level: Level | null;
 	readonly writer: BuildWriter;
@@ -174,7 +178,7 @@ export const stateOf = (build: BuildFile | undefined, id: string): StepState => 
 export function currentStep(plan: Plan | undefined, risk: RiskFile | undefined, levels: LevelsFile | undefined, build: BuildFile | undefined)
 	: CurrentStep | undefined {
 	const steps = plan?.steps ?? [];
-	// a started step stays the current step. In stage 6, a new step of an issue can come before it (P22)
+	// a started step stays the current step
 	const started = steps.findIndex((s) => !['todo', 'done'].includes(stateOf(build, s.id)));
 	const n = started >= 0 ? started : steps.findIndex((s) => stateOf(build, s.id) !== 'done');
 	if (n < 0) {
@@ -183,11 +187,15 @@ export function currentStep(plan: Plan | undefined, risk: RiskFile | undefined, 
 	const step = steps[n];
 	const b = build?.steps[step.id];
 	const level = b?.level ?? levelOf(step, risk, levels).level;
-	return { step, n: n + 1, ref: refOf(step, n + 1), total: steps.length, level, writer: b?.writer ?? buildWriterOf(level), state: b?.state ?? 'todo', ...(b ? { build: b } : {}) };
+	return {
+		step, n: n + 1, ref: refOf(step, n + 1), total: steps.length, level, writer: b?.writer ?? buildWriterOf(level, levels?.levels[step.id]?.writer),
+		state: b?.state ?? 'todo', ...(b ? { build: b } : {}),
+	};
 }
 
-// The step in a text: its number in the plan, or the id of the issue for the step of an issue (P22)
-export const refOf = (step: PlanStep, n: number): string => (step.issue ? step.id : String(n));
+// The step in a text: its number in the plan, or the id of a step of the fixes, for example F2 (decision 43), or of the
+// step of an issue of Shotgun 0.4.0 (P22)
+export const refOf = (step: PlanStep, n: number): string => (step.issue || step.fixes ? step.id : String(n));
 
 // The step of a reference of Claude or of the user: the id of a step, or its number in the plan, from 1
 export function findStep(plan: Plan | undefined, ref: unknown): { step: PlanStep; n: number; ref: string } | undefined {
@@ -438,34 +446,41 @@ export function walkText(receipt: Receipt | undefined): string {
 //-------------------
 // The next work, and the rule of the guard
 
-// the name of the current step. The step of an issue of the review has the id of its issue
-const stepName = (current: CurrentStep): string => (current.step.issue ? `the fix of issue ${current.step.id}, "${current.step.title}"`
-	: `step ${current.n} of ${current.total}, "${current.step.title}"`);
-// the step in a request of the user, for example "step 5", or "step I3" for the step of an issue
+// the name of the current step. A step of the fixes names its issues (decision 43)
+const stepName = (current: CurrentStep): string => {
+	const { step } = current;
+	if (step.fixes) {
+		return `step ${step.id} of the fixes, "${step.title}", for ${step.fixes.join(' and ')}`;
+	}
+	return step.issue ? `the fix of issue ${step.id}, "${step.title}"` : `step ${current.n} of ${current.total}, "${step.title}"`;
+};
+// the step in a request of the user, for example "step 5", or "step F2" for a step of the fixes
 const stepRef = (current: CurrentStep): string => `step ${current.ref}`;
 
-// The next work in stage 5, or in stage 6 for the steps of the issues, and the request in words for Claude Code
+// The next work in stage 5, or in stage 6 for the steps of the fixes, and the request in words for Claude Code
 export function buildNext(current: CurrentStep | undefined, isReview = false): { next: string; request?: string } {
 	if (!current) {
 		return {
-			next: isReview ? 'Each step of the issues is done. The user selects "The task is done", or copies the review prompt for the next round.'
+			next: isReview ? 'Each step of the fixes is done. The user selects "The fixes are done", and then copies the prompt of the next round, or '
+				+ 'selects "The task is done".'
 				: 'Each step of the plan is done. The user selects "The build is done".',
 		};
 	}
 	const name = stepName(current);
 	if (current.writer === 'user') {
-		const frame = current.level === 4 ? ' For a frame of Claude, the user selects "I want a frame" first.' : '';
 		return {
 			next: `The user writes ${name}, at risk level ${current.level ?? '?'}, and then selects "The step is done". Claude changes no file in a step `
-				+ `of the user.${frame} Claude can answer questions in the chat.`,
+				+ 'of the user. At each level, the user can select "Frame" or "Claude writes it" in the panel first (decision 44). Claude can answer '
+				+ 'questions in the chat.',
 		};
 	}
 	if (current.writer === 'frame') {
 		switch (current.state) {
 			case 'todo':
 				return {
-					next: `Claude writes the frame of ${name}, at risk level ${current.level ?? '?'}: the lines with no decision, and a hole for each decision `
-						+ 'of the user. The user asks Claude for it. Claude opens the step with shotgun_start_step and the kind frame first.',
+					next: `Claude writes the frame of ${name}, at risk level ${current.level ?? '?'}: the lines with no decision, and a hole for each open `
+						+ 'decision of the step. A step with no open decision gets 1 to 3 holes in its logic. The user asks Claude for it. Claude opens the step '
+						+ 'with shotgun_start_step and the kind frame first.',
 					request: `Give me a frame for ${stepRef(current)}.`,
 				};
 			case 'open':

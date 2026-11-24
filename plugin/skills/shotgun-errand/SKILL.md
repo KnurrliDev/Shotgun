@@ -1,13 +1,13 @@
 ---
 name: shotgun-errand
-description: 'Do a step of the build of the active Shotgun task in stage 5, or the step of an issue in stage 6. Open the step, change only the files of its scope, and give the receipt with a note for each change. Use this skill when the user asks for a step, for example "Do step 5" or "Do step I3". Also use it for a fix after the receipt, for example "Fix the issues of step 5". Also use it for the loose ends that the user handed to you, for example "Do the loose ends".'
+description: 'Do a step of the build of the active Shotgun task in stage 5, or a step of the fixes in stage 6. Open the step, change only the files of its scope, and give the receipt with a note for each change. Use this skill when the user asks for a step, for example "Do step 5" or "Do step F2". Also use it for a fix after the receipt, for example "Fix the issues of step 5". Also use it for the loose ends that the user handed to you, for example "Do the loose ends".'
 ---
 
 # An errand of Shotgun
 
-The build is stage 5 of a Shotgun task. The steps of the plan go in sequence, and the risk level of each step selects its writer. You write a step of risk level 1 or 2: an errand. The user writes a step of risk level 3, 4 or 5.
+The build is stage 5 of a Shotgun task. The steps of the plan go in sequence, and the risk level of each step gives its first writer. You write a step of risk level 1 or 2: an errand. A step of risk level 3 gets a frame, and the user writes a step of risk level 4 or 5. At each level, the user can select a different writer in Shotgun: "I write it", "Frame" or "Claude writes it". The level stays, and the ledger records the choice of the user.
 
-In stage 6, the review, each issue of the list of steps is a step. The id of the step is the id of the issue, for example `I3`. The user writes it at level 4. If the user lowers its level to 1 or 2, you do it as an errand. The text of the step gives the failure scenario of the issue: the fix makes sure that it cannot occur.
+In stage 6, the review, the steps of the fixes go in sequence, as the steps of the build. Their ids are F1, F2 and so on. Each step names the issues that it fixes. Its text and its checks come from the plan of the fixes: the fix makes sure that the failure scenario of each issue cannot occur.
 
 For an errand, you open the step, change the files of its scope, and give a receipt. The user walks the receipt and puts a mark on each change: OK, issue or question. The user then accepts the receipt.
 
@@ -26,9 +26,9 @@ Load all these tools with 1 call of `ToolSearch`, with `select:` and the full na
 
 ## Procedure
 
-1. Call `shotgun_get_session`. Make sure that the stage is 5, or 6 for the step of an issue.
-2. Call `shotgun_get_step` with the step of the request, for example `"step": "5"`. A step has an id, for example `S5`, and a number in the plan. The user names the number. For the step of an issue, the user names the id, for example `"step": "I3"`.
-3. If the writer of the step is the user, stop. Tell the user that the user writes this step. You can answer questions in the chat. If the writer is a frame, use the skill `shotgun-frame`.
+1. Call `shotgun_get_session`. Make sure that the stage is 5, or 6 for a step of the fixes.
+2. Call `shotgun_get_step` with the step of the request, for example `"step": "5"`. A step has an id, for example `S5`, and a number in the plan. The user names the number. For a step of the fixes, the user names the id, for example `"step": "F2"`.
+3. If the writer of the step is the user, stop. Tell the user that the user writes this step, and that the user can select "Claude writes it" in the panel of Shotgun. You can answer questions in the chat. If the writer is a frame, use the skill `shotgun-frame`.
 4. If the step is not the current step, stop. The steps go in sequence. Tell the user the current step.
 5. Call `shotgun_start_step` with the step. Shotgun saves the files of the scope and keeps their text as the base of the step.
 6. Read the code of the places with the tool Read and with the read tools of DataFlow. Read the `decisions` of the step in `shotgun_get_step`. A decision with an `answer` is a choice of the user. A decision with the state `open` is your choice in this step.

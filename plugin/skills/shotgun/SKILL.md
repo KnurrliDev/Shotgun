@@ -13,7 +13,7 @@ The full names of the tools start with `mcp__plugin_dataflow_dataflow__shotgun_`
 
 - Call `shotgun_get_session` first for each request about Shotgun. It gives the active task, its stage, the brief, the rule of the guard and the next work.
 - Give your results only with the tools of Shotgun. Do not change the files in the folder `.shotgun`.
-- The guard of Shotgun stops each change of a file in the stages 1 to 4 and in stage 6. In stage 5, it lets you change only the files of the scope of your open step. The same rule applies to the step of an issue in stage 6. If the guard stops a change, do not try a different way, for example a shell command. Tell the user the reason of the guard.
+- The guard of Shotgun stops each change of a file in the stages 1 to 4 and in stage 6. In stage 5, it lets you change only the files of the scope of your open step. The same rule applies to a step of the fixes in stage 6. If the guard stops a change, do not try a different way, for example a shell command. Tell the user the reason of the guard.
 - A gate is a decision of the user. Only the user selects a gate, with a button of Shotgun. Tell the user which gate comes next.
 - The user can return the task to an earlier stage at any time. Then the task is in that stage again, and the work of the later stages stays. Do a stage again only when the user asks, for example "Survey my brief.".
 - The tools of Shotgun check your data. If a tool gives problems, correct all of them, and call the tool again.
@@ -27,7 +27,7 @@ The full names of the tools start with `mcp__plugin_dataflow_dataflow__shotgun_`
 | 3 Order | The user | The user puts the tasks in sequence. |
 | 4 Plan | You | You make the steps of the plan. Shotgun gives each step a risk level. |
 | 5 Build | The user and you | The risk level of a step selects its writer. |
-| 6 Review | You, then the user | A new session reviews the whole diff of the task. The user works through the issues. |
+| 6 Review | You and the user | A new session reviews the whole diff of the task. The user puts the issues to fix in sequence, you plan the fixes, and the fixes go step by step. |
 
 ## Stage 1: the brief
 
@@ -84,14 +84,16 @@ When the user asks for the plan, for example "Make the plan", use the skill `sho
 
 ## Stage 5: the build
 
-The steps of the plan go in sequence. The risk level of a step selects its writer:
+The steps of the plan go in sequence. The risk level of a step gives its first writer:
 
 | Level | Writer |
 | --- | --- |
 | 1 and 2 | You. The step is an errand with a receipt for the user. You decide its open decisions, and the receipt shows your choices. |
 | 3 | You write a frame, and the user fills a hole for each open decision of the step. |
-| 4 | The user. If the user selects "I want a frame" in the panel of Shotgun, you write a frame. |
+| 4 | The user. |
 | 5 | The user. You change no file in the step, but you can answer questions in the chat. |
+
+At each level, the user can select a different writer in Shotgun: "I write it", "Frame" or "Claude writes it". The level stays, and the ledger records the choice of the user. A frame of a step with no open decision has 1 to 3 holes in the logic of the step.
 
 Use the skill `shotgun-errand` when the user asks for a step, for example "Do step 5". Also use it for a fix, for example "Fix the issues of step 5". Use the skill `shotgun-frame` when the user asks for a frame, for example "Give me a frame for step 4". Do not change a file before `shotgun_start_step` opens the step.
 
@@ -103,11 +105,16 @@ After the last step, the user selects "The build is done". Then the task goes to
 
 ## Stage 6: the review
 
-The review runs in a new session of Claude Code, because a new session did not write the code of the task. The user selects the effort and the focus in the panel of Shotgun. Then the user copies the prompt of the review, and pastes it into a new session. Use the skill `shotgun-review` when the user asks for the review, or when a prompt names the skill `shotgun-review`.
+Each round of the review has 4 parts, as the stages before it:
 
-Each issue of the list of steps is a step of the user, with the id of the issue, for example `I3`. The steps go in sequence, as in the build, and the gate of a step fixes its issue. The user can change the level of the step of an issue, as in the build. Then the skills `shotgun-errand` and `shotgun-frame` apply, for example for "Do step I3" or "Give me a frame for step I3". The user can also make an issue of the second list a step.
+1. The review. It runs in a new session of Claude Code, because a new session did not write the code of the task. The user selects the effort and the focus in Shotgun, copies the prompt of the review, and pastes it into a new session. Use the skill `shotgun-review` when the user asks for the review, or when a prompt names the skill `shotgun-review`.
+2. The issues. The user puts the issues to fix in sequence on the issues page of Shotgun. The user can keep an issue for later, close an issue that is not a problem with a reason, write a note for the plan, and add an issue. Do not change the issues: they are the decisions of the user. Then the user selects "Accept the issues".
+3. The plan of the fixes. When the user asks for it, for example "Plan the fixes", use the skill `shotgun-plan`. Shotgun gives each step of the fixes a risk level, as in stage 4. Then the user selects "Accept the fix plan".
+4. The fixes. The steps of the fixes go in sequence, as in the build, with the ids F1, F2 and so on. The skills `shotgun-errand` and `shotgun-frame` apply, for example for "Do step F2" or "Give me a frame for step F3". After the last step, the user selects "The fixes are done".
 
-The guard stops each change of a file in stage 6. Only an open step of yours for an issue lets you change the files of its scope. The user works through the issues, and closes an issue that is not a problem with a reason. Then the user selects "The task is done".
+The next round reviews the fixes. With no new issue, the user selects "The task is done". The user can select "The task is done" at any time.
+
+The guard stops each change of a file in stage 6. Only an open step of yours for a fix lets you change the files of its scope.
 
 ## The commit message
 

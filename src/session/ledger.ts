@@ -120,7 +120,7 @@ export function ledgerMarkdown(title: string, decisions: readonly string[], rows
 			...(['steps', 'second'] as const).flatMap((list) => {
 				const of = issues.filter((i) => i.list === list);
 				return of.length === 0 ? [] : [
-					list === 'steps' ? 'The list of steps:' : 'The second list:',
+					list === 'steps' ? 'To fix:' : 'For later:',
 					'',
 					...of.map((i) => `- ${i.id} (${i.severity}, ${i.category}): ${i.title}. ${ISSUE_STATE[i.state]}${i.reason ? `: ${i.reason}` : ''}`),
 					'',

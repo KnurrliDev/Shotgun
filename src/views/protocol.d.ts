@@ -30,11 +30,11 @@ export interface TaskView {
 	survey?: SurveyView; // stage 2 and later: the survey of Claude
 	order?: OrderView; // stage 3 and later: the order of the user
 	plan?: PlanView; // stage 4 and later: the plan of Claude with the risk levels
-	build?: BuildView; // stage 5: the steps of the build and the current step. Stage 6: also the steps of the issues (P22)
+	build?: BuildView; // stage 5: the steps of the build and the current step. Stage 6: also the steps of the fixes (decision 43)
 	review?: ReviewView; // stage 6: the effort, the focus and the issues of the review
 	ledger?: LedgerView; // the stages 5 and 6, and after the end of the task: the ledger and the commit message
 	gate?: GateView; // the gate of the stage, if this version of Shotgun has it
-	stepGate?: GateView; // stage 6: the gate of the current step of an issue. Its button posts stepGate
+	stepGate?: GateView; // stage 6: the gate of the current step of the fixes. Its button posts stepGate
 	isDone: boolean;
 	isPaused: boolean;
 }
@@ -202,6 +202,8 @@ export interface StepDecisionView {
 export interface PlanStepView {
 	id: string;
 	n: number; // the place of the step in the plan, from 1
+	ref: string; // the step in a text: its number, or the id of a step of the fixes, for example F2
+	fixes?: string[]; // a step of the plan of the fixes: the ids of the issues that it fixes (decision 43)
 	title: string;
 	task: string; // the id of the task of the order
 	taskText: string;
@@ -214,8 +216,10 @@ export interface PlanStepView {
 	rule: number | null; // the level of the rules
 	user?: number; // the level of the user
 	levelName: string; // for example "High, level 4 of 5"
-	writer?: 'claude' | 'frame' | 'user';
+	writer?: 'claude' | 'frame' | 'user'; // the writer that the user selected, else the writer of the level (decision 44)
 	writerText?: string; // what the level means for the build
+	firstWriter?: 'claude' | 'frame' | 'user'; // the writer of the level
+	isWriterChosen: boolean; // the user selected a writer that is not the writer of the level
 	reasons: string[]; // the rules that gave the level of the rules
 	userNote: string;
 	heat?: PlanHeatView;
@@ -242,8 +246,9 @@ export interface PlanView {
 export interface BuildStepView {
 	id: string;
 	n: number; // the place of the step in the plan, from 1
-	ref: string; // the step in a text: its number, or the id of the issue for the step of an issue, for example I3
-	issue?: string; // the id of the issue for the step of an issue in stage 6
+	ref: string; // the step in a text: its number, or the id of a step of the fixes, for example F2
+	issue?: string; // the id of the issue for the step of an issue in stage 6 of Shotgun 0.4.0
+	fixes?: string[]; // a step of the fixes in stage 6: the ids of the issues that it fixes (decision 43)
 	title: string;
 	level: number | null;
 	levelName: string; // for example "Low, level 2 of 5"
@@ -326,6 +331,7 @@ export interface HoleView {
 // The current step of the build, with its text, its places and its receipt
 export interface CurrentStepView extends BuildStepView {
 	total: number;
+	fixesText?: string; // a step of the fixes: the issues that it fixes, with their titles
 	text: string;
 	checks: string[];
 	places: PlanPlaceView[];
@@ -337,7 +343,9 @@ export interface CurrentStepView extends BuildStepView {
 	holes?: HoleView[]; // the holes of the frame of Claude
 	holesDone?: number; // the holes with code, or with a place that Shotgun cannot find
 	frameNote?: string; // the note of Claude for the frame
-	canRequestFrame: boolean; // a step of level 4 of the user with an open decision: the button "I want a frame" (decision 16)
+	// the user can select the writer of the step: before Claude starts it, at each level (decision 44)
+	canSetWriter: boolean;
+	firstWriter: 'claude' | 'user' | 'frame'; // the writer of the level
 	isFrameRequested: boolean;
 	decisions?: StepDecisionView[]; // the decisions of the step with the answers of the user (decision 31)
 }
@@ -487,23 +495,20 @@ export interface IssueView {
 	reason?: string; // the reason of the user for "Not a problem"
 	evidence?: string; // the new evidence of Claude for an issue that the user closed before
 	round: number;
-	isUserStep?: boolean; // the user made the issue of the second list a step
-	step?: IssueStepView; // the step of an issue of the list of steps that the user did not close (P22)
+	isUserStep?: boolean; // the user put the issue of the second list into the list to fix
 }
 
-// The step of an issue in stage 6: its state in the build, its level and its writer
-export interface IssueStepView {
-	state: 'todo' | 'open' | 'receipt' | 'holes' | 'done';
-	isCurrent: boolean;
-	level: number | null;
-	levelName: string; // for example "High, level 4 of 5"
-	writer: 'claude' | 'user' | 'frame';
-	writerText: string; // for example "You write it"
-	user?: number; // the level of the user
-	heatLevel?: number; // the level that the heat of the places gives. Only a hint: the level of the step is 4 (P22)
-	isLevelEditable: boolean; // a step that Claude did not start: the buttons Lower and Raise, and the answers to the decisions
-	decisions?: StepDecisionView[]; // the open decisions of the fix with the answers of the user, as on the plan page
+// An issue that the user adds on the issues page (decision 43). It has no place: Claude finds it in the plan of the fixes
+export interface UserIssueView {
+	id: string; // U1, U2 and so on
+	text: string;
+	list: 'steps' | 'second';
+	state: 'open' | 'fixed';
+	round: number;
 }
+
+// A row of the issues page (decision 43): an issue of the review or of the user, with the note of the user for the plan
+export type FixRowView = { kind: 'review'; issue: IssueView; note: string } | { kind: 'user'; issue: UserIssueView; note: string };
 
 export interface EffortView {
 	id: string;
@@ -528,9 +533,6 @@ export interface ReviewView {
 	allAreas: AreaView[];
 	maxText: number;
 	maxReason: number;
-	maxAnswer: number; // the limits of the decisions of the steps of the issues
-	maxQuestion: number;
-	maxUserDecisions: number;
 	prompt: string; // the prompt of the review for a new session of Claude Code
 	nextRound: number; // the round of the next review (P23)
 	isNewRound: boolean; // the next review is a new round that checks the fixes
@@ -541,9 +543,22 @@ export interface ReviewView {
 	base?: string; // for example "1a2b3c4, 2 files with changes that were not committed"
 	baseError?: string; // why the review has no base commit
 	round?: { n: number; time: string; effortName: string; areaNames: string[]; cap: number; changedLines: number; note?: string };
-	steps: IssueView[]; // the list of steps
-	second: IssueView[]; // the second list
-	open: number; // the open issues of the list of steps
+	// the flow of the round (decision 43): review, issues, plan of the fixes, fixes
+	phase: 'review' | 'issues' | 'plan' | 'fixes';
+	roundNumber: number; // the current round
+	toFix: FixRowView[]; // the open issues to fix, in the sequence of the user
+	later: FixRowView[]; // the open issues for later: the second list of the review, and the issues that the user keeps for later
+	fixed: FixRowView[]; // the issues that the fixes of a round fixed
+	closedIssues: IssueView[]; // the issues that the user closed with "Not a problem"
+	checks: { text: string; isWarning: boolean }[]; // the check of the rule on the issues page
+	fixPlan?: PlanView; // the plan of the fixes of the round, before and after its gate
+	fixSteps: { done: number; total: number }; // the steps of the fixes of the round
+	maxNote: number; // the note of the user for the plan of the fixes
+	maxUserIssue: number;
+	canEditIssues: boolean; // the issues page before the gate "Accept the issues"
+	canWriteNotes: boolean; // before the gate "Accept the fix plan"
+	taskDone: GateView; // the gate "The task is done", beside the gate of the part of the round
+	open: number; // the open issues to fix
 	closed: number;
 }
 
@@ -638,6 +653,7 @@ export type FromView =
 	| { type: 'setMark'; step: string; change: string; mark: 'todo' | 'ok' | 'issue' | 'question' } // todo: no mark
 	| { type: 'setChangeNote'; step: string; change: string; note: string }
 	| { type: 'requestFrame'; step: string } // the button "I want a frame"
+	| { type: 'setWriter'; step: string; writer: 'claude' | 'frame' | 'user' | null } // null: the writer of the level again (decision 44)
 	| { type: 'showHint'; step: string; hole: number; level: number } // level 4: the answer of Claude fills the hole
 	| { type: 'setVoice'; voice: 'quiet' | 'normal' | 'talkative' }
 	| { type: 'setSteOutput'; isOn: boolean }
@@ -654,5 +670,12 @@ export type FromView =
 	| { type: 'copyReviewPrompt' } // the prompt of the review for a new session of Claude Code
 	| { type: 'closeIssue'; id: string } // "Not a problem": the extension asks for the reason
 	| { type: 'reopenIssue'; id: string }
-	| { type: 'setIssueStep'; id: string; isStep: boolean } // "Make it a step", or "Back to the second list"
-	| { type: 'stepGate' }; // the gate of the current step in stage 6: "The step is done" or "Accept the receipt"
+	| { type: 'setIssueStep'; id: string; isStep: boolean } // "Fix it", or "Not now"
+	| { type: 'stepGate' } // the gate of the current step in stage 6: "The step is done" or "Accept the receipt"
+	// the issues page of stage 6 (decision 43)
+	| { type: 'moveIssue'; id: string; step: -1 | 1 }
+	| { type: 'setIssueNote'; id: string; note: string }
+	| { type: 'addUserIssue'; text: string }
+	| { type: 'removeUserIssue'; id: string }
+	| { type: 'reopenIssues' } // "Back to the issues", before the gate "Accept the fix plan"
+	| { type: 'taskDone' }; // the gate "The task is done" beside the gate of the part of the round

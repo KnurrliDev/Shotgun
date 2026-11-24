@@ -7,6 +7,8 @@ import type { Lines } from './survey';
 // " * " at the start of each line (spike S5). These functions use no VS Code API, so the unit tests can call them.
 
 export const MAX_HOLES = 10;
+// A frame for a step with no open decision, by the choice of the user (decision 44), has 1 to 3 holes in the logic of the step
+export const MAX_FREE_HOLES = 3;
 const MAX_QUESTION = 200;
 const MAX_HINT = 600;
 const MAX_ANSWER = 2000;
@@ -294,8 +296,12 @@ export function checkFrame(raw: Record<string, unknown>, ctx: FrameContext): { h
 	const counts = new Map<number, number>();
 	markers.forEach((m) => counts.set(m.marker.n, (counts.get(m.marker.n) ?? 0) + 1));
 	[...counts].filter(([, c]) => c > 1).forEach(([n]) => problems.push(`The marker of hole ${n} is in the files of the scope ${counts.get(n)} times. Give each hole its own number.`));
+	// a step with no open decision: the holes are in the logic of the step, and they decide no decision (decision 44)
+	const isFree = !!ctx.decisions && ctx.decisions.length === 0;
 	if (markers.length === 0) {
-		problems.push(`The files of the scope have no hole marker. Write a marker /*@hole N: question */ in the place of each decision of the user: ${ctx.scope.join(', ')}.`);
+		problems.push(`The files of the scope have no hole marker. Write a marker /*@hole N: question */ in the place of each hole: ${ctx.scope.join(', ')}.`);
+	} else if (isFree && markers.length > MAX_FREE_HOLES) {
+		problems.push(`The step has no open decision, so its frame has 1 to ${MAX_FREE_HOLES} holes in the logic of the step. The frame has ${markers.length} holes.`);
 	} else if (markers.length > MAX_HOLES) {
 		problems.push(`The frame has ${markers.length} holes. Give a maximum of ${MAX_HOLES} holes.`);
 	}
@@ -326,9 +332,6 @@ export function checkFrame(raw: Record<string, unknown>, ctx: FrameContext): { h
 	const holes: Omit<Hole, 'shown' | 'facts'>[] = [];
 	const given = new Set<number>();
 	const decided = new Set<string>(); // the open decisions with a hole
-	if (ctx.decisions && ctx.decisions.length === 0) {
-		problems.push('The step has no open decision, so a frame has no hole. The user can add a decision on the plan page.');
-	}
 	const raws = Array.isArray(raw.holes) ? raw.holes : [];
 	if (!Array.isArray(raw.holes) || raws.length === 0) {
 		problems.push('Give 1 hole or more in "holes", with the number of the marker of each hole.');
@@ -398,7 +401,7 @@ export function checkFrame(raw: Record<string, unknown>, ctx: FrameContext): { h
 		}
 		// the open decision of the hole (decision 32)
 		const decision = typeof item.decision === 'string' ? item.decision.trim() : '';
-		if (ctx.decisions) {
+		if (ctx.decisions && !isFree) {
 			const ids = ctx.decisions.map((d) => d.id).join(', ');
 			if (!decision) {
 				problems.push(`${label}: give "decision": the id of the open decision of the step that the hole decides (${ids}).`);
@@ -412,7 +415,7 @@ export function checkFrame(raw: Record<string, unknown>, ctx: FrameContext): { h
 		}
 		if (found && question && nudge && pointerText && places.length > 0 && exampleText && examplePlace && code && answer) {
 			holes.push({
-				n, question: found.marker.question, ...(ctx.decisions && decision ? { decision } : {}), file: found.file, line: found.marker.start.line,
+				n, question: found.marker.question, ...(ctx.decisions && !isFree && decision ? { decision } : {}), file: found.file, line: found.marker.start.line,
 				anchor: anchorOf(found.lines, found.marker),
 				hints: {
 					nudge,

@@ -1,6 +1,6 @@
 // The test of Shotgun with Claude Code. It starts the test build of VS Code with DataFlow and Shotgun from their
 // repository folders. In VS Code, it makes a task with "Shotgun: New Task", and connects DataFlow and Shotgun to Claude
-// Code with their commands. Then it runs the prompts of the CLI of Claude Code in print mode, in 15 parts:
+// Code with their commands. Then it runs the prompts of the CLI of Claude Code in print mode, in 17 parts:
 // 1. Task 1: the gate of the empty brief is on, because each part is optional. The sidebar of Shotgun shows the task.
 //    The test writes the brief into brief.md, as the user does. "Ask me questions about my brief." loads the skill
 //    shotgun, and Claude gives its questions with shotgun_submit_questions. The test closes the questions.
@@ -25,11 +25,11 @@
 //    an issue with a note on the receipt in the panel.
 // 8. "Fix the issues of step 2." opens the step again, and Claude gives a new receipt. The test marks each change OK,
 //    and passes "Accept the receipt" (the condition of phase 6).
-// 9. In stage 5, the test sets step 3 to level 4, and selects "I want a frame". "Give me a frame for step 3." loads the
-//    skill shotgun-frame, and Claude gives the frame with shotgun_submit_frame: 1 hole for each open decision of the step,
-//    and no hole that is only a type, a name or a literal (phase 11). The test goes to the holes with Tab and types their
-//    code. The last hole gets the nudge and then the answer of Claude. The gate "The step is done" ends the step (the
-//    condition of phase 7).
+// 9. In stage 5, the test sets step 3 to level 4, and selects the writer "Frame" in the panel (decision 44). "Give me a
+//    frame for step 3." loads the skill shotgun-frame, and Claude gives the frame with shotgun_submit_frame: 1 hole for
+//    each open decision of the step, and no hole that is only a type, a name or a literal (phase 11). The test goes to
+//    the holes with Tab and types their code. The last hole gets the nudge and then the answer of Claude. The gate "The
+//    step is done" ends the step (the condition of phase 7).
 // 10. The test sets step 4 to level 4, and writes a line in process() that makes a race with the worker thread. At the
 //    pause, the race shows as a problem callout (the condition of phase 8). "Explain the callout ..." and a question
 //    about a line load the skill shotgun-explain. The test closes the callout with "Not a problem" and a reason.
@@ -41,22 +41,26 @@
 //    threads, and copies the review prompt. A new run of the CLI gets the prompt and loads the skill shotgun-review.
 //    Claude starts subagents, and gives the issues with shotgun_submit_review. The test checks a refusal through the
 //    bridge (the condition of phase 12).
-// 13. Each issue of the list of steps is a step of the user (phase 13). If the list has fewer than 3 steps, "Make it a
-//    step" adds issues of the second list. A run of Claude Code with no plugins stands in for the user and writes the fix
-//    of the first step. 1 fix can remove 2 issues with 1 cause. Thus for Claude, the test takes the next step with no
-//    line near the lines of the first step. "Not a problem" closes each step in front of it, or else the step after it.
-//    The test lowers the step of Claude to level 2, and "Do step I3." gives an errand of Claude with a receipt in stage 6.
-// 14. The panel copies the prompt of round 2. get_review marks the changed hunks and gives the fixed issues. A new run of
+// 13. The issues page (decision 43). If the list to fix has fewer than 2 issues of the review, "Fix it" adds issues of
+//    the list for later. The test adds an issue of the user, writes a note for the plan, moves an issue, and closes an
+//    issue with "Not a problem". Then it passes the gate "Accept the issues".
+// 14. "Plan the fixes." loads the skill shotgun-plan, and Claude gives the steps F1, F2 and so on with
+//    shotgun_submit_fix_plan. Each issue to fix has a step. On the page of the fix plan, the test selects the writer of the
+//    first 2 steps: the user for step A, and Claude for step B (decision 44). Then it passes "Accept the fix plan".
+// 15. The fixes go step by step, as the build. A run of Claude Code with no plugins stands in for the user and writes
+//    step A. "Do step F2." gives an errand of Claude with a receipt in stage 6. The other steps end with no code. The gate
+//    "The fixes are done" ends round 1.
+// 16. The panel copies the prompt of round 2. get_review marks the changed hunks and gives the fixed issues. A new run of
 //    the CLI reviews the fixes, and checks each fixed issue in a subagent. A correct fix stays fixed. An issue with a
-//    wrong fix comes again with its id, and its step is not done. The closed issue does not come again.
-// 15. The gate "The task is done" ends the task, and Claude checks the commit message again (the condition of phase 13).
+//    wrong fix comes again with its id. The closed issue does not come again.
+// 17. The gate "The task is done" ends the task, and Claude checks the commit message again (the condition of phase 13).
 // The commands write the settings of proposal P15, and the test checks these files. The CLI loads the 2 plugins with
 // --plugin-dir from the folders that the commands wrote. The CLI uses the login and thus the config folder of the user,
 // and a marketplace from settings would go into the plugin data of the user.
 // The settings of the user do not change: the test build has its own user data, MCP registry, folder for the settings
 // of Claude Code and Shotgun folder. The test records the plugin data of Claude Code of the user before the runs, and
 // checks it after them. It removes the empty folders that the CLI makes there.
-// The test uses the Claude subscription of the user for 17 runs of Claude Code, so it runs only on request.
+// The test uses the Claude subscription of the user for 18 runs of Claude Code, so it runs only on request.
 // Usage: node scripts/test-claude.mjs <new run folder>
 // Environment: DATAFLOW_REPO (default: ../DataFlow), CLAUDE_EXE (default: the CLI of the VS Code extension of Claude Code)
 import { execFileSync, spawn } from 'node:child_process';
@@ -96,11 +100,12 @@ const GET_COMMIT_MESSAGE = 'mcp__plugin_dataflow_dataflow__shotgun_get_commit_me
 const SUBMIT_MESSAGE_CHECK = 'mcp__plugin_dataflow_dataflow__shotgun_submit_message_check';
 const GET_REVIEW = 'mcp__plugin_dataflow_dataflow__shotgun_get_review';
 const SUBMIT_REVIEW = 'mcp__plugin_dataflow_dataflow__shotgun_submit_review';
+const SUBMIT_FIX_PLAN = 'mcp__plugin_dataflow_dataflow__shotgun_submit_fix_plan';
 // The read tools of DataFlow for the survey
 const READ_TOOLS = ['list_functions', 'get_outline', 'get_place', 'get_callers', 'get_calls', 'get_threads', 'get_heat', 'get_flow', 'get_logic',
 	'get_structure', 'get_member_sites', 'get_includes', 'get_call_graph', 'get_hidden'].map((t) => `mcp__plugin_dataflow_dataflow__${t}`);
 // The number of the tools of Shotgun in the MCP server of DataFlow
-const SHOTGUN_TOOLS = 21;
+const SHOTGUN_TOOLS = 22;
 // The brief of task 1, as the user writes it in brief.md
 const BRIEF_1 = [
 	`# Brief: ${TITLE}`, '',
@@ -119,9 +124,10 @@ const CHAT_PROMPT = 'Here is my brief for a new Shotgun task, a log line for the
 // The parser of the brief of Shotgun, from the build. The test runs after "npm run compile"
 const { foreignLines, parseBrief } = createRequire(import.meta.url)(path.join(repo, 'out', 'session', 'brief.js'));
 // The rules of the levels with the open decisions, and the check of an obvious hole (phase 11)
-const { levelOf, openDecisions } = createRequire(import.meta.url)(path.join(repo, 'out', 'session', 'plan.js'));
+const { levelOf, openDecisions, stepWriterOf } = createRequire(import.meta.url)(path.join(repo, 'out', 'session', 'plan.js'));
 const { isObviousAnswer } = createRequire(import.meta.url)(path.join(repo, 'out', 'session', 'frame.js'));
-const { reviewPrompt } = createRequire(import.meta.url)(path.join(repo, 'out', 'session', 'review.js'));
+// the parts of a round of the review and the issues to fix in the sequence of the user (decision 43)
+const { reviewPhase, reviewPrompt, toFix } = createRequire(import.meta.url)(path.join(repo, 'out', 'session', 'review.js'));
 const hashOf = (file) => createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 
 //-------------------
@@ -1120,8 +1126,8 @@ async function main() {
 		check('The panel shows step 3 after the gate', steps.length < 3 || !!text, await panelText());
 		await wb.shot('panel-build-step-3.png');
 
-		// 9: a frame of Claude for step 3 (phase 7). In stage 5, the user sets step 3 to level 4 (decision 17), and selects
-		// "I want a frame" (decision 16). Then "Give me a frame for step 3." loads the skill shotgun-frame
+		// 9: a frame of Claude for step 3 (phase 7). In stage 5, the user sets step 3 to level 4 (decision 17), and selects the
+		// writer "Frame" (decision 44). Then "Give me a frame for step 3." loads the skill shotgun-frame
 		const s3 = steps[2];
 		// step 3 can be open for the user already. The new level opens it again, so the test waits for the new open
 		const levelTime3 = Date.now();
@@ -1135,19 +1141,25 @@ async function main() {
 		}, 30);
 		check('In stage 5, "Shotgun: Set Risk Level" sets step 3 to level 4, and Shotgun opens it for the user', !!opened3,
 			{ levels: readJson(taskFile(TASK_1, 'levels.json')), build: buildOf()?.steps?.[s3.id] });
-		text = await poll(async () => (await panelText())?.includes('I want a frame') && true, 15);
-		check('The panel shows the button "I want a frame" for the step of level 4', !!text, await panelText());
+		text = await poll(async () => {
+			const t = await panelText();
+			return t && ['I write it', 'Frame', 'Claude writes it'].every((x) => t.includes(x)) ? t : undefined;
+		}, 15);
+		check('The panel shows the writers of the step of level 4: "I write it", "Frame" and "Claude writes it"', !!text, await panelText());
 		await inWebview('.panel', `() => {
-			const b = [...d.querySelectorAll('.frame-request button')].find((x) => x.textContent.includes('I want a frame'));
+			const b = [...d.querySelectorAll('.writer-choice button')].find((x) => x.textContent.trim() === 'Frame');
 			b?.click();
 			return !!b;
 		}`);
+		// the step of the user had a base. The new writer removes the state of the step, so it is a frame of Claude to do
 		const requested = await poll(() => {
+			const l = levelsNow()?.levels?.[s3.id];
 			const b = buildOf()?.steps?.[s3.id];
-			return b?.isFrameRequested && b.writer === 'frame' && b.state === 'todo' ? b : undefined;
+			return l?.writer === 'frame' && l.level === 4 && (!b || b.state === 'todo') ? l : undefined;
 		}, 15);
-		check('The button records the decision of the user, and step 3 becomes a frame of Claude', !!requested
-			&& ledgerOf(TASK_1).some((d) => d.kind === 'frame-request' && d.step === s3.id), buildOf()?.steps?.[s3.id]);
+		check('The button records the writer of the user, the level stays 4, and step 3 becomes a frame of Claude', !!requested
+			&& ledgerOf(TASK_1).some((d) => d.kind === 'writer' && d.step === s3.id && d.writer === 'frame'),
+		{ levels: levelsNow()?.levels?.[s3.id], build: buildOf()?.steps?.[s3.id] });
 		text = await poll(async () => (await panelText())?.includes('Give me a frame for step 3.') && true, 15);
 		check('The panel shows the request "Give me a frame for step 3."', !!text, await panelText());
 		await wb.shot('panel-frame-request.png');
@@ -1281,8 +1293,8 @@ async function main() {
 		results.frame.lines = runsOfStep3();
 		const kinds3 = ledgerOf(TASK_1).map((d) => d.kind);
 		// a frame with only 1 hole gets no hints: the test types the code of its hole
-		check('The ledger records the frame request, the frame, the hints and the gate of step 3',
-			['frame-request', 'frame', ...(holes3.length > 1 ? ['hint'] : [])].every((k) => kinds3.includes(k))
+		check('The ledger records the writer of the user, the frame, the hints and the gate of step 3',
+			['writer', 'frame', ...(holes3.length > 1 ? ['hint'] : [])].every((k) => kinds3.includes(k))
 			&& kinds3.filter((k) => k === 'step-gate').length === 3, kinds3);
 		await wb.shot('panel-build-step-4.png');
 
@@ -1637,207 +1649,337 @@ async function main() {
 		check('Shotgun refuses an issue outside of the diff of the task', refusedOutside.isError && /not in the diff of the task/.test(refusedOutside.text ?? '')
 			&& reviewNow()?.issues?.length === issues.length, refusedOutside);
 
-		// the 2 lists in the panel and on the page
-		const openSteps = () => (reviewNow()?.issues ?? []).filter((i) => i.list === 'steps' && i.state === 'open');
-		const steps6 = issues.filter((i) => i.list === 'steps' && i.state === 'open');
-		const first6 = steps6[0] ?? issues[0];
+		// the lists of the review in the panel and on the issues page (decision 43)
+		const phaseNow = () => reviewPhase(reviewNow());
+		const toFixIds = () => toFix(reviewNow()).map((x) => x.issue.id);
+		// an issue of the review or of the user, by its id
+		const issueOf = (id) => reviewNow()?.issues?.find((i) => i.id === id) ?? reviewNow()?.userIssues?.find((u) => u.id === id);
+		const toFix6 = issues.filter((i) => i.list === 'steps' && i.state === 'open');
+		const first6 = toFix6[0] ?? issues[0];
+		check('After the review, round 1 is at the issues page', phaseNow().phase === 'issues' && phaseNow().round === 1, phaseNow());
 		text = await poll(async () => {
 			const t = await panelText();
-			return t && /list of steps/i.test(t) && t.includes(first6?.title ?? '?') ? t : undefined;
+			return t && t.includes('Show the issues') && /to fix/.test(t) ? t : undefined;
 		}, 20);
-		check('The panel shows the list of steps of the review', !steps6.length || !!text, await panelText());
+		check('The panel shows the issues to fix and the button "Show the issues"', !!text, await panelText());
 		await wb.shot('panel-review.png');
 		await command(wb, 'Shotgun: Show Page');
 		text = await poll(async () => {
 			const t = await pageText();
-			return t && /second list/i.test(t) && t.includes(first6?.title ?? '?') ? t : undefined;
+			return t && /to fix/i.test(t) && /for later/i.test(t) && t.includes(first6?.title ?? '?') ? t : undefined;
 		}, 20);
-		check('The page shows the 2 lists of the review', !!text, await pageText());
-		await wb.shot('page-review.png');
-		// a button of the card of an issue on the page
-		const clickIssue = (id, label) => inWebview('.page', `() => {
-			const card = [...d.querySelectorAll('.issue')].find((x) => x.querySelector('.id')?.textContent === ${JSON.stringify(id)});
-			const b = card && [...card.querySelectorAll('button')].find((x) => x.textContent.includes(${JSON.stringify(label)}));
+		check('The issues page shows the list to fix and the list for later', !!text, await pageText());
+		await wb.shot('page-issues.png');
+		// a button of a row of the issues page: the text of the button, or its label for a button with an icon
+		const clickRow = (id, label) => inWebview('.page', `() => {
+			const row = [...d.querySelectorAll('.order-row')].find((x) => x.querySelector('.id')?.textContent === ${JSON.stringify(id)});
+			const b = row && [...row.querySelectorAll('button')].find((x) => x.textContent.trim() === ${JSON.stringify(label)}
+				|| x.getAttribute('aria-label') === ${JSON.stringify(label)});
 			b?.click();
 			return !!b;
 		}`);
+		// the first enabled button of a gate in the panel with a text that the expression finds
 		const clickPanelGate = (label) => inWebview('.panel', `() => {
-			const b = [...d.querySelectorAll('.gate button')].find((x) => x.textContent.includes(${JSON.stringify(label)}));
+			const b = [...d.querySelectorAll('.gate button')].find((x) => new RegExp(${JSON.stringify(label)}).test(x.textContent) && !x.disabled);
 			b?.click();
 			return !!b;
 		}`);
-
-		// 13: each issue of the list of steps is a step of the user (phase 13). The test needs 3 steps. If the list of steps has
-		// fewer, "Make it a step" adds issues of the second list
-		for (const extra of issues.filter((i) => i.list === 'second' && i.state === 'open').slice(0, Math.max(0, 3 - steps6.length))) {
-			await clickIssue(extra.id, 'Make it a step');
-			await poll(() => reviewNow()?.issues?.find((i) => i.id === extra.id && i.list === 'steps'), 10);
-		}
-		const made = ledgerOf(TASK_1).filter((d) => d.kind === 'issue-step');
-		if (made.length > 0) {
-			check('"Make it a step" puts an issue of the second list into the list of steps, and the ledger records it', made.every((d) => d.isStep
-				&& reviewNow()?.issues?.find((i) => i.id === d.issue)?.isUserStep), made);
-		}
-		// A: Shotgun opens the first step for the user at level 4. A run of Claude Code with no plugins stands in for the user
-		const fixA = openSteps()[0];
-		check('The review gives at least 1 step of an issue', !!fixA, reviewNow()?.issues);
-		if (fixA) {
-			const openedA = await poll(() => (buildOf()?.steps?.[fixA.id]?.state === 'open' ? buildOf().steps[fixA.id] : undefined), 30);
-			check(`Shotgun opens step ${fixA.id} of the issue for the user at level 4`, openedA?.writer === 'user' && openedA?.level === 4, buildOf()?.steps?.[fixA.id]);
-			text = await poll(async () => {
-				const t = await panelText();
-				return t && new RegExp(`step ${fixA.id}`, 'i').test(t) && t.includes('The step is done') ? t : undefined;
-			}, 15);
-			check(`The panel shows step ${fixA.id} with its own gate "The step is done"`, !!text, await panelText());
-			await wb.shot('panel-issue-step.png');
-			const scopeA = openedA?.scope ?? [fixA.place.file];
-			const beforeA = fileHashes();
-			const userFix = await runClaude('issue-user', [
-				`You stand in for the user of this project. Fix this issue of a code review: ${fixA.title}. ${fixA.summary}`,
-				`Trigger: ${fixA.scenario.trigger} Path: ${fixA.scenario.path} Result: ${fixA.scenario.result}`,
-				`The issue is at ${fixA.place.file}:${fixA.place.lines[0]}. Change only these files: ${scopeA.join(', ')}. Do not build or run the code.`,
-			].join(' '), { tools: ['Read', 'Edit', 'Write', 'Grep', 'Glob'], maxTurns: 20, seconds: 300, plugins: false });
-			const changedA = [...fileHashes()].filter(([f, h]) => beforeA.get(f) !== h).map(([f]) => f);
-			check(`A run of Claude Code with no plugins stands in for the user, and writes the fix of ${fixA.id}`, changedA.length > 0,
-				{ changedA, result: userFix.result.slice(0, 300) });
-			if (changedA.length === 0) {
-				const fileA = path.join(p.project, fixA.place.file);
-				const t = fs.readFileSync(fileA, 'utf8').split('\n');
-				t.splice(fixA.place.lines[0] - 1, 0, '// The user wrote this line in the fix of the issue.');
-				fs.writeFileSync(fileA, t.join('\n'));
-			}
-			await sleep(1500);
-			await clickPanelGate('The step is done');
-			const fixedA = await poll(() => reviewNow()?.issues?.find((i) => i.id === fixA.id && i.state === 'fixed'), 20);
-			check(`The gate "The step is done" ends step ${fixA.id}, and the issue is fixed`, buildOf()?.steps?.[fixA.id]?.state === 'done' && !!fixedA?.fixed,
-				{ step: buildOf()?.steps?.[fixA.id], issue: reviewNow()?.issues?.find((i) => i.id === fixA.id) });
-			const linesA = await poll(() => {
-				const runs = Object.values(readJson(taskFile(TASK_1, 'lines.json'))?.files ?? {}).flatMap((x) => x.runs ?? []);
-				return runs.some((r) => r.writer === 'user' && r.step === fixA.id) ? runs : undefined;
-			}, 10);
-			check(`lines.json records the lines of the user in step ${fixA.id}`, !!linesA, readJson(taskFile(TASK_1, 'lines.json')));
-		}
-
-		// "Not a problem" closes an issue with a reason, and a started step of the issue goes away. The test checks the first
-		// close
-		const reason6 = 'The test closes this issue on purpose.';
-		let closeC;
-		const closeIssue = async (issue) => {
-			await poll(() => (issue.list === 'steps' ? buildOf()?.steps?.[issue.id]?.state === 'open' : true) || undefined, 20);
-			await clickIssue(issue.id, 'Not a problem');
-			await quickInput(wb, reason6, 'Not a Problem');
-			const closed6 = await poll(() => reviewNow()?.issues?.find((i) => i.id === issue.id && i.state === 'closed'), 15);
-			if (!closeC) {
-				closeC = issue;
-				check('"Not a problem" closes an issue of the review, the ledger keeps the reason of the user, and the started step goes away',
-					closed6?.closed?.reason === reason6 && !buildOf()?.steps?.[issue.id]
-						&& ledgerOf(TASK_1).some((d) => d.kind === 'issue-close' && d.issue === issue.id && d.reason === reason6), { closed6, step: buildOf()?.steps?.[issue.id] });
-			}
+		// types a text into a field of the page, and then pushes Enter. The field shows the text only after the next render
+		const typeInPage = async (selector, value) => {
+			await inWebview('.page', `() => {
+				const input = d.querySelector(${JSON.stringify(selector)});
+				if (!input) { return false; }
+				input.value = ${JSON.stringify(value)};
+				input.dispatchEvent(new d.defaultView.Event('input', { bubbles: true }));
+				return true;
+			}`);
+			await sleep(400);
+			return inWebview('.page', `() => {
+				const input = d.querySelector(${JSON.stringify(selector)});
+				input?.dispatchEvent(new d.defaultView.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+				return !!input;
+			}`);
 		};
 
-		// B: the user lowers the level of a step to 2 on the page. Claude fixes the issue as an errand with a receipt. 1 fix
-		// can remove 2 issues with 1 cause. Thus the test takes the first open step with no line near a line of step A, and
-		// "Not a problem" closes each open step in front of it (C)
-		const regionsOf = (i) => [i.place, ...(i.fixPlaces ?? [])].map((x) => ({ file: x.file, first: x.lines[0], last: x.lines[1] ?? x.lines[0] }));
-		const isNearIssue = (x, y) => regionsOf(x).some((a) => regionsOf(y).some((b) => a.file === b.file && a.first <= b.last + 3 && b.first <= a.last + 3));
-		const open6 = openSteps();
-		const fixB = open6.find((i) => !fixA || !isNearIssue(i, fixA)) ?? open6[0];
-		const inFront = fixB ? open6.slice(0, open6.findIndex((i) => i.id === fixB.id)) : [];
-		if (inFront.length > 0) {
-			console.log(`INFO The steps ${inFront.map((i) => i.id).join(', ')} have a line near a line of step ${fixA?.id}. "Not a problem" closes them before step ${fixB.id}`);
+		// 13: the issues page (decision 43). The test needs 2 issues of the review to fix. If the list to fix has fewer, "Fix
+		// it" puts issues of the list for later at its end. The race of the closed callout stays for later
+		const isClosedRace = (i) => closedRace.some((c) => c.id === i.id);
+		for (const extra of issues.filter((i) => i.list === 'second' && i.state === 'open' && !isClosedRace(i)).slice(0, Math.max(0, 2 - toFix6.length))) {
+			await clickRow(extra.id, 'Fix it');
+			await poll(() => toFixIds().includes(extra.id) || undefined, 10);
 		}
-		for (const issue of inFront) {
-			await closeIssue(issue);
+		const fixIt = ledgerOf(TASK_1).filter((d) => d.kind === 'issue-step');
+		if (fixIt.length > 0) {
+			check('"Fix it" puts an issue of the list for later at the end of the list to fix, and the ledger records it',
+				fixIt.every((d) => d.isStep && toFixIds().includes(d.issue)), { fixIt, toFix: toFixIds() });
 		}
-		if (fixB) {
-			for (const level of [3, 2]) {
-				await poll(() => clickIssue(fixB.id, 'Lower'), 10);
-				await poll(() => levelsNow()?.levels?.[fixB.id]?.level === level || undefined, 10);
+		// an issue of the user. It gets the id U1, and Claude finds its places in the plan of the fixes
+		const USER_ISSUE = 'The struct OperationalSettings in include/battery/types.hpp has no comment that tells the unit of each limit.';
+		await typeInPage('.order-add input', USER_ISSUE);
+		const u1 = await poll(() => reviewNow()?.userIssues?.find((u) => u.text === USER_ISSUE), 15);
+		check('An issue of the user goes to the end of the list to fix with the id U1, and the ledger records it', u1?.id === 'U1' && toFixIds().at(-1) === 'U1'
+			&& ledgerOf(TASK_1).some((d) => d.kind === 'user-issue' && d.issue === 'U1' && d.action === 'add'), { userIssues: reviewNow()?.userIssues, toFix: toFixIds() });
+		// a note of the user for the plan of the fixes, on the first issue to fix
+		const NOTE_6 = 'Keep the fix small, and change no signature of a function.';
+		// the first row of the list to fix is the first row with a note field. The rows of the list for later have no note
+		const noteId = toFixIds()[0];
+		await typeInPage('.fix-row .note-field input', NOTE_6);
+		const noted = await poll(() => reviewNow()?.notes?.[noteId] === NOTE_6 || undefined, 15);
+		check('A note of the user for the plan goes into review.json, and the ledger records it', !!noted
+			&& ledgerOf(TASK_1).some((d) => d.kind === 'issue-note' && d.issue === noteId && d.text === NOTE_6), reviewNow()?.notes);
+		// the user moves the issue of the user up 1 place. Shotgun does not move an issue
+		const beforeMove = toFixIds();
+		if (beforeMove.indexOf('U1') > 0) {
+			await clickRow('U1', 'Move U1 up');
+			const moved = await poll(() => (toFixIds().indexOf('U1') === beforeMove.indexOf('U1') - 1 ? toFixIds() : undefined), 10);
+			check('The user moves an issue up, and the ledger records its new place', !!moved
+				&& ledgerOf(TASK_1).some((d) => d.kind === 'issue-move' && d.issue === 'U1' && d.position === beforeMove.indexOf('U1')), { beforeMove, now: toFixIds() });
+		}
+		// "Not a problem" closes an issue with a reason: the last issue of the review to fix if there are 3, else an issue for
+		// later
+		const reason6 = 'The test closes this issue on purpose.';
+		const reviewToFix = toFixIds().filter((id) => /^I\d+$/.test(id));
+		const closeC = (reviewToFix.length >= 3 ? issueOf(reviewToFix.at(-1)) : undefined)
+			?? (reviewNow()?.issues ?? []).find((i) => i.list === 'second' && i.state === 'open');
+		if (closeC) {
+			await clickRow(closeC.id, 'Not a problem');
+			await quickInput(wb, reason6, 'Not a Problem');
+			const closed6 = await poll(() => reviewNow()?.issues?.find((i) => i.id === closeC.id && i.state === 'closed'), 15);
+			check('"Not a problem" closes an issue of the review, and the ledger keeps the reason of the user', closed6?.closed?.reason === reason6
+				&& !toFixIds().includes(closeC.id) && ledgerOf(TASK_1).some((d) => d.kind === 'issue-close' && d.issue === closeC.id && d.reason === reason6), closed6);
+		}
+		await wb.shot('page-issues-done.png');
+		// the gate "Accept the issues". A modal message asks first if an important new issue that the review confirmed is for
+		// later
+		const toFixAtGate = toFixIds();
+		await poll(() => clickPanelGate('^Accept (the issues|with)'), 15);
+		await poll(() => clickDialog(wb, 'Accept the Issues'), 3);
+		const accepted6 = await poll(() => (phaseNow().phase === 'plan' ? reviewNow() : undefined), 20);
+		check('The gate "Accept the issues" records the issues to fix in the sequence of the user, and the round goes to the plan of the fixes',
+			!!accepted6?.rounds?.[0]?.accepted && JSON.stringify(toFix(accepted6).map((x) => x.issue.id)) === JSON.stringify(toFixAtGate)
+				&& ledgerOf(TASK_1).some((d) => d.kind === 'review-gate' && d.gate === 'accept-issues' && d.count === toFixAtGate.length), { phase: phaseNow(), toFixAtGate });
+		text = await poll(async () => (await panelText())?.includes('Plan the fixes.') && true, 15);
+		check('After the gate, the panel shows the request "Plan the fixes."', !!text, await panelText());
+
+		// 14: the plan of the fixes (decision 43). "Plan the fixes." loads the skill shotgun-plan, and Claude gives the steps
+		// of the fixes with shotgun_submit_fix_plan. The rules of stage 4 give their levels
+		const changesBefore14 = gitChanges();
+		const fixPlanRun = await runClaude('fix-plan', 'Plan the fixes.', {
+			tools: [GET_SESSION, GET_REVIEW, SUBMIT_FIX_PLAN, GET_PLAN, 'Skill', 'Read', 'Grep', 'Glob', ...READ_TOOLS], maxTurns: 40, seconds: 900,
+		});
+		const fixPlanNames = fixPlanRun.toolUses.map((t) => t.name);
+		check('"Plan the fixes." loads the skill shotgun-plan', fixPlanRun.toolUses.some((t) => t.name === 'Skill' && String(t.input?.skill).includes('shotgun-plan')),
+			fixPlanNames);
+		const fixPlan = reviewNow()?.fixPlans?.find((x) => x.round === 1);
+		const fixSteps = fixPlan?.steps ?? [];
+		check('Claude reads the issues to fix with shotgun_get_review, gives the plan with shotgun_submit_fix_plan, and changes no file',
+			fixPlanNames.includes(GET_REVIEW) && fixPlanNames.includes(SUBMIT_FIX_PLAN) && fixSteps.length > 0 && JSON.stringify(gitChanges()) === JSON.stringify(changesBefore14),
+			{ fixPlanNames, result: fixPlanRun.result.slice(0, 300), changes: gitChanges() });
+		const refusedFixPlans = fixPlanRun.toolResults.filter((r) => r.isError && r.text.includes('did not take the plan of the fixes')).length;
+		if (refusedFixPlans > 0) {
+			results.notes = [...(results.notes ?? []), `Shotgun refused ${refusedFixPlans} plan of the fixes of Claude before it took the plan.`];
+			console.log(`NOTE Shotgun refused ${refusedFixPlans} plan of the fixes of Claude before it took the plan.`);
+		}
+		results.fixPlan = fixSteps.map((s) => `${s.id} [${(s.fixes ?? []).join(', ')}] ${s.places.map((pl) => `${pl.file}:${pl.lines?.[0] ?? 'new'}`).join(' ')} ${s.title}`);
+		console.log(`INFO The plan of the fixes: ${JSON.stringify(results.fixPlan)}`);
+		check('The steps of the fixes have the ids F1, F2 and so on, and each issue to fix has a step', fixSteps.every((s, i) => s.id === `F${i + 1}`)
+			&& toFixAtGate.every((id) => fixSteps.some((s) => (s.fixes ?? []).includes(id))), results.fixPlan);
+		check('The ledger records the plan of the fixes', ledgerOf(TASK_1).some((d) => d.kind === 'fix-plan' && d.round === 1 && d.steps === fixSteps.length),
+			ledgerOf(TASK_1).filter((d) => d.kind === 'fix-plan'));
+		// the levels of the rules. A step with no level yet gets a level of the user
+		const riskNow = () => readJson(taskFile(TASK_1, 'risk.json'));
+		const withLevels = await poll(() => (fixSteps.every((s) => levelOf(s, riskNow(), levelsNow()).level !== null) ? true : undefined), 30);
+		if (!withLevels) {
+			console.log(`NOTE The steps ${fixSteps.filter((s) => levelOf(s, riskNow(), levelsNow()).level === null).map((s) => s.id).join(', ')} have no level of the rules.`);
+		}
+		check('The rules give each step of the fixes a level, as in stage 4', !!withLevels, fixSteps.map((s) => `${s.id} ${levelOf(s, riskNow(), levelsNow()).level}`));
+		await command(wb, 'Shotgun: Show Page');
+		text = await poll(async () => {
+			const t = await pageText();
+			return t && /fix plan/i.test(t) && fixSteps.every((s) => t.includes(s.title)) ? t : undefined;
+		}, 20);
+		check('The page of the fix plan shows the steps of the fixes', !!text, await pageText());
+		await wb.shot('page-fix-plan.png');
+
+		// the writer at each level (decision 44): the user writes step A, and Claude writes step B. The page shows the writers
+		// of the selected step. A step with no level gets level 3 first, because the page shows no writer before a level
+		const stepA = fixSteps[0];
+		const stepB = fixSteps[1];
+		const writerNow = (s) => stepWriterOf(s, riskNow(), levelsNow());
+		const selectWriter = async (step, label) => {
+			if (levelOf(step, riskNow(), levelsNow()).level === null) {
+				await command(wb, 'Shotgun: Set Risk Level');
+				await quickPickNth(wb, 'Shotgun: Set Risk Level', fixSteps.indexOf(step));
+				await quickPickNth(wb, 'Shotgun: Set Risk Level of', 2);
+				await poll(() => levelsNow()?.levels?.[step.id]?.level || undefined, 15);
 			}
-			check(`"Lower" on the page sets step ${fixB.id} to level 2, so Claude writes it`, levelsNow()?.levels?.[fixB.id]?.level === 2, levelsNow()?.levels?.[fixB.id]);
-			text = await poll(async () => (await panelText())?.includes(`Do step ${fixB.id}.`) && true, 15);
-			check(`The panel shows the request "Do step ${fixB.id}."`, !!text, await panelText());
+			await poll(() => inWebview('.page', `() => {
+				const row = [...d.querySelectorAll('.step-row')].find((x) => x.querySelector('.step-num')?.textContent === ${JSON.stringify(step.id)});
+				row?.click();
+				return !!row;
+			}`), 10);
+			await sleep(600);
+			return poll(() => inWebview('.page', `() => {
+				const b = [...d.querySelectorAll('.writer-choice button')].find((x) => x.textContent.trim() === ${JSON.stringify(label)});
+				b?.click();
+				return !!b;
+			}`), 10);
+		};
+		await selectWriter(stepA, 'I write it');
+		await poll(() => writerNow(stepA) === 'user' || undefined, 10);
+		if (stepB) {
+			await selectWriter(stepB, 'Claude writes it');
+			await poll(() => writerNow(stepB) === 'claude' || undefined, 10);
+		}
+		check('On the page of the fix plan, the user selects the writers: the user for step A, and Claude for step B (decision 44)',
+			writerNow(stepA) === 'user' && (!stepB || writerNow(stepB) === 'claude'),
+			{ A: writerNow(stepA), B: stepB && writerNow(stepB), levels: levelsNow()?.levels });
+		if (!stepB) {
+			console.log('NOTE The plan of the fixes has 1 step, so stage 6 has no errand of Claude.');
+		}
+		// the gate "Accept the fix plan". An open decision in a step of Claude gets a modal message first
+		await poll(() => clickPanelGate('Accept the fix plan'), 15);
+		await poll(() => clickDialog(wb, 'Pass the Gate'), 3);
+		const planAccepted = await poll(() => (phaseNow().phase === 'fixes' ? reviewNow() : undefined), 20);
+		check('The gate "Accept the fix plan" takes the round to the fixes', !!planAccepted?.rounds?.[0]?.planAccepted
+			&& ledgerOf(TASK_1).some((d) => d.kind === 'review-gate' && d.gate === 'accept-fix-plan'), { phase: phaseNow(), rounds: reviewNow()?.rounds });
+
+		// 15: the steps of the fixes go in sequence, as the steps of the build. Shotgun opens step A for the user. A run of
+		// Claude Code with no plugins stands in for the user and writes the fix
+		const isFixed = (id) => issueOf(id)?.state === 'fixed';
+		// the issues that only this step fixes. The gate of the step fixes them
+		const onlyIn = (step) => (step.fixes ?? []).filter((id) => fixSteps.filter((s) => (s.fixes ?? []).includes(id)).length === 1);
+		const openedA = await poll(() => (buildOf()?.steps?.[stepA.id]?.state === 'open' ? buildOf().steps[stepA.id] : undefined), 30);
+		check(`Shotgun opens step ${stepA.id} of the fixes for the user`, openedA?.writer === 'user', buildOf()?.steps?.[stepA.id]);
+		text = await poll(async () => {
+			const t = await panelText();
+			return t && new RegExp(`step ${stepA.id}`, 'i').test(t) && t.includes('The step is done') && t.includes('The fixes are done') ? t : undefined;
+		}, 15);
+		check(`The panel shows step ${stepA.id} with its own gate, and the gate "The fixes are done"`, !!text, await panelText());
+		await wb.shot('panel-fix-step.png');
+		const scopeA = openedA?.scope ?? [...new Set(stepA.places.map((pl) => pl.file))];
+		const beforeA = fileHashes();
+		const userFix = await runClaude('fix-user', [
+			`You stand in for the user of this project. Do this step of a plan: ${stepA.title}. ${stepA.text}`,
+			`It fixes these issues of a code review: ${(stepA.fixes ?? []).map((id) => issueOf(id)).map((i) => i?.title ?? i?.text ?? '').join(' ')}`,
+			`Change only these files: ${scopeA.join(', ')}. Do not build or run the code.`,
+		].join(' '), { tools: ['Read', 'Edit', 'Write', 'Grep', 'Glob'], maxTurns: 20, seconds: 300, plugins: false });
+		const changedA = [...fileHashes()].filter(([f, h]) => beforeA.get(f) !== h).map(([f]) => f);
+		check(`A run of Claude Code with no plugins stands in for the user, and writes step ${stepA.id}`, changedA.length > 0,
+			{ changedA, result: userFix.result.slice(0, 300) });
+		if (changedA.length === 0) {
+			const placeA = stepA.places.find((pl) => pl.lines) ?? stepA.places[0];
+			const fileA = path.join(p.project, placeA.file);
+			const t = fs.readFileSync(fileA, 'utf8').split('\n');
+			t.splice((placeA.lines?.[0] ?? 1) - 1, 0, '// The user wrote this line in the fix of the issue.');
+			fs.writeFileSync(fileA, t.join('\n'));
+		}
+		await sleep(1500);
+		await poll(() => clickPanelGate('The step is done'), 10);
+		const doneA = await poll(() => (buildOf()?.steps?.[stepA.id]?.state === 'done' ? buildOf().steps[stepA.id] : undefined), 20);
+		check(`The gate "The step is done" ends step ${stepA.id}, and fixes each issue that no other step fixes`, !!doneA && onlyIn(stepA).every(isFixed),
+			{ step: buildOf()?.steps?.[stepA.id], issues: (stepA.fixes ?? []).map(issueOf) });
+		const linesA = await poll(() => {
+			const runs = Object.values(readJson(taskFile(TASK_1, 'lines.json'))?.files ?? {}).flatMap((x) => x.runs ?? []);
+			return runs.some((r) => r.writer === 'user' && r.step === stepA.id) ? runs : undefined;
+		}, 10);
+		check(`lines.json records the lines of the user in step ${stepA.id}`, !!linesA, readJson(taskFile(TASK_1, 'lines.json')));
+
+		// B: Claude writes step B as an errand with a receipt, by the choice of the user
+		if (stepB) {
+			text = await poll(async () => (await panelText())?.includes(`Do step ${stepB.id}.`) && true, 15);
+			check(`The panel shows the request "Do step ${stepB.id}."`, !!text, await panelText());
 			const beforeB = fileHashes();
-			const errandB = await runClaude('issue-errand', `Do step ${fixB.id}.`, { tools: errandTools, maxTurns: 40, seconds: 900 });
+			const errandB = await runClaude('fix-errand', `Do step ${stepB.id}.`, { tools: errandTools, maxTurns: 40, seconds: 900 });
 			const namesB = errandB.toolUses.map((t) => t.name);
 			const editB = namesB.findIndex((n) => ['Edit', 'Write', 'MultiEdit'].includes(n));
-			check(`"Do step ${fixB.id}." loads the skill shotgun-errand, opens the step before its first file change, and gives a receipt`,
+			check(`"Do step ${stepB.id}." loads the skill shotgun-errand, opens the step before its first file change, and gives a receipt`,
 				errandB.toolUses.some((t) => t.name === 'Skill' && String(t.input?.skill).includes('shotgun-errand')) && namesB.includes(START_STEP)
 					&& (editB < 0 || namesB.indexOf(START_STEP) < editB) && namesB.includes(SUBMIT_ERRAND), namesB);
-			const stepB = buildOf()?.steps?.[fixB.id];
-			const scopeB = new Set((stepB?.scope ?? []).map((f) => f.toLowerCase()));
+			const stepBuildB = buildOf()?.steps?.[stepB.id];
+			const scopeB = new Set((stepBuildB?.scope ?? []).map((f) => f.toLowerCase()));
 			const changedB = [...fileHashes()].filter(([f, h]) => beforeB.get(f) !== h).map(([f]) => f);
-			check(`In stage 6, the guard lets Claude change only the scope of step ${fixB.id}, and the receipt has its changes`, stepB?.state === 'receipt'
-				&& changedB.every((f) => scopeB.has(f.toLowerCase())) && (stepB?.receipt?.changes?.length ?? 0) > 0, { changedB, step: stepB });
-			for (let i = 0; i < (stepB?.receipt?.changes?.length ?? 0); i++) {
+			check(`In stage 6, the guard lets Claude change only the scope of step ${stepB.id}, and the receipt has its changes`, stepBuildB?.state === 'receipt'
+				&& changedB.every((f) => scopeB.has(f.toLowerCase())) && (stepBuildB?.receipt?.changes?.length ?? 0) > 0, { changedB, step: stepBuildB });
+			for (let i = 0; i < (stepBuildB?.receipt?.changes?.length ?? 0); i++) {
 				await clickMark(i, 'OK');
 				await sleep(400);
 			}
-			await poll(() => (buildOf()?.steps?.[fixB.id]?.receipt?.changes ?? []).every((c) => c.mark === 'ok') || undefined, 15);
+			await poll(() => (buildOf()?.steps?.[stepB.id]?.receipt?.changes ?? []).every((c) => c.mark === 'ok') || undefined, 15);
 			await sleep(500);
-			await clickPanelGate('Accept the receipt');
-			const fixedB = await poll(() => reviewNow()?.issues?.find((i) => i.id === fixB.id && i.state === 'fixed'), 20);
-			check(`The gate "Accept the receipt" ends step ${fixB.id}, and the issue is fixed`, buildOf()?.steps?.[fixB.id]?.state === 'done' && !!fixedB,
-				{ step: buildOf()?.steps?.[fixB.id], issue: reviewNow()?.issues?.find((i) => i.id === fixB.id) });
+			await poll(() => clickPanelGate('Accept the receipt'), 10);
+			const doneB = await poll(() => (buildOf()?.steps?.[stepB.id]?.state === 'done' ? buildOf().steps[stepB.id] : undefined), 20);
+			check(`The gate "Accept the receipt" ends step ${stepB.id}, and fixes each issue that no other step fixes`, !!doneB && onlyIn(stepB).every(isFixed),
+				{ step: buildOf()?.steps?.[stepB.id], issues: (stepB.fixes ?? []).map(issueOf) });
 		}
 
-		// C: if "Not a problem" closed no step in front of step B, it closes the next step. With no step left, the test closes
-		// an issue of the second list
-		const nextC = closeC ? undefined : openSteps()[0] ?? (reviewNow()?.issues ?? []).find((i) => i.state === 'open');
-		if (nextC) {
-			await closeIssue(nextC);
-		}
-
-		// 14: the next round reviews the fixes (P23). get_review marks the changed hunks, and gives the fixed issues to check
-		const fixedIds = (reviewNow()?.issues ?? []).filter((i) => i.state === 'fixed').map((i) => i.id);
-		if (fixedIds.length > 0) {
-			text = await poll(async () => (await panelText())?.includes('Copy the prompt of round 2') && true, 15);
-			check('After a fix, the panel copies the prompt of round 2', !!text, await panelText());
-			await inWebview('.panel', `() => {
-				const b = [...d.querySelectorAll('.review-options button')].find((x) => x.textContent.includes('Copy the prompt of round 2'));
-				b?.click();
-				return !!b;
-			}`);
-			const data2 = await callBridgeTool('shotgun_get_review', {});
-			let review2Data;
-			try {
-				review2Data = JSON.parse(data2.text ?? '');
-			} catch {
-				review2Data = undefined;
+		// the other steps of the fixes end with no code. Then the gate "The fixes are done" ends round 1
+		for (let k = 0; k < 12; k++) {
+			const next = fixSteps.find((s) => buildOf()?.steps?.[s.id]?.state !== 'done');
+			if (!next) {
+				break;
 			}
-			check('get_review of round 2 gives the fixed issues to check, and marks the hunks that changed since round 1', review2Data?.round === 2
-				&& fixedIds.every((id) => review2Data.fixedIssues?.some((i) => i.id === id))
-				&& (review2Data.files ?? []).some((f) => f.hunks.some((h) => h.isChangedSinceLastRound)), { ...data2, text: data2.text?.slice(0, 1500) });
-			const reviewRun2 = await runClaude('review-2', reviewPrompt(TITLE, reviewNow()?.options ?? options, 2), {
-				tools: [GET_SESSION, GET_REVIEW, SUBMIT_REVIEW, 'Skill', 'Agent', 'Task', 'Read', 'Grep', 'Glob', ...READ_TOOLS,
-					'mcp__plugin_dataflow_dataflow__get_diff', 'mcp__plugin_dataflow_dataflow__get_ripple'],
-				maxTurns: 80, seconds: 2400,
-			});
-			const after2 = reviewNow();
-			check('The prompt of round 2 loads the skill shotgun-review, and Claude gives round 2 with shotgun_submit_review',
-				reviewRun2.toolUses.some((t) => t.name === SUBMIT_REVIEW) && (after2?.rounds ?? []).some((r) => r.n === 2), reviewRun2.toolUses.map((t) => t.name));
-			const states2 = fixedIds.map((id) => after2?.issues?.find((i) => i.id === id)).map((i) => `${i?.id} ${i?.state} ${i?.lastRound}`);
-			results.review2 = { fixed: states2, issues: (after2?.issues ?? []).filter((i) => i.lastRound === 2).map((i) => `${i.id} ${i.list} ${i.state} ${i.title}`) };
-			console.log(`INFO Round 2: ${JSON.stringify(results.review2)}`);
-			// the skill checks each fixed issue in a subagent with the prompt of a fix check
-			const fixChecks = reviewRun2.toolUses.filter((t) => (t.name === 'Agent' || t.name === 'Task') && /check 1 fix/i.test(String(t.input?.prompt)));
-			check('Round 2 checks each fixed issue in a subagent with the prompt of a fix check',
-				fixedIds.every((id) => fixChecks.some((t) => new RegExp(`\\b${id}\\b`).test(String(t.input?.prompt)))), fixChecks.map((t) => t.input?.description));
-			// a correct fix stays fixed. An issue with a wrong fix comes again with its id, and its done step goes away
-			check('Each fixed issue stays fixed, or comes again with its id, and then its step is not done', fixedIds.every((id) => {
-				const i = after2?.issues?.find((x) => x.id === id);
-				return i?.state === 'fixed' || (i?.state === 'open' && i.lastRound === 2 && buildOf()?.steps?.[id]?.state !== 'done');
-			}), { states2, steps: fixedIds.map((id) => buildOf()?.steps?.[id]) });
-			check('Round 2 repeats no closed issue', !closeC || after2?.issues?.find((i) => i.id === closeC.id)?.state === 'closed',
-				after2?.issues?.find((i) => i.id === closeC?.id));
+			await endWithNoCode(next);
 		}
+		const fixesLeft = fixSteps.filter((s) => buildOf()?.steps?.[s.id]?.state !== 'done').map((s) => s.id);
+		check('Each step of the fixes is done, and each issue to fix of round 1 is fixed', fixesLeft.length === 0 && toFixAtGate.every(isFixed),
+			{ fixesLeft, issues: toFixAtGate.map(issueOf) });
+		await poll(() => clickPanelGate('The fixes are done'), 15);
+		const fixesDone = await poll(() => (phaseNow().phase === 'review' && phaseNow().round === 2 ? reviewNow() : undefined), 20);
+		check('The gate "The fixes are done" ends round 1, and round 2 starts with a review', !!fixesDone?.rounds?.[0]?.fixesDone
+			&& ledgerOf(TASK_1).some((d) => d.kind === 'review-gate' && d.gate === 'fixes-done'), { phase: phaseNow(), rounds: reviewNow()?.rounds });
 
-		// 15: the gate "The task is done" never waits. With open issues of the list of steps, a modal message asks first
-		await inWebview('.page', `() => {
-			const b = [...d.querySelectorAll('.gate button')].find((x) => x.textContent.includes('The task is done'));
+		// 16: the next round reviews the fixes (P23). get_review marks the changed hunks, and gives the fixed issues to check
+		const fixedIds = (reviewNow()?.issues ?? []).filter((i) => i.state === 'fixed').map((i) => i.id);
+		text = await poll(async () => (await panelText())?.includes('Copy the prompt of round 2') && true, 15);
+		check('After "The fixes are done", the panel copies the prompt of round 2', !!text, await panelText());
+		await inWebview('.panel', `() => {
+			const b = [...d.querySelectorAll('.review-options button')].find((x) => x.textContent.includes('Copy the prompt of round 2'));
 			b?.click();
 			return !!b;
 		}`);
+		const data2 = await callBridgeTool('shotgun_get_review', {});
+		let review2Data;
+		try {
+			review2Data = JSON.parse(data2.text ?? '');
+		} catch {
+			review2Data = undefined;
+		}
+		check('get_review of round 2 gives the fixed issues to check, and marks the hunks that changed since round 1', review2Data?.round === 2
+			&& review2Data?.phase === 'review' && fixedIds.every((id) => review2Data.fixedIssues?.some((i) => i.id === id))
+			&& (review2Data.files ?? []).some((f) => f.hunks.some((h) => h.isChangedSinceLastRound)), { ...data2, text: data2.text?.slice(0, 1500) });
+		const reviewRun2 = await runClaude('review-2', reviewPrompt(TITLE, reviewNow()?.options ?? options, 2), {
+			tools: [GET_SESSION, GET_REVIEW, SUBMIT_REVIEW, 'Skill', 'Agent', 'Task', 'Read', 'Grep', 'Glob', ...READ_TOOLS,
+				'mcp__plugin_dataflow_dataflow__get_diff', 'mcp__plugin_dataflow_dataflow__get_ripple'],
+			maxTurns: 80, seconds: 2400,
+		});
+		const after2 = reviewNow();
+		check('The prompt of round 2 loads the skill shotgun-review, and Claude gives round 2 with shotgun_submit_review',
+			reviewRun2.toolUses.some((t) => t.name === SUBMIT_REVIEW) && (after2?.rounds ?? []).some((r) => r.n === 2), reviewRun2.toolUses.map((t) => t.name));
+		const states2 = fixedIds.map((id) => after2?.issues?.find((i) => i.id === id)).map((i) => `${i?.id} ${i?.state} ${i?.lastRound}`);
+		results.review2 = { fixed: states2, issues: (after2?.issues ?? []).filter((i) => i.lastRound === 2).map((i) => `${i.id} ${i.list} ${i.state} ${i.title}`) };
+		console.log(`INFO Round 2: ${JSON.stringify(results.review2)}`);
+		// the skill checks each fixed issue in a subagent with the prompt of a fix check
+		const fixChecks = reviewRun2.toolUses.filter((t) => (t.name === 'Agent' || t.name === 'Task') && /check 1 fix/i.test(String(t.input?.prompt)));
+		check('Round 2 checks each fixed issue in a subagent with the prompt of a fix check',
+			fixedIds.every((id) => fixChecks.some((t) => new RegExp(`\\b${id}\\b`).test(String(t.input?.prompt)))), fixChecks.map((t) => t.input?.description));
+		// a correct fix stays fixed. An issue with a wrong fix comes again with its id
+		check('Each fixed issue stays fixed, or comes again with its id in round 2', fixedIds.every((id) => {
+			const i = after2?.issues?.find((x) => x.id === id);
+			return i?.state === 'fixed' || (i?.state === 'open' && i.lastRound === 2);
+		}), states2);
+		check('Round 2 repeats no closed issue', !closeC || after2?.issues?.find((i) => i.id === closeC.id)?.state === 'closed',
+			after2?.issues?.find((i) => i.id === closeC?.id));
+		check('After the review of round 2, the round is at the issues page', phaseNow().phase === 'issues' && phaseNow().round === 2, phaseNow());
+
+		// 17: the gate "The task is done" never waits. It is beside the gate of each part of the round. With open issues to
+		// fix, a modal message asks first
+		await command(wb, 'Shotgun: Show Page');
+		await poll(() => inWebview('.page', `() => {
+			const b = [...d.querySelectorAll('.gate button, .secondary-gate button')].find((x) => x.textContent.trim() === 'The task is done' && !x.disabled);
+			b?.click();
+			return !!b;
+		}`), 15);
 		await poll(() => clickDialog(wb, 'Pass the Gate'), 5);
 		const done6 = await poll(() => (readJson(taskFile(TASK_1, 'task.json'))?.isDone ? readJson(taskFile(TASK_1, 'task.json')) : undefined), 20);
 		check('The gate "The task is done" ends the task in stage 6', done6?.stage === 'review' && done6?.gates?.at(-1)?.gate === 'task-done', readJson(taskFile(TASK_1, 'task.json')));

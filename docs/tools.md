@@ -38,6 +38,8 @@ You type each request in Claude Code. After each gate, the panel of Shotgun show
 | 5 Build | "Explain the callout on line 129." or "Does the lambda on line 95 copy charge?" | `shotgun-explain` |
 | 5 Build | "Do the loose ends." | `shotgun-errand` |
 | 6 Review | The review prompt that you copy from the panel into a new session, or "Review my Shotgun task." | `shotgun-review` |
+| 6 Review | "Plan the fixes." or "Fix I1 and I3 in 1 step." | `shotgun-plan` |
+| 6 Review | "Do step F2." or "Give me a frame for step F3." | `shotgun-errand` or `shotgun-frame` |
 | 5 Build, 6 Review, or after the end of the task | "Check my commit message." | `shotgun-commit` |
 
 ## The skills
@@ -46,9 +48,9 @@ You type each request in Claude Code. After each gate, the panel of Shotgun show
 | --- | --- |
 | `shotgun` | The contract of Shotgun: the active task, the 6 stages, the guard and the gates. Also a brief from the chat, and the questions about the brief. |
 | `shotgun-survey` | The survey of the brief in stage 2: the tasks, the hooks, the facts and the questions. Also the survey of the changed tasks in stage 3. |
-| `shotgun-plan` | The steps of the plan in stage 4, in the sequence of your order, with the open decisions of each step. |
-| `shotgun-errand` | A step of Claude in stage 5: Claude opens the step, changes only the files of its scope, and gives the receipt. The receipt has its choice for each open decision. Also the fixes after a receipt, and the loose ends that you hand to Claude. |
-| `shotgun-frame` | The frame of a step in stage 5: all lines of the step, and a hole with 4 hints for each open decision. |
+| `shotgun-plan` | The steps of the plan in stage 4, in the sequence of your order, with the open decisions of each step. Also the plan of the fixes in stage 6, in the sequence of your issues to fix. |
+| `shotgun-errand` | A step of Claude in stage 5, or a step of the fixes in stage 6: Claude opens the step, changes only the files of its scope, and gives the receipt. The receipt has its choice for each open decision. Also the fixes after a receipt, and the loose ends that you hand to Claude. |
+| `shotgun-frame` | The frame of a step in stage 5 or of a step of the fixes in stage 6: all lines of the step, and a hole with 4 hints for each open decision. A step with no open decision gets 1 to 3 holes in its logic. |
 | `shotgun-explain` | The words of Claude for a callout, and the answer to your question about a line. Claude changes no code. |
 | `shotgun-review` | The review of stage 6 in a new session. The finders and the verifiers are subagents, and each issue has a failure scenario and the evidence of DataFlow. Claude changes no file. |
 | `shotgun-commit` | The check of your commit message against the diff. Claude changes no message, and makes no commit. |
@@ -73,7 +75,7 @@ These rules apply to the parameters of all tools:
 - A file is relative to the first folder of the project, or absolute.
 - Lines are `[first, last]`, from 1.
 - The `code` of a place is a short text of the code in its lines, copied exactly. Thus the place stays with its code when the lines move.
-- A step is its id, for example `S5`, or its number.
+- A step is its id, for example `S5` or `F2`, or its number.
 
 The tools change no line of your code. They write only the files in the folder `.shotgun` of the project. Only `start_step` saves the open text editors of the files of its scope.
 
@@ -96,6 +98,7 @@ The tools change no line of your code. They write only the files in the folder `
 | [`submit_line_answer`](#submit_line_answer) | 5 and 6 | Write | The answer to your question about a line |
 | [`get_review`](#get_review) | 6 | Read | The review data: the effort, the focus, the base commit, the changed files and the earlier issues |
 | [`submit_review`](#submit_review) | 6 | Write | The issues of the review |
+| [`submit_fix_plan`](#submit_fix_plan) | 6 | Write | The plan of the fixes, after your gate "Accept the issues" |
 | [`get_commit_message`](#get_commit_message) | 5 and later | Read | Your commit message, the changed files and the data of the ledger |
 | [`submit_message_check`](#submit_message_check) | 5 and later | Write | The check of the commit message |
 | [`guard`](#guard) | All | Hook | The PreToolUse hook calls it. Claude does not call it. |
@@ -180,7 +183,7 @@ A step has 1 to 8 places. A place has `file`. For a file that is there, it also 
 
 ### get_step
 
-Gives a step of the build, in stage 5, or the step of an issue of the review in stage 6. The id of the step of an issue is the id of the issue, for example I3. It gives the text, the places, the checks, the decisions, the level, the writer, the state and the scope of the step. It also gives the receipt of the step with your marks and notes: the issues and the questions.
+Gives a step of the build, in stage 5, or a step of the fixes in stage 6. A step of the fixes has an id such as F2, and `fixes` names its issues. It gives the text, the places, the checks, the decisions, the level, the writer, the state and the scope of the step. It also gives the receipt of the step with your marks and notes: the issues and the questions.
 
 | Parameter | Type | Function |
 | --- | --- | --- |
@@ -188,12 +191,12 @@ Gives a step of the build, in stage 5, or the step of an issue of the review in 
 
 ### start_step
 
-Opens the current step for an errand or a frame, before Claude changes a file. This is in stage 5, or for the step of an issue in stage 6. Shotgun saves the open text editors of the files of the scope, and DataFlow keeps their text as the base of the step. Then the guard lets Claude change these files. Claude calls this tool again after a receipt to fix your issues, or for a different frame. The step keeps its base.
+Opens the current step for an errand or a frame, before Claude changes a file. This is in stage 5, or for a step of the fixes in stage 6. Shotgun saves the open text editors of the files of the scope, and DataFlow keeps their text as the base of the step. Then the guard lets Claude change these files. Claude calls this tool again after a receipt to fix your issues, or for a different frame. The step keeps its base.
 
 | Parameter | Type | Function |
 | --- | --- | --- |
 | `step` | string | The step. |
-| `kind` | string | Optional. `errand`: Claude writes the step, at level 1 or 2. `frame`: Claude writes a frame with holes for you, at level 3, or at level 4 after **I want a frame**. |
+| `kind` | string | Optional. `errand`: Claude writes the step, at level 1 or 2, or after you select **Claude writes it**. `frame`: Claude writes a frame with holes for you, at level 3, or after you select **Frame**. |
 
 ### submit_errand
 
@@ -208,7 +211,7 @@ Closes the open step after the changes of Claude, in stage 5. Shotgun gets the d
 
 ### submit_frame
 
-Closes the open frame step after Claude wrote the frame, in stage 5. Each open decision of the step is exactly 1 hole: a marker `/*@hole N: question */` in the place of the whole code of the decision. The frame has all other lines. Shotgun checks each marker, each place and each decision. Claude does not give the answers in the chat.
+Closes the open frame step after Claude wrote the frame, in stage 5 or 6. Each open decision of the step is exactly 1 hole: a marker `/*@hole N: question */` in the place of the whole code of the decision. The frame has all other lines. Shotgun checks each marker, each place and each decision. Claude does not give the answers in the chat.
 
 | Parameter | Type | Function |
 | --- | --- | --- |
@@ -223,7 +226,7 @@ Closes the open frame step after Claude wrote the frame, in stage 5. Each open d
 | `example` | Hint 3: code of the project that is a good example. It has `text` (why it is a good example), `file`, `lines` and `code`. |
 | `answer` | Hint 4: 1 possible code in the place of the marker. You can write a different answer. |
 
-Shotgun refuses a hole whose answer is only a type, a name, a literal or a list of parameters. It also refuses a hole whose answer is in the text of the step. With no open decision, a step gets no frame.
+Shotgun refuses a hole whose answer is only a type, a name, a literal or a list of parameters. It also refuses a hole whose answer is in the text of the step. A step with no open decision gets 1 to 3 holes in the logic of the step, with no `decision`.
 
 ### get_callouts
 
@@ -256,13 +259,15 @@ Gives the answer of Claude to your question about a line, in stage 5. Shotgun ad
 
 Gives the review data of stage 6. Claude calls it in the new session of the review. It gives your effort and your focus, the base commit of the task, and the changed files with their hunks, heat and writers. It also gives the ripple, the brief, the steps of the plan, the closed callouts, and the earlier issues with your reasons. For the text of the diff, Claude calls `get_diff` of DataFlow with the base commit.
 
-In a new round after your fixes, each hunk that changed since the last round has `"isChangedSinceLastRound": true`. `fixedIssues` gives the issues that you fixed after the last round, and `roundNote` tells Claude to check each fix. The cap on the steps also uses your feedback from the earlier reviews of the folder.
+In a new round after your fixes, each hunk that changed since the last round has `"isChangedSinceLastRound": true`. `fixedIssues` gives the issues that you fixed after the last round, and `roundNote` tells Claude to check each fix. The cap on the list to fix, `capOnSteps`, also uses your feedback from the earlier reviews of the folder.
+
+`phase` gives the part of the round: `review`, `issues`, `plan` or `fixes`. After your gate "Accept the issues", `issuesToFix` gives the issues to fix in your sequence, with your notes. An issue of yours has `"byUser": true` and only a text. In the part `plan`, `firstStepId` gives the id of the first step of the fixes, and `fixPlan` gives the plan of the fixes of the round, if Claude gave it.
 
 This tool has no parameters.
 
 ### submit_review
 
-Gives the issues of the review after the verify pass. Shotgun checks each issue, and puts it into the list of steps or into the second list. A new review of the same round replaces the open issues of the round, but it keeps an issue with a step that you started. A fixed issue that the review gives again with `repeats` is a step again. Claude changes no file.
+Gives the issues of the review after the verify pass. Shotgun checks each issue, and puts it into the list to fix or into the list for later. Before your gate "Accept the issues", a new review of the same round replaces the open issues of the round. After this gate, Shotgun refuses a review until the gate "The fixes are done". A fixed issue that the review gives again with `repeats` is open again. Claude changes no file.
 
 | Parameter | Type | Function |
 | --- | --- | --- |
@@ -283,10 +288,26 @@ Each issue has these fields:
 | `source` | string | `engine`: a fact of DataFlow gives the defect, for example a race or a check of `get_threads`. `model`: Claude found the defect, also with the help of facts of DataFlow. |
 | `place` | object | The `file`, the `lines` and the `code`. The place must be in the diff of the task or in its ripple. |
 | `fixPlaces` | array | Optional. Up to 4 more places of the fix, for example the other places of the same class of bug. |
-| `decisions` | array | Optional. 0 to 3 open decisions of the fix, each with a `question` and optional `options`. |
+| `decisions` | array | Optional. 0 to 3 open decisions of the fix, each with a `question` and optional `options`. The plan of the fixes gets them. |
 | `tools` | array | 1 to 6 read tools of DataFlow that show the issue. Shotgun refuses a tool that nobody called in this stage. A race needs `get_threads`. |
 | `repeats` | string | Optional. The id of the earlier issue that this issue repeats, for example `I3`. The issue keeps its id and its state. |
 | `evidence` | string | Necessary for an earlier issue that you closed, and for an issue at the line of a callout that you closed: the new evidence. Such an issue needs the verdict `plausible`. |
+
+### submit_fix_plan
+
+Gives the plan of the fixes of the round, after your gate "Accept the issues". You ask for it, for example with "Plan the fixes.". The steps come in the sequence of your issues to fix. Each step names the issues that it fixes: 1 step can fix 2 issues, and 1 issue can need 2 steps. Each issue to fix needs a step. Shotgun gives the steps the ids F1, F2 and so on, and the numbers go on from the earlier rounds. Shotgun gives each step a risk level with the rules of stage 4. Before your gate "Accept the fix plan", a new plan replaces the plan of the round. Claude changes no file.
+
+| Parameter | Type | Function |
+| --- | --- | --- |
+| `steps` | array | 1 to 12 steps of the fixes. |
+
+Each step has the fields of a step of `submit_plan`, with no `id`, `task` and `hooks`, and with this field:
+
+| Field | Type | Function |
+| --- | --- | --- |
+| `fixes` | array | The ids of the issues to fix that the step fixes, for example `["I1", "U1"]`. |
+
+The places of a step are all places that its fix changes, also a file that the issue does not name, for example a header file.
 
 ### get_commit_message
 

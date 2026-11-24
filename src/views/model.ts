@@ -13,20 +13,20 @@ import { ledgerMarkdown, ledgerRows, MessageCheck, sameMessage } from '../sessio
 import type { LineRun } from '../session/lines';
 import { absolutePath } from '../session/paths';
 import {
-	decisionsOf, levelOf, levelReasons, MAX_DECISION_ANSWER, MAX_DECISION_QUESTION, MAX_LEVEL_NOTE, MAX_USER_DECISIONS, openDecisions, placeName, PlanStep,
+	decisionsOf, levelOf, levelReasons, MAX_DECISION_ANSWER, MAX_DECISION_QUESTION, MAX_LEVEL_NOTE, MAX_USER_DECISIONS, placeName, Plan, PlanStep,
 } from '../session/plan';
 import {
-	AREA_INFO, areaOf, AREAS, DEFAULT_OPTIONS, EFFORT_INFO, EFFORTS, FEEDBACK_MIN, IssuePlace, issueSteps, issuesToCheck, MAX_FOCUS_TEXT, MAX_ISSUE_REASON,
-	MAX_ROUNDS, ReviewIssue, reviewPrompt, roundOf,
+	AREA_INFO, areaOf, AREAS, currentFixPlan, DEFAULT_OPTIONS, EFFORT_INFO, EFFORTS, FEEDBACK_MIN, FixItem, fixSteps, IssuePlace, issuesToCheck, MAX_FOCUS_TEXT,
+	MAX_ISSUE_NOTE, MAX_ISSUE_REASON, MAX_ROUNDS, MAX_USER_ISSUE, ReviewIssue, reviewPhase, reviewPrompt, roundOf, toFix, UserIssue,
 } from '../session/review';
 import { LEVEL_INFO } from '../session/risk';
 import { GATE_LABEL, returnStages, STAGE_INFO, STAGES, stageText } from '../session/stages';
 import { isStepStage, Snapshot, stepNext, workPlan } from '../session/store';
 import { excerptOf, findHook, Lines } from '../session/survey';
 import type {
-	BriefView, BuildStepView, BuildView, CurrentStepView, DecisionView, FeedbackView, GateView, HoleView, HookView, IssuePlaceView, IssueStepView, IssueView, LedgerView, LooseEndView,
-	LooseView, MessageView, NavigatorView, OrderTaskView, OrderView, PlanPlaceView, PlanStepView, PlanView, ReceiptView, ReviewView, SetupRow, StageView,
-	StepDecisionView, SurveyView, TaskView, ViewModel,
+	BriefView, BuildStepView, BuildView, CurrentStepView, DecisionView, FeedbackView, FixRowView, GateView, HoleView, HookView, IssuePlaceView, IssueView, LedgerView,
+	LooseEndView, LooseView, MessageView, NavigatorView, OrderTaskView, OrderView, PlanPlaceView, PlanStepView, PlanView, ReceiptView, ReviewView, SetupRow,
+	StageView, StepDecisionView, SurveyView, TaskView, UserIssueView, ViewModel,
 } from './protocol';
 
 // The view model of the page and of the panel, from the session, the state of DataFlow and the connection to Claude
@@ -149,6 +149,10 @@ export function decisionText(decision: Decision): string {
 				: `You ended step ${decision.step}: "The step is done".`;
 		case 'frame-request':
 			return `You asked for a frame of Claude for step ${decision.step}.`;
+		case 'writer':
+			return decision.writer === null
+				? `Step ${decision.step} has the writer of its level again: "${WRITER_TEXT[decision.first]}".`
+				: `You selected the writer of step ${decision.step}: "${WRITER_TEXT[decision.writer]}". The level gives "${WRITER_TEXT[decision.first]}".`;
 		case 'frame':
 			return `Claude gave the frame of step ${decision.step}: ${count(decision.holes, 'hole')}.`;
 		case 'hint':
@@ -184,8 +188,27 @@ export function decisionText(decision: Decision): string {
 		case 'issue-open':
 			return `You opened the issue ${decision.issue} again.`;
 		case 'issue-step':
-			return decision.isStep ? `You made the issue ${decision.issue}, "${decision.title}", a step.`
-				: `You put the issue ${decision.issue}, "${decision.title}", back into the second list.`;
+			return decision.isStep ? `You put the issue ${decision.issue}, "${decision.title}", into the list to fix.`
+				: `You keep the issue ${decision.issue}, "${decision.title}", for later.`;
+		case 'review-gate':
+			switch (decision.gate) {
+				case 'accept-issues':
+					return `You accepted the issues of round ${decision.round}: ${count(decision.count, 'issue')} to fix.`;
+				case 'issues-again':
+					return `You returned round ${decision.round} to the issues. The plan of the fixes of the round went away.`;
+				case 'accept-fix-plan':
+					return `You accepted the plan of the fixes of round ${decision.round}: ${count(decision.count, 'step')}.`;
+				default:
+					return `You ended the fixes of round ${decision.round}: ${count(decision.count, 'step')} done.`;
+			}
+		case 'issue-move':
+			return `You moved the issue ${decision.issue} to place ${decision.position} of the list to fix.`;
+		case 'issue-note':
+			return decision.text ? `Your note for the fix of ${decision.issue}: "${decision.text}".` : `You removed your note for the fix of ${decision.issue}.`;
+		case 'user-issue':
+			return decision.action === 'add' ? `You added the issue ${decision.issue}: "${decision.text}".` : `You removed your issue ${decision.issue}: "${decision.text}".`;
+		case 'fix-plan':
+			return `Claude gave the plan of the fixes of round ${decision.round}: ${count(decision.steps, 'step')}.`;
 	}
 }
 
@@ -299,9 +322,10 @@ function orderView(snapshot: Snapshot, survey: SurveyView | undefined): OrderVie
 
 // Stage 4 and later: the plan of Claude, with the level of each step and the places at their lines now. isWork: the work
 // plan, in stage 6 with the steps of the issues after the steps of the plan (P22)
-function planView(snapshot: Snapshot, readLines: ModelInput['readLines'], isWork = false): PlanView | undefined {
+// only: the plan to show, for example the plan of the fixes of a round of stage 6 (decision 43)
+function planView(snapshot: Snapshot, readLines: ModelInput['readLines'], isWork = false, only?: Plan): PlanView | undefined {
 	const { task, risk, levels, root } = snapshot;
-	const plan = isWork ? workPlan(snapshot) : snapshot.plan;
+	const plan = only ?? (isWork ? workPlan(snapshot) : snapshot.plan);
 	if (!task || !plan || !root) {
 		return undefined;
 	}
@@ -313,6 +337,8 @@ function planView(snapshot: Snapshot, readLines: ModelInput['readLines'], isWork
 		}
 		return files.get(file);
 	};
+	// the title of an issue that a step of the fixes fixes: an issue of the review, or the text of an issue of the user
+	const issueTitle = (id: string) => snapshot.review?.issues.find((x) => x.id === id)?.title ?? snapshot.review?.userIssues?.find((u) => u.id === id)?.text ?? id;
 	const steps: PlanStepView[] = plan.steps.map((s, i) => {
 		const l = levelOf(s, risk, levels);
 		const stepRisk = risk?.steps[s.id];
@@ -337,9 +363,12 @@ function planView(snapshot: Snapshot, readLines: ModelInput['readLines'], isWork
 		return {
 			id: s.id,
 			n: i + 1,
+			ref: refOf(s, i + 1),
+			...(s.fixes ? { fixes: [...s.fixes] } : {}),
 			title: s.title,
 			task: s.task,
-			taskText: s.issue ? `Issue ${s.issue} of the review` : order.tasks.find((t) => t.id === s.task)?.text ?? s.task,
+			taskText: s.fixes ? `Fixes ${s.fixes.map((id) => `${id}: ${issueTitle(id)}`).join('; ')}` : s.issue ? `Issue ${s.issue} of the review`
+				: order.tasks.find((t) => t.id === s.task)?.text ?? s.task,
 			hooks: [...s.hooks],
 			places,
 			text: s.text,
@@ -349,14 +378,21 @@ function planView(snapshot: Snapshot, readLines: ModelInput['readLines'], isWork
 			rule: l.rule,
 			...(l.user ? { user: l.user } : {}),
 			levelName: info ? `${info.name}, level ${l.level} of 5` : 'No level yet',
-			...(info ? { writer: info.writer, writerText: info.text } : {}),
+			...(() => {
+				// the writer that the user selected comes before the writer of the level (decision 44)
+				const chosen = levels?.levels[s.id]?.writer;
+				if (chosen) {
+					return { writer: chosen, writerText: `You selected this writer. ${WRITER_TEXT[chosen]}.`, ...(info ? { firstWriter: info.writer } : {}), isWriterChosen: true };
+				}
+				return { ...(info ? { writer: info.writer, writerText: info.text, firstWriter: info.writer } : {}), isWriterChosen: false };
+			})(),
 			reasons: s.issue ? ['Each issue of the review is a step of the user at level 4. You can change the level.',
 				...(stepRisk ? [`Only a hint: the heat of the places gives level ${stepRisk.level ?? '?'}.`, ...stepRisk.reasons] : [])]
 				: stepRisk ? levelReasons(s, risk, levels) : ['Shotgun did not check the step with DataFlow yet.'],
 			...(decisions ? { decisions } : {}),
 			isCapped: l.isCapped,
 			userNote: levels?.levels[s.id]?.note ?? '',
-			isLevelEditable: !task.isDone && (task.stage === 'plan' || ((task.stage === 'build' || (task.stage === 'review' && !!s.issue))
+			isLevelEditable: !task.isDone && (task.stage === 'plan' || ((task.stage === 'build' || (task.stage === 'review' && !!s.fixes))
 				&& (stateOf(snapshot.build, s.id) === 'todo' || (stateOf(snapshot.build, s.id) === 'open' && snapshot.build?.steps[s.id]?.writer === 'user')))),
 			...(hottest?.heat ? { heat: { ...hottest.heat, signals: [...(hottest.heat.signals ?? [])] } } : {}),
 		};
@@ -485,10 +521,11 @@ function looseView(snapshot: Snapshot): LooseView {
 		...(e.handed ? { handed: { id: e.handed, n: n(e.handed), ref: ref(e.handed), state: stateOf(build, e.handed) } } : {}),
 		...(e.reason ? { reason: e.reason } : {}),
 	}));
-	// the steps of the plan by number, and the steps of the issues by id
-	const checked = (loose?.checked ?? []).map(n).filter((x) => x > 0 && !steps[x - 1].issue);
-	const issues = (loose?.checked ?? []).filter((id) => n(id) > 0 && steps[n(id) - 1].issue);
-	const parts = [...(checked.length > 0 ? [stepsText(checked)] : []), ...(issues.length > 0 ? [`the ${issues.length === 1 ? 'step' : 'steps'} of ${issues.join(', ')}`] : [])];
+	// the steps of the plan by number, and the steps of the fixes by id
+	const isOwn = (x: number) => !!steps[x - 1].issue || !!steps[x - 1].fixes;
+	const checked = (loose?.checked ?? []).map(n).filter((x) => x > 0 && !isOwn(x));
+	const own = (loose?.checked ?? []).filter((id) => n(id) > 0 && isOwn(n(id)));
+	const parts = [...(checked.length > 0 ? [stepsText(checked)] : []), ...(own.length > 0 ? [`${own.length === 1 ? 'step' : 'steps'} ${own.join(', ')}`] : [])];
 	const current = currentStep(plan, risk, levels, build);
 	const request = current?.step.looseEnd ? stepNext(snapshot, current)?.request : undefined;
 	return {
@@ -555,17 +592,20 @@ function buildView(snapshot: Snapshot, plan: PlanView, readLines: ModelInput['re
 	const steps: BuildStepView[] = work.steps.map((s, i) => {
 		const b = build?.steps[s.id];
 		const level = b?.level ?? levelOf(s, risk, levels).level;
-		const writer = b?.writer ?? buildWriterOf(level);
+		const chosen = levels?.levels[s.id]?.writer;
+		const writer = b?.writer ?? buildWriterOf(level, chosen);
 		return {
 			id: s.id,
 			n: i + 1,
 			ref: refOf(s, i + 1),
 			...(s.issue ? { issue: s.issue } : {}),
+			...(s.fixes ? { fixes: [...s.fixes] } : {}),
 			title: s.title,
 			level,
 			levelName: level ? `${LEVEL_INFO[level].name}, level ${level} of 5` : 'No level',
 			writer,
-			writerText: writer === 'frame' && b?.isFrameRequested ? `You asked for a frame. ${WRITER_TEXT.frame}` : WRITER_TEXT[writer],
+			writerText: writer === 'frame' && b?.isFrameRequested ? `You asked for a frame. ${WRITER_TEXT.frame}`
+				: chosen && writer === chosen ? `You selected this writer. ${WRITER_TEXT[writer]}` : WRITER_TEXT[writer],
 			state: stateOf(build, s.id),
 			isCurrent: current?.step.id === s.id,
 			...(b?.receipt ? { walked: walkText(b.receipt) } : {}),
@@ -623,11 +663,10 @@ function buildView(snapshot: Snapshot, plan: PlanView, readLines: ModelInput['re
 			};
 		}
 		const decisions = stepDecisionsView(current.step, snapshot.levels);
-		// a frame needs an open decision (decision 32). A step of a plan with no decisions keeps the old rule (P34)
-		const hasOpenDecision = !decisions || openDecisions(current.step, snapshot.levels).length > 0;
 		view = {
 			...steps[current.n - 1],
 			total: steps.length,
+			...(current.step.fixes && planStep ? { fixesText: planStep.taskText } : {}),
 			text: current.step.text,
 			checks: [...current.step.checks],
 			places: planStep ? planStep.places : [],
@@ -641,8 +680,9 @@ function buildView(snapshot: Snapshot, plan: PlanView, readLines: ModelInput['re
 				return { holes, holesDone: holes.filter((h) => isHoleDone(h.state)).length };
 			})() : {}),
 			...(b?.frameNote ? { frameNote: b.frameNote } : {}),
-			canRequestFrame: !task.isDone && current.writer === 'user' && current.level === 4 && (current.state === 'todo' || current.state === 'open')
-				&& hasOpenDecision,
+			// the writer changes before Claude starts the step, also for an open step of the user (decision 44)
+			canSetWriter: !task.isDone && (current.state === 'todo' || (current.state === 'open' && current.writer === 'user')),
+			firstWriter: buildWriterOf(levelOf(current.step, risk, levels).level),
 			isFrameRequested: !!b?.isFrameRequested,
 			...(decisions ? { decisions } : {}),
 		};
@@ -680,30 +720,12 @@ function briefView(snapshot: Snapshot, brief: NonNullable<ModelInput['brief']>):
 // briefText: the text of brief.md. The page shows its specs, its work out of scope and its conditions of done next to the
 // issues of the area The brief
 function reviewView(snapshot: Snapshot, readLines: ModelInput['readLines'], briefText?: string): ReviewView | undefined {
-	const { task, review, root, build, risk, levels } = snapshot;
+	const { task, review, root, build } = snapshot;
 	if (!task || task.stage !== 'review' || !root) {
 		return undefined;
 	}
-	// the steps of the issues (P22)
-	const current = isStepStage(task) ? currentStep(workPlan(snapshot), risk, levels, build) : undefined;
-	const issueStepsById = new Map(issueSteps(review).map((s) => [s.id, s]));
-	const stepView = (i: ReviewIssue): IssueStepView | undefined => {
-		const s = issueStepsById.get(i.id);
-		if (!s) {
-			return undefined;
-		}
-		const b = build?.steps[s.id];
-		const l = levelOf(s, risk, levels);
-		const level = b?.level ?? l.level;
-		const state = stateOf(build, s.id);
-		return {
-			state, isCurrent: current?.step.id === s.id, level, levelName: level ? `${LEVEL_INFO[level].name}, level ${level} of 5` : 'No level',
-			writer: b?.writer ?? buildWriterOf(level), writerText: WRITER_TEXT[b?.writer ?? buildWriterOf(level)], ...(l.user ? { user: l.user } : {}),
-			...(risk?.steps[s.id]?.level ? { heatLevel: risk.steps[s.id].level! } : {}),
-			isLevelEditable: !task.isDone && (state === 'todo' || (state === 'open' && b?.writer === 'user')),
-			...(s.decisions ? { decisions: stepDecisionsView(s, levels) } : {}),
-		};
-	};
+	// the part of the current round (decision 43)
+	const { phase, round: roundNumber } = reviewPhase(review);
 	const options = review?.options ?? DEFAULT_OPTIONS;
 	const rounds = new Map((review?.rounds ?? []).map((r) => [r.n, r]));
 	const last = review?.rounds[review.rounds.length - 1];
@@ -722,25 +744,47 @@ function reviewView(snapshot: Snapshot, readLines: ModelInput['readLines'], brie
 				return 'Pre-existing: the problem was in the code before the task.';
 			case 'cap': {
 				const r = rounds.get(i.lastRound);
-				return `Above the cap of ${r ? count(r.cap, 'step') : 'the steps'}${r ? ` for ${count(r.changedLines, 'changed line')}` : ''}.`;
+				return `Above the cap of ${r ? count(r.cap, 'issue') : 'the issues'} to fix${r ? ` for ${count(r.changedLines, 'changed line')}` : ''}.`;
 			}
+			case 'later':
+				return 'You keep it for later.';
 		}
 		return undefined;
 	};
 	const issueView = (i: ReviewIssue): IssueView => {
 		const listReason = i.list === 'second' ? reasonOf(i) : undefined;
-		const step = stepView(i);
 		return {
 			id: i.id, title: i.title, summary: i.summary, scenario: { ...i.scenario }, category: i.category, areaName: AREA_INFO[areaOf(i.category)].name,
 			severity: i.severity, origin: i.origin, verdict: i.verdict, source: i.source, place: placeView(i.place), fixPlaces: (i.fixPlaces ?? []).map(placeView),
 			decisions: i.decisions.map((d) => ({ id: d.id, question: d.question, ...(d.options ? { options: [...d.options] } : {}) })), tools: [...i.tools],
 			list: i.list, ...(listReason ? { listReason } : {}), state: i.state, ...(i.closed ? { reason: i.closed.reason } : {}),
 			...(i.evidence ? { evidence: i.evidence } : {}), round: i.lastRound, ...(i.isUserStep ? { isUserStep: true } : {}),
-			...(step ? { step } : {}),
 		};
 	};
-	// the list of steps in the sequence of the steps. The second list: the issues of the last round first
+	// the rows of the issues page (decision 43): the issues of the review and of the user, with the notes of the user
+	const notes = review?.notes ?? {};
+	const userView = (u: UserIssue): UserIssueView => ({ id: u.id, text: u.text, list: u.list, state: u.state, round: u.round });
+	const rowOf = (x: FixItem): FixRowView => (x.kind === 'review' ? { kind: 'review', issue: issueView(x.issue), note: notes[x.issue.id] ?? '' }
+		: { kind: 'user', issue: userView(x.issue), note: notes[x.issue.id] ?? '' });
 	const issues = review?.issues ?? [];
+	const users = review?.userIssues ?? [];
+	const toFixRows = toFix(review).map(rowOf);
+	const later = [
+		...issues.filter((i) => i.list === 'second' && i.state === 'open').sort((a, b) => b.lastRound - a.lastRound).map((issue) => rowOf({ kind: 'review', issue })),
+		...users.filter((u) => u.list === 'second' && u.state === 'open').map((issue) => rowOf({ kind: 'user', issue })),
+	];
+	const fixed = [
+		...issues.filter((i) => i.state === 'fixed').map((issue) => rowOf({ kind: 'review', issue })),
+		...users.filter((u) => u.state === 'fixed').map((issue) => rowOf({ kind: 'user', issue })),
+	];
+	// the check of the rule: an important new issue that the review confirmed stays in the list to fix, or the user closes
+	// it with a reason
+	const checks = phase === 'issues' ? issues.filter((i) => i.state === 'open' && i.secondReason === 'later' && i.severity === 'important'
+		&& i.verdict === 'confirmed' && i.origin === 'new').map((i) => ({ text: `${i.id} is important and confirmed, but it is in the list for later.`, isWarning: true })) : [];
+	// the plan of the fixes of the round, as the plan page shows a plan
+	const plan = currentFixPlan(review);
+	const fixPlan = plan ? planView(snapshot, readLines, false, { steps: plan.steps }) : undefined;
+	const fixDone = plan ? plan.steps.filter((s) => stateOf(build, s.id) === 'done').length : 0;
 	// the next round (P23), and the feedback of the user from all tasks (P35)
 	const nextRound = roundOf(review);
 	const isNewRound = !!last && nextRound > last.n;
@@ -752,9 +796,11 @@ function reviewView(snapshot: Snapshot, readLines: ModelInput['readLines'], brie
 			isTooNoisy: a.isTooNoisy, isInFocus: options.areas.includes(a.area),
 		})),
 		...(fb.cap !== undefined ? { cap: fb.cap } : {}),
-		text: `You decided ${count(fb.decided, 'issue')} of the lists of steps in this folder. `
-			+ (fb.cap !== undefined ? `Your feedback sets the cap on the steps to ${count(fb.cap, 'step')} or fewer.` : `From ${FEEDBACK_MIN} decided issues, your feedback moves the cap on the steps.`),
+		text: `You decided ${count(fb.decided, 'issue')} of the lists to fix in this folder. `
+			+ (fb.cap !== undefined ? `Your feedback sets the cap on the list to fix to ${count(fb.cap, 'issue')} or fewer.` : `From ${FEEDBACK_MIN} decided issues, your feedback moves the cap on the list to fix.`),
 	} : undefined;
+	const open = toFixRows.length;
+	const closed = issues.filter((i) => i.state === 'closed').length;
 	return {
 		effort: options.effort,
 		areas: [...options.areas],
@@ -763,9 +809,6 @@ function reviewView(snapshot: Snapshot, readLines: ModelInput['readLines'], brie
 		allAreas: AREAS.map((a) => ({ id: a, name: AREA_INFO[a].name, looksFor: AREA_INFO[a].looksFor })),
 		maxText: MAX_FOCUS_TEXT,
 		maxReason: MAX_ISSUE_REASON,
-		maxAnswer: MAX_DECISION_ANSWER,
-		maxQuestion: MAX_DECISION_QUESTION,
-		maxUserDecisions: MAX_USER_DECISIONS,
 		prompt: reviewPrompt(task.title, options, nextRound),
 		nextRound,
 		isNewRound,
@@ -789,23 +832,72 @@ function reviewView(snapshot: Snapshot, readLines: ModelInput['readLines'], brie
 				changedLines: last.changedLines, ...(last.note ? { note: last.note } : {}),
 			},
 		} : {}),
-		steps: issues.filter((i) => i.list === 'steps').map(issueView),
-		second: issues.filter((i) => i.list === 'second').sort((a, b) => b.lastRound - a.lastRound).map(issueView),
-		open: issues.filter((i) => i.list === 'steps' && i.state === 'open').length,
-		closed: issues.filter((i) => i.state === 'closed').length,
+		phase,
+		roundNumber,
+		toFix: toFixRows,
+		later,
+		fixed,
+		closedIssues: issues.filter((i) => i.state === 'closed').map(issueView),
+		checks,
+		...(fixPlan ? { fixPlan } : {}),
+		fixSteps: { done: fixDone, total: plan?.steps.length ?? 0 },
+		maxNote: MAX_ISSUE_NOTE,
+		maxUserIssue: MAX_USER_ISSUE,
+		canEditIssues: !task.isDone && phase === 'issues',
+		canWriteNotes: !task.isDone && (phase === 'issues' || phase === 'plan'),
+		taskDone: taskDoneGate(!!last, open),
+		open,
+		closed,
 	};
 }
 
-// The gate of stage 6, "The task is done". It never waits (P16)
-function reviewGate(review: ReviewView): GateView {
+// The gate "The task is done" of stage 6. It never waits (P16)
+function taskDoneGate(hasReview: boolean, open: number): GateView {
 	const warnings = [
-		...(!review.round ? ['Claude did not review the task yet.'] : []),
-		...(review.open > 0 ? [`${count(review.open, 'issue')} of the list of steps ${review.open === 1 ? 'is' : 'are'} open. The ledger keeps them as open.`] : []),
+		...(!hasReview ? ['Claude did not review the task yet.'] : []),
+		...(open > 0 ? [`${count(open, 'issue')} to fix ${open === 1 ? 'is' : 'are'} open. The ledger keeps them as open.`] : []),
 	];
 	return {
 		label: GATE_LABEL['task-done'], note: 'Your gate. It ends the task. Then you make the commit.', isEnabled: true,
 		...(warnings.length > 0 ? { warning: warnings.join(' ') } : {}),
 	};
+}
+
+// The gate of stage 6 for the part of the round (decision 43). Before a review, and with no issue to fix, it is "The task
+// is done"
+function reviewGate(review: ReviewView): GateView {
+	switch (review.phase) {
+		case 'issues': {
+			if (review.toFix.length === 0) {
+				return review.taskDone;
+			}
+			const warnings = review.checks.filter((c) => c.isWarning);
+			return {
+				label: warnings.length === 0 ? 'Accept the issues' : `Accept with ${count(warnings.length, 'warning')}`,
+				note: 'Your gate. It records the issues to fix in your sequence.', isEnabled: true, after: 'Plan the fixes.',
+				...(warnings.length > 0 ? { warning: warnings.map((w) => w.text).join(' ') } : {}),
+			};
+		}
+		case 'plan': {
+			const steps = review.fixPlan?.steps ?? [];
+			const missing = review.toFix.filter((r) => !steps.some((s) => s.fixes?.includes(r.issue.id))).map((r) => r.issue.id);
+			const reason = steps.length === 0 ? 'Claude did not give the plan of the fixes yet. Tell Claude: "Plan the fixes."'
+				: missing.length > 0 ? `The plan of the fixes has no step for ${missing.join(', ')}. Tell Claude to plan ${missing.length === 1 ? 'it' : 'them'} too.` : '';
+			return {
+				label: 'Accept the fix plan', note: 'Your gate. Then the steps of the fixes go in sequence, as the steps of the build.', isEnabled: !reason,
+				...(reason ? { reason } : {}),
+			};
+		}
+		case 'fixes': {
+			const left = review.fixSteps.total - review.fixSteps.done;
+			return {
+				label: 'The fixes are done', note: 'Your gate. It ends the round. Then the next round checks the fixes.', isEnabled: left === 0,
+				...(left > 0 ? { reason: `${count(left, 'step')} of the fixes ${left === 1 ? 'is' : 'are'} not done.` } : {}),
+			};
+		}
+		default:
+			return review.taskDone;
+	}
 }
 
 // The gate of stage 5: the gate of the current step, or "The build is done" after the last step
@@ -1051,8 +1143,8 @@ function taskView(input: ModelInput): TaskView | null {
 	const survey = task.stage !== 'brief' ? surveyView(snapshot, readLines) : undefined;
 	const order = orderView(snapshot, survey);
 	const plan = task.stage === 'plan' || task.stage === 'build' || task.stage === 'review' ? planView(snapshot, readLines) : undefined;
-	// stage 6: the steps of the issues after the steps of the plan (P22)
-	const work = task.stage === 'build' ? plan : task.stage === 'review' && issueSteps(snapshot.review).length > 0 ? planView(snapshot, readLines, true) : undefined;
+	// stage 6: the steps of the fixes after the steps of the plan (decision 43)
+	const work = task.stage === 'build' ? plan : task.stage === 'review' && fixSteps(snapshot.review).length > 0 ? planView(snapshot, readLines, true) : undefined;
 	const build = work ? buildView(snapshot, work, readLines, navigatorView(snapshot, voice, pauseSeconds)) : undefined;
 	const review = reviewView(snapshot, readLines, briefInput?.text);
 	const gate = gateView(task, brief, survey, order, plan, build, review);

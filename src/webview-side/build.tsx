@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import type {
 	BuildStepView, CalloutView, CurrentStepView, HintPlaceView, HoleView, LineAnswerView, NavigatorView, ReceiptChangeView, ReceiptView, TaskView,
 } from '../views/protocol';
-import { GateBlock, PlaceLink, TellClaude, WriterBadges } from './common';
+import { GateBlock, PlaceLink, TellClaude, WriterBadges, WriterChoice } from './common';
 import { LedgerPanel, LooseEnds } from './ledger';
 import { post } from './vscode';
 
@@ -26,13 +26,14 @@ export function StateChip({ state, writer }: { state: BuildStepView['state']; wr
 	return <span class={`state-chip st-${state} ${writer}`}>{state === 'open' && writer === 'user' ? 'you write' : STATE_TEXT[state]}</span>;
 }
 
-function StepList({ steps }: { steps: BuildStepView[] }) {
+// The steps in sequence. In stage 6, the steps of the fixes with their ids (decision 43)
+export function StepList({ steps, label = 'The steps of the plan' }: { steps: BuildStepView[]; label?: string }) {
 	return (
-		<ol class="build-steps" aria-label="The steps of the plan">
+		<ol class="build-steps" aria-label={label}>
 			{steps.map((s) => (
 				<li class={`build-step st-${s.state}${s.isCurrent ? ' current' : ''}`} aria-current={s.isCurrent ? 'step' : undefined}>
 					<span class={`state-glyph st-${s.state}`} aria-hidden="true">{s.state === 'done' ? '✓' : s.isCurrent ? '●' : '○'}</span>
-					<span class={`step-num lv-${s.level ?? 0}`}>{s.n}</span>
+					<span class={`step-num lv-${s.level ?? 0}`}>{s.fixes ? s.ref : s.n}</span>
 					<span class="grow">{s.title}</span>
 					<span class="dots" title={s.writerText}>
 						{s.writer !== 'user' && <span class="dot claude" />}
@@ -317,15 +318,16 @@ function StepDecisions({ step }: { step: CurrentStepView }) {
 				))}
 			</ul>
 			<p class="muted small">
-				{text}{step.issue ? '' : ' An answer is in words on the plan page, and the writer puts it into the code.'}
+				{text}{step.fixes ? ' An answer is in words on the page of the fix plan, and the writer puts it into the code.'
+					: step.issue ? '' : ' An answer is in words on the plan page, and the writer puts it into the code.'}
 			</p>
 		</>
 	);
 }
 
-// The current step. In stage 6, the step of an issue has the id of the issue, for example "Step I3"
+// The current step. In stage 6, a step of the fixes has its own id, for example "Step F2" (decision 43)
 export function CurrentStep({ step, request, maxNote }: { step: CurrentStepView; request?: string; maxNote: number }) {
-	const name = step.issue ? `Step ${step.ref}` : `Step ${step.n} of ${step.total}`;
+	const name = step.issue || step.fixes ? `Step ${step.ref}` : `Step ${step.n} of ${step.total}`;
 	return (
 		<section class={`current-step lv-${step.level ?? 0}`} aria-label={name}>
 			<div class="row-head">
@@ -334,6 +336,7 @@ export function CurrentStep({ step, request, maxNote }: { step: CurrentStepView;
 				<span class={`level-name small lv-${step.level ?? 0}`}>{step.levelName}</span>
 			</div>
 			<p class="title">{step.title}</p>
+			{step.fixesText && <p class="small">{step.fixesText}.</p>}
 			<p class="muted">{step.writerText}</p>
 			<p class="places">
 				{/* in a step of the user and in the holes of a frame, the user writes, so the places open the text editor (decision 34) */}
@@ -361,15 +364,7 @@ export function CurrentStep({ step, request, maxNote }: { step: CurrentStepView;
 					<span class="mono">{step.scope.join(', ')}</span>. Do not change these files now.
 				</p>
 			)}
-			{step.canRequestFrame && (
-				<div class="frame-request">
-					<button type="button" class="btn secondary small" onClick={() => post({ type: 'requestFrame', step: step.id })}>I want a frame</button>
-					<p class="muted small">
-						Claude writes the lines with no decision, and each decision is a hole for you. Your click records the decision. Then tell Claude:
-						"Give me a frame for step {step.ref}."
-					</p>
-				</div>
-			)}
+			{step.canSetWriter && <WriterChoice step={step.id} writer={step.writer} first={step.firstWriter} />}
 			{step.holes && step.state === 'holes' && <Frame step={step} />}
 			{step.writer === 'user' && step.state === 'open' && (
 				<p class="muted small">

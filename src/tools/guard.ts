@@ -94,12 +94,13 @@ export function decide(input: GuardInput, state: GuardState): GuardDecision {
 				+ 'Change only the files of the scope. Give each other place that the step needs as a loose end to shotgun_submit_errand.',
 		};
 	}
-	// stage 6: the review changes no file. Only an open step of Claude for an issue opens its scope
+	// stage 6: the review changes no file. Only an open step of Claude for a fix opens its scope (decision 43)
 	if (task.stage === 'review') {
 		return {
 			decision: 'deny',
 			reason: `Shotgun: the task "${task.title}" is in ${stageText(task.stage)}. `
-				+ `${build ? build.closed : `${STAGE_INFO.review.guard} Give the issues to Shotgun with shotgun_submit_review. The user decides each issue.`} `
+				+ `${build ? build.closed : `${STAGE_INFO.review.guard} Give the issues with shotgun_submit_review, and the plan of the fixes with `
+					+ 'shotgun_submit_fix_plan. The user decides each issue.'} `
 				+ 'For work outside of the task, the user selects "Shotgun: Pause".',
 		};
 	}

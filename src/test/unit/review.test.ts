@@ -8,17 +8,17 @@ import { ledgerMarkdown } from '../../session/ledger';
 import { hashLine, LineStore } from '../../session/lines';
 import { IS_CASE_SENSITIVE } from '../../session/paths';
 import {
-	applyReview, capOf, checkReview, DEFAULT_OPTIONS, EMPTY_REVIEW, feedbackOf, IssueInput, issueSteps, issuesToCheck, parseReview, ReviewContext, ReviewFile,
-	reviewPrompt, roundOf, workPlanOf,
+	applyReview, capOf, checkReview, currentFixPlan, DEFAULT_OPTIONS, EMPTY_REVIEW, feedbackOf, fixSteps, IssueInput, issuesToCheck, parseReview, ReviewContext,
+	ReviewFile, reviewPhase, reviewPrompt, ReviewRound, roundOf, toFix, workPlanOf,
 } from '../../session/review';
 import { SessionStore, stepNext, workPlan } from '../../session/store';
-import { ReviewApi, reviewData, ReviewDeps, submitReview } from '../../tools/review';
+import { ReviewApi, reviewData, ReviewDeps, submitFixPlan, submitReview } from '../../tools/review';
 import { buildModel } from '../../views/model';
 import { isFromView } from '../../views/views';
 import { fakeEngine, makeProject, SOLVER } from './fixture';
 
-// Stage 6, the review (phases 12 and 13): the checks of the issues, the 2 lists, the rounds and the steps of the
-// issues. The tests use the store, the tools and the views
+// Stage 6, the review (phases 12 to 14): the checks of the issues, the 2 lists, the rounds, the issues page, the plan of
+// the fixes and the fixes. The tests use the store, the tools and the views
 
 // A correct issue of Claude at the changed line 6 of src/solver.cpp
 const issue = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
@@ -43,6 +43,20 @@ const rippleFacts = (): RippleFacts => ({
 	changes: [{ file: 'src/solver.cpp', function: 'solve', lines: [6], bodies: [{ file: 'src/solver.cpp', function: 'solve', depth: 0, lines: [8], steps: [], exits: [] }] }],
 });
 
+// A correct plan of the fixes for the issues I1, I2 and U1 (decision 43)
+const fixPlan = () => ({
+	steps: [
+		{
+			title: 'Stop at the limit', fixes: ['I1', 'I2'], places: [{ file: 'src/solver.cpp', lines: [6, 6], code: 'plan.step(i);' }],
+			text: 'Stop the loop at the cycle limit.', checks: ['The loop stops at the limit.'], decisions: [{ question: 'Stop, or skip the rest of the steps?' }],
+		},
+		{
+			title: 'Log the level', fixes: ['U1'], places: [{ file: 'src/solver.cpp', lines: [8, 8], code: 'return plan.result();' }],
+			text: 'Give the log line a level.', checks: ['The log line has a level.'], decisions: [],
+		},
+	],
+});
+
 suite('Review', () => {
 	let root: string;
 	let ctx: ReviewContext;
@@ -51,6 +65,24 @@ suite('Review', () => {
 		assert.deepStrictEqual(checked.problems, []);
 		return checked.issues[0];
 	};
+	// a task in stage 6 after the build with 1 step of the user
+	const storeInReview = (): SessionStore => {
+		const store = new SessionStore(root, () => new Date(Date.UTC(2026, 10, 17, 10, 0, 0)));
+		store.newTask('Cycle limit');
+		store.passGate('brief-ready');
+		store.passGate('order-tasks');
+		store.passGate('accept-order');
+		store.writePlan({ steps: [{ id: 'S1', title: 'The limit', task: 'T1', hooks: [], places: [{ file: 'src/solver.cpp', lines: [6, 6] }], text: 'Add the limit.', checks: [], decisions: [] }] });
+		store.acceptPlan({ commit: 'abc1234', dirty: [] });
+		store.startStep('S1', { writer: 'user', level: null, scope: ['src/solver.cpp'] });
+		store.finishStep('S1', 'step-done');
+		store.passGate('build-done');
+		return store;
+	};
+	const viewOf = (store: SessionStore) => buildModel({
+		version: '0.4.0', snapshot: store.snapshot, dataflow: { state: 'ready', version: '0.6.2', engine: 'ready' },
+		claude: { dataflow: 'connected', marketplace: 'ok', plugin: 'on' }, readLines: (f) => readText(f)?.split(/\r?\n/),
+	});
 
 	setup(() => {
 		root = makeProject('shotgun-review-');
@@ -62,7 +94,7 @@ suite('Review', () => {
 	});
 	teardown(() => rmSync(root, { recursive: true, force: true }));
 
-	test('The cap on the steps comes from the size of the diff (P22)', () => {
+	test('The cap on the list to fix comes from the size of the diff (P22)', () => {
 		assert.deepStrictEqual([capOf(0), capOf(99), capOf(250), capOf(799), capOf(5000)], [3, 3, 5, 10, 10]);
 	});
 
@@ -129,7 +161,7 @@ suite('Review', () => {
 		assert.deepStrictEqual(checkReview({ issues: [race()] }, ctx).problems, []);
 	});
 
-	test('The lists: the confirmed new issues up to the cap are steps, the important issues first, and the others go into the second list', () => {
+	test('The lists: the confirmed new issues up to the cap are to fix, the important issues first, and the others are for later', () => {
 		const inputs = [
 			inputOf(issue({ title: 'Minor', severity: 'minor' })),
 			inputOf(issue({ title: 'Important 1' })),
@@ -144,7 +176,7 @@ suite('Review', () => {
 			'I2 Important 1 steps', 'I3 Plausible second plausible', 'I4 Old second pre-existing', 'I5 Important 2 steps', 'I6 Important 3 steps',
 			'I1 Minor second cap',
 		]);
-		assert.deepStrictEqual([review.rounds[0].cap, review.nextId], [3, 7]);
+		assert.deepStrictEqual([review.rounds[0].cap, review.nextId, review.sequence], [3, 7, ['I2', 'I5', 'I6']]);
 	});
 
 	test('A new review of the same round replaces its open issues, and keeps the closed issues. A repeated issue keeps its id', () => {
@@ -165,19 +197,34 @@ suite('Review', () => {
 		assert.deepStrictEqual(reopened.issues.map((i) => i.id), ['I2']);
 	});
 
-	test('The round: 1 for the first review, and the same round while no issue is fixed (P23)', () => {
-		assert.strictEqual(roundOf(undefined), 1);
+	test('The parts of a round: the review, the issues, the plan of the fixes and the fixes. The next round starts after the fixes (P23, decision 43)', () => {
+		assert.deepStrictEqual(reviewPhase(undefined), { phase: 'review', round: 1 });
 		const round = { n: 1, effort: 'low' as const, areas: ['correctness' as const], changedLines: 1, hunks: [] };
 		const review = applyReview(EMPTY_REVIEW, round, [inputOf(issue())], 't').review;
-		assert.strictEqual(roundOf(review), 1);
-		assert.strictEqual(roundOf({ ...review, issues: review.issues.map((i) => ({ ...i, state: 'fixed' as const })) }), 2);
+		const at = (gates: Partial<ReviewRound>) => reviewPhase({ ...review, rounds: review.rounds.map((r) => ({ ...r, ...gates })) });
+		assert.deepStrictEqual([reviewPhase(review), at({ accepted: 'a' }), at({ accepted: 'a', planAccepted: 'b' }), at({ accepted: 'a', planAccepted: 'b', fixesDone: 'c' })],
+			[{ phase: 'issues', round: 1 }, { phase: 'plan', round: 1 }, { phase: 'fixes', round: 1 }, { phase: 'review', round: 2 }]);
+		// a fixed issue alone starts no new round
+		assert.strictEqual(roundOf({ ...review, issues: review.issues.map((i) => ({ ...i, state: 'fixed' as const })) }), 1);
+		assert.strictEqual(roundOf({ ...review, rounds: review.rounds.map((r) => ({ ...r, fixesDone: 'c' })) }), 2);
 	});
 
-	test('review.json keeps the base, the options, the rounds and the issues', () => {
-		const review = {
-			...applyReview(EMPTY_REVIEW, { n: 1, effort: 'high', areas: ['threads'], text: 'Look at the locks.', changedLines: 120, hunks: ['a1b2c3'], note: 'All read.' },
-				[inputOf(issue({ fixPlaces: [{ file: 'src/solver.cpp', lines: [8, 8], code: 'return plan.result();' }] }))], 't').review,
-			base: { commit: 'abc1234', dirty: ['README.md'], time: 't0' }, options: { effort: 'high' as const, areas: ['threads' as const], text: 'Look at the locks.' },
+	test('review.json keeps the base, the options, the rounds, the issues, the sequence, the notes, the issues of the user and the plans of the fixes', () => {
+		const first = applyReview(EMPTY_REVIEW, { n: 1, effort: 'high', areas: ['threads'], text: 'Look at the locks.', changedLines: 120, hunks: ['a1b2c3'], note: 'All read.' },
+			[inputOf(issue({ fixPlaces: [{ file: 'src/solver.cpp', lines: [8, 8], code: 'return plan.result();' }] })), inputOf(issue({ title: 'Later' }))], 't').review;
+		const review: ReviewFile = {
+			...first,
+			rounds: first.rounds.map((r) => ({ ...r, accepted: 't1', planAccepted: 't2' })),
+			issues: first.issues.map((i) => (i.id === 'I2' ? { ...i, list: 'second' as const, secondReason: 'later' as const } : i)),
+			base: { commit: 'abc1234', dirty: ['README.md'], time: 't0' }, options: { effort: 'high', areas: ['threads'], text: 'Look at the locks.' },
+			sequence: ['I1', 'U1'], notes: { I1: 'Use an atomic.' }, nextUserId: 2,
+			userIssues: [{ id: 'U1', text: 'The log line has no level.', round: 1, list: 'steps', state: 'open' }],
+			fixPlans: [{
+				round: 1, time: 't2', steps: [{
+					id: 'F1', title: 'Stop', task: 'review', hooks: [], places: [{ file: 'src/solver.cpp', lines: [6, 6], code: 'plan.step(i);', codeLine: 6 }], text: 'x',
+					checks: ['y'], decisions: [], fixes: ['I1', 'U1'],
+				}],
+			}],
 		};
 		assert.deepStrictEqual(parseReview(jsonText(review), 'fix'), JSON.parse(jsonText(review)));
 		assert.throws(() => parseReview('{"version":2,"rounds":[],"issues":[],"nextId":1}', 'fix'), /reads only version 1/);
@@ -192,7 +239,7 @@ suite('Review', () => {
 			/at the effort max with the focus threads and races\. Look also at this point of mine: Look at the locks\. Get the data/);
 	});
 
-	test('Stage 6 in the store, the tools and the views: the base, the options, the review, the closed issues and the gate', async () => {
+	test('Stage 6 in the store, the tools and the views: the base, the options, the review, the closed issues and the gates', async () => {
 		const store = new SessionStore(root, () => new Date(Date.UTC(2026, 10, 17, 10, 0, 0)));
 		store.newTask('Cycle limit');
 		store.passGate('brief-ready');
@@ -219,38 +266,42 @@ suite('Review', () => {
 		assert.throws(() => store.setReviewOptions({ effort: 'huge' as 'high', areas: ['threads'] }), /The effort must be 1 of low, medium, high, xhigh, max/);
 		assert.throws(() => store.setReviewOptions({ effort: 'low', areas: [] }), /Select 1 area of the focus or more/);
 
+		// before the review: the gate "The task is done" with a warning
+		let task = viewOf(store).task!;
+		assert.deepStrictEqual([task.review?.phase, task.gate?.label, task.gate?.warning], ['review', 'The task is done', 'Claude did not review the task yet.']);
+
 		// get_review and submit_review
 		const data = await reviewData(deps) as Record<string, any>;
-		assert.deepStrictEqual([data.round, data.effort.level, data.capOnSteps, data.base.commit, data.base.notCommittedBefore], [1, 'high', 3, 'abc1234', ['README.md']]);
+		assert.deepStrictEqual([data.round, data.phase, data.effort.level, data.capOnSteps, data.base.commit, data.base.notCommittedBefore], [1, 'review', 'high', 3, 'abc1234', ['README.md']]);
 		assert.deepStrictEqual(data.files[0].hunks.map((h: { id: string }) => h.id), ['h1']);
 		assert.deepStrictEqual(data.ripple[0], { file: 'src/solver.cpp', function: 'solve', depth: 0, lines: '8' });
 		await assert.rejects(submitReview(deps, { issues: [issue({ place: { file: 'src/solver.cpp', lines: [1, 1], code: '#include "solver.h"' } })] }),
 			/not in the diff of the task or in its ripple/);
 		const result = await submitReview(deps, { issues: [issue(), issue({ title: 'Maybe', verdict: 'plausible' })], note: 'All read.' }) as Record<string, any>;
-		assert.deepStrictEqual([result.round, result.steps.map((i: { id: string }) => i.id), result.second.map((i: { id: string }) => i.id)], [1, ['I1'], ['I2']]);
+		assert.deepStrictEqual([result.round, result.toFix.map((i: { id: string }) => i.id), result.forLater.map((i: { id: string }) => i.id)], [1, ['I1'], ['I2']]);
+		assert.match(result.next, /The issues page of Shotgun shows the issues to fix and the issues for later/);
 		assert.deepStrictEqual(store.snapshot.review?.rounds.map((r) => [r.n, r.effort, r.cap, r.changedLines, r.note]), [[1, 'high', 3, 1, 'All read.']]);
 
-		// the views: the 2 lists, the prompt and the gate
-		const view = () => buildModel({
-			version: '0.2.0', snapshot: store.snapshot, dataflow: { state: 'ready', version: '0.6.2', engine: 'ready' },
-			claude: { dataflow: 'connected', marketplace: 'ok', plugin: 'on' }, readLines: (f) => readText(f)?.split(/\r?\n/),
-		}).task!;
-		let task = view();
-		assert.deepStrictEqual([task.review?.steps.map((i) => i.id), task.review?.second.map((i) => i.listReason), task.request],
+		// the views: the 2 lists, the prompt and the gates
+		task = viewOf(store).task!;
+		const first = task.review!.toFix[0];
+		assert.deepStrictEqual([task.review?.toFix.map((r) => r.issue.id), task.review?.later.map((r) => (r.kind === 'review' ? r.issue.listReason : '')), task.request],
 			[['I1'], ['Plausible: the verify pass did not confirm the failure scenario.'], undefined]);
-		assert.deepStrictEqual(task.review?.steps[0].place, { name: 'src/solver.cpp:6', path: path.join(root, 'src', 'solver.cpp'), line: 6, lines: [6, 6] });
+		assert.deepStrictEqual(first.kind === 'review' ? first.issue.place : undefined, { name: 'src/solver.cpp:6', path: path.join(root, 'src', 'solver.cpp'), line: 6, lines: [6, 6] });
 		assert.match(task.review?.prompt ?? '', /at the effort high with the focus threads and races\. Look also at this point of mine: Look at the locks\./);
-		assert.deepStrictEqual([task.gate?.label, task.gate?.warning], ['The task is done', '1 issue of the list of steps is open. The ledger keeps them as open.']);
+		assert.deepStrictEqual([task.gate?.label, task.gate?.after, task.review?.taskDone.label, task.review?.taskDone.warning],
+			['Accept the issues', 'Plan the fixes.', 'The task is done', '1 issue to fix is open. The ledger keeps them as open.']);
 		assert.ok(task.ledger);
 
-		// "Not a problem" with a reason, and open again
+		// "Not a problem" with a reason, and open again. With no issue to fix, the gate is "The task is done"
 		store.setIssueClosed('I1', '  The loop has a limit in plan.steps. ');
 		assert.deepStrictEqual(store.snapshot.review?.issues.find((i) => i.id === 'I1')?.closed, { reason: 'The loop has a limit in plan.steps.', time: '2026-11-17T10:00:00.000Z' });
 		assert.throws(() => store.setIssueClosed('I1', ' '), /Give the reason/);
-		task = view();
-		assert.deepStrictEqual([task.review?.open, task.review?.closed, task.gate?.warning], [0, 1, undefined]);
+		task = viewOf(store).task!;
+		assert.deepStrictEqual([task.review?.open, task.review?.closed, task.gate?.label, task.gate?.warning], [0, 1, 'The task is done', undefined]);
+		assert.throws(() => store.acceptIssues(), /The list to fix has no issue/);
 		store.setIssueClosed('I1', undefined);
-		assert.strictEqual(store.snapshot.review?.issues.find((i) => i.id === 'I1')?.state, 'open');
+		assert.deepStrictEqual([store.snapshot.review?.issues.find((i) => i.id === 'I1')?.state, store.snapshot.review?.sequence], ['open', ['I1']]);
 		const kinds = store.snapshot.decisions.map((d) => d.kind);
 		assert.deepStrictEqual(kinds.slice(-4), ['review-options', 'review', 'issue-close', 'issue-open']);
 
@@ -262,95 +313,148 @@ suite('Review', () => {
 		await assert.rejects(reviewData(deps), /The task is done/);
 	});
 
-	test('Each issue of the list of steps is a step of the user, with its own gate and level, and the gate fixes the issue (phase 13)', async () => {
-		const store = new SessionStore(root, () => new Date(Date.UTC(2026, 10, 17, 10, 0, 0)));
-		store.newTask('Cycle limit');
-		store.passGate('brief-ready');
-		store.passGate('order-tasks');
-		store.passGate('accept-order');
-		store.writePlan({ steps: [{ id: 'S1', title: 'The limit', task: 'T1', hooks: [], places: [{ file: 'src/solver.cpp', lines: [6, 6] }], text: 'Add the limit.', checks: [], decisions: [] }] });
-		store.acceptPlan({ commit: 'abc1234', dirty: [] });
-		store.startStep('S1', { writer: 'user', level: null, scope: ['src/solver.cpp'] });
-		store.finishStep('S1', 'step-done');
-		store.passGate('build-done');
-		const deleted: string[] = [];
+	test('A round goes from the issues through the plan of the fixes to the fixes, and the next round checks the fixes (decision 43)', async () => {
+		const store = storeInReview();
 		const lines = new LineStore();
 		lines.track('src/solver.cpp', SOLVER.split('\n'));
 		let hunk: string | undefined;
 		const api: ReviewApi = { diff: async () => diffFacts(root, hunk), ripple: async () => rippleFacts() };
 		const deps: ReviewDeps = {
 			store, folders: () => [root], readText, engine: () => fakeEngine(), calls: () => new Set(['get_place']), review: () => api, lines, log: () => undefined,
-			base: () => ({ mark: async () => ({}), diff: async () => diffFacts(root), deleteMark: async (name: string) => deleted.push(name) }),
 		};
+		const phase = () => reviewPhase(store.snapshot.review);
+		const ids = () => toFix(store.snapshot.review).map((x) => x.issue.id);
+
 		// before the first review, stage 6 has no step
-		assert.deepStrictEqual([workPlan(store.snapshot)?.steps.map((s) => s.id), store.current, stepNext(store.snapshot, undefined)], [['S1'], undefined, undefined]);
+		assert.deepStrictEqual([phase(), workPlan(store.snapshot)?.steps.map((s) => s.id), store.current], [{ phase: 'review', round: 1 }, ['S1'], undefined]);
 		await submitReview(deps, { issues: [issue(), issue({ title: 'Maybe', verdict: 'plausible' }), issue({ title: 'Old', origin: 'pre-existing' })] });
+		assert.deepStrictEqual([phase(), ids(), store.current], [{ phase: 'issues', round: 1 }, ['I1'], undefined]);
+		assert.match(stepNext(store.snapshot, undefined)?.next ?? '', /^Round 1: the user puts the issues to fix in sequence on the issues page/);
 
-		// I1 is the current step after the steps of the plan. The user writes it at level 4 (decision 37)
-		const current = store.current!;
-		assert.deepStrictEqual([workPlan(store.snapshot)?.steps.map((s) => s.id), current.step.id, current.ref, current.level, current.writer, current.state],
-			[['S1', 'I1'], 'I1', 'I1', 4, 'user', 'todo']);
-		assert.deepStrictEqual([current.step.places.map((p) => p.file), current.step.checks], [['src/solver.cpp'], ['The failure scenario of I1 cannot occur.']]);
-		assert.match(stepNext(store.snapshot, current)?.next ?? '', /^The user writes the fix of issue I1, "The loop runs past the limit", at risk level 4/);
-		store.startStep('I1', { writer: 'user', level: 4, scope: ['src/solver.cpp'], base: 'mark-I1' });
-
-		// the views: the current step with its own gate, the gate of the stage, and the step of each issue of the list of steps
-		const view = () => buildModel({
-			version: '0.3.0', snapshot: store.snapshot, dataflow: { state: 'ready', version: '0.6.2', engine: 'ready' },
-			claude: { dataflow: 'connected', marketplace: 'ok', plugin: 'on' }, readLines: (f) => readText(f)?.split(/\r?\n/),
-		}).task!;
-		const task = view();
-		assert.deepStrictEqual([task.build?.current?.ref, task.build?.current?.issue, task.stepGate?.label, task.gate?.label],
-			['I1', 'I1', 'The step is done', 'The task is done']);
-		assert.deepStrictEqual(task.review?.steps.map((i) => [i.id, i.step?.state, i.step?.isCurrent, i.step?.level, i.step?.isLevelEditable]),
-			[['I1', 'open', true, 4, true]]);
-		assert.deepStrictEqual(task.review?.second.map((i) => [i.id, i.step]), [['I2', undefined], ['I3', undefined]]);
-
-		// the gate of the step fixes the issue, so the next review is round 2
-		store.finishStep('I1', 'step-done');
-		assert.deepStrictEqual([store.snapshot.review?.issues.find((i) => i.id === 'I1')?.state, roundOf(store.snapshot.review), store.current],
-			['fixed', 2, undefined]);
-		assert.match(stepNext(store.snapshot, undefined)?.next ?? '', /^Each step of the issues is done/);
-		assert.throws(() => store.setIssueStep('I1', false), /The issue I1 is fixed/);
-
-		// round 2 checks the fixes: the changed hunks, and the issues that the user fixed after round 1 (P23)
-		hunk = '+    6 | if (i >= limit) break;\n+    7 | plan.step(i);';
-		const data = await reviewData(deps) as Record<string, any>;
-		assert.deepStrictEqual([data.round, data.fixedIssues.map((i: { id: string }) => i.id), data.files[0].hunks[0].isChangedSinceLastRound], [2, ['I1'], true]);
-		assert.match(data.roundNote, /^Round 2 reviews the fixes\. Review the hunks with "isChangedSinceLastRound": true/);
-		const review = view().review!;
-		assert.deepStrictEqual([review.nextRound, review.isNewRound, review.toCheck, review.roundWarning], [2, true, 1, undefined]);
-		assert.match(review.prompt, /^Review the fixes of my Shotgun task "Cycle limit" in round 2 with the skill shotgun-review/);
-
-		// "Make it a step": the issue goes to the end of the list of steps. "Back to the second list" gives its reason again
+		// the issues page: an issue of the user, "Fix it", a move and a note. Shotgun does not move an issue
+		store.addUserIssue('  The log line has   no level. ');
 		store.setIssueStep('I2', true);
-		assert.deepStrictEqual([store.snapshot.review?.issues.map((i) => i.id), workPlan(store.snapshot)?.steps.map((s) => s.id), store.current?.step.id],
-			[['I1', 'I3', 'I2'], ['S1', 'I1', 'I2'], 'I2']);
-		store.setIssueStep('I2', false);
-		assert.deepStrictEqual([store.snapshot.review?.issues.find((i) => i.id === 'I2')?.secondReason, store.current], ['plausible', undefined]);
-		store.setIssueStep('I3', true);
-		store.startStep('I3', { writer: 'user', level: 4, scope: ['src/solver.cpp'], base: 'mark-I3' });
+		store.moveIssue('I2', -1);
+		store.setIssueNote('I1', ' Use an atomic. ');
+		assert.deepStrictEqual([ids(), store.snapshot.review?.userIssues?.map((u) => [u.id, u.text]), store.snapshot.review?.notes],
+			[['I1', 'I2', 'U1'], [['U1', 'The log line has no level.']], { I1: 'Use an atomic.' }]);
+		assert.throws(() => store.moveIssue('I3', 1), /The issue I3 is not in the list to fix/);
+		assert.throws(() => store.addUserIssue(' '), /An issue of yours needs a text of 1 to 300 characters/);
 
-		// a new level starts the step again with its new writer
-		const old = store.setLevel('I3', 2);
-		assert.deepStrictEqual([old?.base, store.current?.writer, store.current?.state], ['mark-I3', 'claude', 'todo']);
-		store.startStep('I3', { writer: 'claude', level: 2, scope: ['src/solver.cpp'], base: 'mark-I3b' });
-		assert.throws(() => store.setIssueStep('I3', false), /Claude started the step of I3/);
+		// "Not now" for an important new issue that the review confirmed: the check gives a warning before the gate
+		store.setIssueStep('I1', false);
+		let task = viewOf(store).task!;
+		assert.deepStrictEqual([task.review?.toFix.map((r) => r.issue.id), task.review?.later.map((r) => [r.issue.id, r.kind === 'review' ? r.issue.listReason : ''])],
+			[['I2', 'U1'], [['I1', 'You keep it for later.'], ['I3', 'Pre-existing: the problem was in the code before the task.']]]);
+		assert.deepStrictEqual([task.review?.checks, task.gate?.label],
+			[[{ text: 'I1 is important and confirmed, but it is in the list for later.', isWarning: true }], 'Accept with 1 warning']);
+		store.setIssueStep('I1', true);
+		store.moveIssue('I1', -1);
+		store.moveIssue('I1', -1);
+		task = viewOf(store).task!;
+		assert.deepStrictEqual([ids(), task.review?.checks, task.gate?.label, task.review?.canEditIssues], [['I1', 'I2', 'U1'], [], 'Accept the issues', true]);
 
-		// "Not a problem" for a started step: the build loses the step, and the extension deletes its base
-		const removed = store.setIssueClosed('I3', 'Not from this task.');
-		assert.deepStrictEqual([removed?.id, removed?.step.base, store.snapshot.build?.steps.I3, store.current], ['I3', 'mark-I3b', undefined, undefined]);
+		// the plan of the fixes comes only after the gate "Accept the issues"
+		await assert.rejects(submitFixPlan(deps, fixPlan()), /The user did not accept the issues of this round yet/);
+		assert.strictEqual(store.acceptIssues(), 3);
+		assert.deepStrictEqual([phase(), stepNext(store.snapshot, undefined)?.request], [{ phase: 'plan', round: 1 }, 'Plan the fixes.']);
+		assert.throws(() => store.setIssueStep('I3', true), /You accepted the issues of this round/);
+		await assert.rejects(submitReview(deps, { issues: [issue()] }), /The user accepted the issues of this round/);
+		task = viewOf(store).task!;
+		assert.deepStrictEqual([task.gate?.label, task.gate?.isEnabled, task.gate?.reason, task.review?.canEditIssues, task.review?.canWriteNotes],
+			['Accept the fix plan', false, 'Claude did not give the plan of the fixes yet. Tell Claude: "Plan the fixes."', false, true]);
+		const data = await reviewData(deps) as Record<string, any>;
+		assert.deepStrictEqual([data.phase, data.firstStepId, data.issuesToFix.map((i: { id: string }) => i.id), data.issuesToFix[0].userNote, data.issuesToFix[2]],
+			['plan', 'F1', ['I1', 'I2', 'U1'], 'Use an atomic.', { id: 'U1', byUser: true, text: 'The log line has no level.' }]);
 
-		// round 2 gives the fixed issue I1 again: it is a step again. Its gate deleted its base already
+		// each issue to fix needs a step, in the sequence of the user
+		await assert.rejects(submitFixPlan(deps, { steps: [fixPlan().steps[1], { ...fixPlan().steps[0], fixes: ['I1', 'I9'] }] }), (error: Error) => {
+			assert.match(error.message, /The issue I2 has no step/);
+			assert.match(error.message, /Step 2: I9 is not an issue to fix of this round/);
+			assert.match(error.message, /The step for I1 comes after a step for a later issue/);
+			return true;
+		});
+		const planned = await submitFixPlan(deps, fixPlan()) as Record<string, any>;
+		assert.deepStrictEqual(planned.steps.map((s: { id: string; fixes: string[] }) => [s.id, s.fixes]), [['F1', ['I1', 'I2']], ['F2', ['U1']]]);
+		task = viewOf(store).task!;
+		assert.deepStrictEqual(task.review?.fixPlan?.steps.map((s) => [s.ref, s.fixes, s.taskText]), [
+			['F1', ['I1', 'I2'], 'Fixes I1: The loop runs past the limit; I2: Maybe'],
+			['F2', ['U1'], 'Fixes U1: The log line has no level.'],
+		]);
+		assert.deepStrictEqual([task.gate?.label, task.gate?.isEnabled], ['Accept the fix plan', true]);
+
+		// the user sets the levels and the writers of the steps of the fixes before the gate (decision 44): a step of level 5
+		// goes to Claude, and a step of level 2 gets a frame
+		const setChoices = () => {
+			store.setLevel('F1', 5);
+			store.setWriter('F1', 'claude');
+			store.setLevel('F2', 2);
+			store.setWriter('F2', 'frame');
+		};
+		setChoices();
+		task = viewOf(store).task!;
+		assert.deepStrictEqual(task.review?.fixPlan?.steps.map((s) => [s.level, s.writer, s.isWriterChosen, s.isLevelEditable]), [[5, 'claude', true, true], [2, 'frame', true, true]]);
+
+		// a new plan keeps a choice of the user only for a step with the same id, title and issues, because the ids of the
+		// steps of the fixes come from their places in the plan
+		const changed = fixPlan();
+		changed.steps[0] = { ...changed.steps[0], title: 'Check the limit before the call' };
+		await submitFixPlan(deps, changed);
+		const choices = () => ['F1', 'F2'].map((id) => store.snapshot.levels?.levels[id] && [store.snapshot.levels.levels[id].level, store.snapshot.levels.levels[id].writer]);
+		assert.deepStrictEqual(choices(), [undefined, [2, 'frame']]);
+
+		// "Back to the issues" removes the plan of the round with the choices for its steps. The user accepts the issues again,
+		// and Claude gives the plan again
+		store.reopenIssues();
+		assert.deepStrictEqual([phase(), store.snapshot.review?.fixPlans ?? [], choices()], [{ phase: 'issues', round: 1 }, [], [undefined, undefined]]);
+		store.acceptIssues();
+		await submitFixPlan(deps, fixPlan());
+		setChoices();
+		assert.strictEqual(store.acceptFixPlan(), 2);
+		assert.deepStrictEqual([phase(), workPlan(store.snapshot)?.steps.map((s) => s.id), store.current?.ref, store.current?.writer],
+			[{ phase: 'fixes', round: 1 }, ['S1', 'F1', 'F2'], 'F1', 'claude']);
+		assert.match(stepNext(store.snapshot, store.current)?.next ?? '', /step F1 of the fixes, "Stop at the limit", for I1 and I2/);
+
+		// the steps of the fixes go in sequence, as the steps of the build. The gate of the last step of an issue fixes it
+		store.setWriter('F1', undefined);
+		store.startStep('F1', { writer: 'user', level: 5, scope: ['src/solver.cpp'] });
+		store.finishStep('F1', 'step-done');
+		assert.deepStrictEqual(store.snapshot.review?.issues.filter((i) => i.state === 'fixed').map((i) => i.id), ['I1', 'I2']);
+		assert.throws(() => store.finishFixes(), /Step F2 of the fixes is not done/);
+		task = viewOf(store).task!;
+		assert.deepStrictEqual([task.build?.current?.ref, task.build?.current?.writer, task.build?.current?.fixesText, task.gate?.label, task.gate?.reason],
+			['F2', 'frame', 'Fixes U1: The log line has no level.', 'The fixes are done', '1 step of the fixes is not done.']);
+		store.setWriter('F2', 'user');
+		store.startStep('F2', { writer: 'user', level: 2, scope: ['src/solver.cpp'] });
+		store.finishStep('F2', 'step-done');
+		assert.deepStrictEqual(store.snapshot.review?.userIssues?.map((u) => u.state), ['fixed']);
+		assert.match(stepNext(store.snapshot, undefined)?.next ?? '', /^Each step of the fixes is done/);
+		assert.deepStrictEqual([viewOf(store).task?.gate?.isEnabled, store.finishFixes(), phase()], [true, 2, { phase: 'review', round: 2 }]);
+
+		// round 2 checks the fixes: the changed hunks, and the issues that the fixes of round 1 fixed (P23)
+		hunk = '+    6 | if (i >= limit) break;\n+    7 | plan.step(i);';
+		const data2 = await reviewData(deps) as Record<string, any>;
+		assert.deepStrictEqual([data2.round, data2.phase, data2.fixedIssues.map((i: { id: string }) => i.id), data2.files[0].hunks[0].isChangedSinceLastRound],
+			[2, 'review', ['I1', 'I2'], true]);
+		assert.match(viewOf(store).task!.review!.prompt, /^Review the fixes of my Shotgun task "Cycle limit" in round 2 with the skill shotgun-review/);
+
+		// round 2 gives I1 again: it is in the list to fix again, and the steps of the fixes of round 2 start at F3
 		await submitReview(deps, { issues: [issue({ repeats: 'I1', summary: 'The fix checks the limit after the call.' })] });
-		const again = store.snapshot.review?.issues.find((i) => i.id === 'I1');
-		assert.deepStrictEqual([again?.state, again?.lastRound, store.snapshot.build?.steps.I1, deleted, store.current?.step.id], ['open', 2, undefined, [], 'I1']);
-		assert.deepStrictEqual(store.snapshot.decisions.map((d) => d.kind).filter((k) => k.startsWith('issue')), ['issue-step', 'issue-step', 'issue-step', 'issue-close']);
+		assert.deepStrictEqual([phase(), ids()], [{ phase: 'issues', round: 2 }, ['I1']]);
+		store.acceptIssues();
+		assert.strictEqual((await reviewData(deps) as Record<string, any>).firstStepId, 'F3');
+		assert.deepStrictEqual(store.snapshot.decisions.map((d) => d.kind).filter((k) => /^(issue|user-issue|review-gate|fix-plan)/.test(k)), [
+			'user-issue', 'issue-step', 'issue-move', 'issue-note', 'issue-step', 'issue-step', 'issue-move', 'issue-move', 'review-gate', 'fix-plan',
+			'fix-plan', 'review-gate', 'review-gate', 'fix-plan', 'review-gate', 'review-gate', 'review-gate',
+		]);
+		const texts = viewOf(store).decisions.map((d) => d.text);
+		assert.ok(texts.includes('You moved the issue I1 to place 1 of the list to fix.'), texts.join(' | '));
+		assert.ok(texts.includes('You accepted the issues of round 2: 1 issue to fix.'), texts.join(' | '));
 	});
 
 	test('The feedback of all tasks moves the cap and finds a noisy area (P35), a new round checks the fixes (P23), and the pull request gets the issues (P24)', () => {
 		const round = { n: 1, effort: 'medium' as const, areas: ['correctness' as const], changedLines: 1, hunks: ['x'] };
-		// 5 reviews with 3 steps each: the user fixed the steps of the ranks 1 and 2, and closed each step of rank 3
+		// 5 reviews with 3 issues to fix each: the user fixed the issues of the ranks 1 and 2, and closed each issue of rank 3
 		const reviews = [1, 2, 3, 4, 5].map(() => {
 			const r = applyReview(EMPTY_REVIEW, round, ['A', 'B', 'C'].map((title) => inputOf(issue({ title }))), 't').review;
 			return {
@@ -361,7 +465,7 @@ suite('Review', () => {
 		const feedback = feedbackOf(reviews);
 		assert.deepStrictEqual([feedback.decided, feedback.cap, feedback.areas], [15, 2, [{ area: 'correctness', decided: 15, noAction: 5, isTooNoisy: true }]]);
 		assert.strictEqual(feedbackOf(reviews.slice(0, 3)).cap, undefined);
-		// the cap of the feedback: the third confirmed issue goes into the second list
+		// the cap of the feedback: the third confirmed issue is for later
 		const capped = applyReview(EMPTY_REVIEW, round, ['A', 'B', 'C'].map((title) => inputOf(issue({ title }))), 't', { capLimit: feedback.cap }).review;
 		assert.deepStrictEqual([capped.issues.map((i) => `${i.list}${i.rank ? ` ${i.rank}` : ''}`), capped.rounds[0].cap], [['steps 1', 'steps 2', 'second'], 2]);
 
@@ -375,7 +479,7 @@ suite('Review', () => {
 		const markdown = ledgerMarkdown('Cycle limit', [], [], done.issues.map((i) => ({
 			id: i.id, title: i.title, severity: i.severity, category: i.category, list: i.list, state: i.state, ...(i.closed ? { reason: i.closed.reason } : {}),
 		})));
-		assert.match(markdown, /### Issues of the review\n\nThe list of steps:\n\n- I1 \(important, correctness\): A\. fixed\n- I2 \(important, correctness\): B\. fixed\n- I3 \(important, correctness\): C\. not a problem: Not real\.\n/);
+		assert.match(markdown, /### Issues of the review\n\nTo fix:\n\n- I1 \(important, correctness\): A\. fixed\n- I2 \(important, correctness\): B\. fixed\n- I3 \(important, correctness\): C\. not a problem: Not real\.\n/);
 	});
 
 	test('After 3 rounds, the panel asks first (P23), and the page shows the feedback of the user for each area (P35)', () => {
@@ -383,9 +487,12 @@ suite('Review', () => {
 		let review: ReviewFile = EMPTY_REVIEW;
 		for (const n of [1, 2, 3]) {
 			review = applyReview(review, roundOfN(n), ['A', 'B', 'C', 'D'].map((t) => inputOf(issue({ title: `${t}${n}` }))), `2026-11-1${n}T10:00:00.000Z`).review;
-			// the user fixes the steps of the ranks 1 to 3, and closes the step of rank 4 in the rounds 1 and 2
+			// the user fixes the issues of the ranks 1 to 3, and closes the issue of rank 4 in the rounds 1 and 2. Then the round
+			// passes its 3 gates
 			review = {
-				...review, issues: review.issues.map((i) => (i.lastRound !== n ? i : i.rank === 4 && n < 3 ? { ...i, state: 'closed' as const, closed: { reason: 'No.', time: 't' } }
+				...review,
+				rounds: review.rounds.map((r) => (r.n === n ? { ...r, accepted: 'a', planAccepted: 'b', fixesDone: 'c' } : r)),
+				issues: review.issues.map((i) => (i.lastRound !== n ? i : i.rank === 4 && n < 3 ? { ...i, state: 'closed' as const, closed: { reason: 'No.', time: 't' } }
 					: { ...i, state: 'fixed' as const, fixed: `2026-11-1${n}T11:00:00.000Z` })),
 			};
 		}
@@ -407,20 +514,26 @@ suite('Review', () => {
 		}).task!;
 		// the page shows the parts of the brief next to the issues of the area The brief
 		assert.deepStrictEqual(task.review?.brief, { specs: ['The loop stops at the limit.'], scope: ['A time limit.'], done: ['A test passes.'] });
-		assert.deepStrictEqual([task.review?.nextRound, task.review?.isNewRound, task.review?.toCheck], [4, true, 4]);
+		assert.deepStrictEqual([task.review?.phase, task.review?.roundNumber, task.review?.nextRound, task.review?.isNewRound, task.review?.toCheck], ['review', 4, 4, true, 4]);
 		assert.match(task.review?.roundWarning ?? '', /^The next review is round 4\. After 3 rounds, the issues did not end\./);
 		assert.match(task.review?.prompt ?? '', /^Review the fixes of my Shotgun task "Rounds" in round 4/);
 		assert.deepStrictEqual(task.review?.feedback?.areas, [{ id: 'correctness', name: 'Correctness', decided: 12, noAction: 2, rate: '17%', isTooNoisy: true, isInFocus: true }]);
-		assert.match(task.review?.feedback?.text ?? '', /^You decided 12 issues of the lists of steps in this folder\. Your feedback sets the cap on the steps to 3 steps or fewer\./);
+		assert.match(task.review?.feedback?.text ?? '', /^You decided 12 issues of the lists to fix in this folder\. Your feedback sets the cap on the list to fix to 3 issues or fewer\./);
 	});
 
-	test('A new review of the same round keeps an issue with a started step, and a plan cannot use the ids of the issues', () => {
+	test('The work plan has the steps of the accepted plans of the fixes, after the steps of the plan', () => {
 		const round = { n: 1, effort: 'medium' as const, areas: ['correctness' as const], changedLines: 1, hunks: ['x'] };
-		const review = applyReview(EMPTY_REVIEW, round, [inputOf(issue({ title: 'A' })), inputOf(issue({ title: 'B' }))], 't1').review;
-		const kept = applyReview(review, round, [inputOf(issue({ title: 'C' }))], 't2', { started: new Set(['I2']) }).review;
-		assert.deepStrictEqual(kept.issues.map((i) => `${i.id} ${i.title} ${i.state}`), ['I2 B open', 'I3 C open']);
-		assert.deepStrictEqual(issueSteps(kept).map((s) => [s.id, s.issue, s.task]), [['I2', 'I2', 'review'], ['I3', 'I3', 'review']]);
-		assert.strictEqual(workPlanOf({ steps: [] }, kept, 'build')?.steps.length, 0);
+		const review = applyReview(EMPTY_REVIEW, round, [inputOf(issue({ title: 'A' }))], 't1').review;
+		const planned: ReviewFile = {
+			...review, rounds: review.rounds.map((r) => ({ ...r, accepted: 't2' })),
+			fixPlans: [{ round: 1, time: 't3', steps: [{ id: 'F1', title: 'Fix A', task: 'review', hooks: [], places: [], text: 'x', checks: ['y'], decisions: [], fixes: ['I1'] }] }],
+		};
+		// before the gate "Accept the fix plan", the plan of the round is no part of the work plan
+		assert.deepStrictEqual([fixSteps(planned), currentFixPlan(planned)?.steps.map((s) => s.id)], [[], ['F1']]);
+		const accepted: ReviewFile = { ...planned, rounds: planned.rounds.map((r) => ({ ...r, planAccepted: 't4' })) };
+		const plan = { steps: [{ id: 'S1', title: 'S', task: 'T1', hooks: [], places: [], text: 'x', checks: [] }] };
+		assert.deepStrictEqual([fixSteps(accepted).map((s) => s.id), workPlanOf(plan, accepted, 'review')?.steps.map((s) => s.id), workPlanOf(plan, accepted, 'build')?.steps.length],
+			[['F1'], ['S1', 'F1'], 1]);
 	});
 
 	test('A task with no base commit gets no review data, and the base stays from the first gate', async () => {
@@ -450,5 +563,15 @@ suite('Review', () => {
 		assert.strictEqual(isFromView({ type: 'setIssueStep', id: 'I2', isStep: true }), true);
 		assert.strictEqual(isFromView({ type: 'setIssueStep', id: 'I2', isStep: 'yes' }), false);
 		assert.strictEqual(isFromView({ type: 'stepGate' }), true);
+		// the issues page (decision 43)
+		assert.strictEqual(isFromView({ type: 'moveIssue', id: 'I1', step: -1 }), true);
+		assert.strictEqual(isFromView({ type: 'moveIssue', id: 'I1', step: 2 }), false);
+		assert.strictEqual(isFromView({ type: 'setIssueNote', id: 'I1', note: 'Use an atomic.' }), true);
+		assert.strictEqual(isFromView({ type: 'setIssueNote', id: 'I1' }), false);
+		assert.strictEqual(isFromView({ type: 'addUserIssue', text: 'The log line has no level.' }), true);
+		assert.strictEqual(isFromView({ type: 'addUserIssue', text: 'x'.repeat(2001) }), false);
+		assert.strictEqual(isFromView({ type: 'removeUserIssue', id: 'U1' }), true);
+		assert.strictEqual(isFromView({ type: 'reopenIssues' }), true);
+		assert.strictEqual(isFromView({ type: 'taskDone' }), true);
 	});
 });

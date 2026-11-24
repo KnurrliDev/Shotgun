@@ -107,9 +107,12 @@ suite('Plan', () => {
 			'The step S3 is for task 1 of the order, but it comes after a step for task 2. Give the steps in the sequence of the order.',
 			'The step S4 is for task 1 of the order, but it comes after a step for task 2. Give the steps in the sequence of the order.',
 		]);
-		// the steps of the issues of the review use the ids I1, I2 and so on (phase 13)
-		const reserved = checkPlan({ steps: [{ ...(PLAN.steps as Record<string, unknown>[])[0], id: 'I2' }] }, context(), order, survey).problems;
-		assert.ok(reserved.includes('Step 1: the ids I1, I2 and so on are for the issues of the review. Give a different id, for example S1.'), reserved.join(' | '));
+		// the issues of the review and the steps of the fixes use the ids I1 and F1 and so on (decision 43)
+		for (const id of ['I2', 'F1']) {
+			const reserved = checkPlan({ steps: [{ ...(PLAN.steps as Record<string, unknown>[])[0], id }] }, context(), order, survey).problems;
+			assert.ok(reserved.includes('Step 1: the ids I1 and F1 and so on are for the issues and the steps of the fixes of the review. Give a different id, for example S1.'),
+				reserved.join(' | '));
+		}
 		assert.deepStrictEqual(checkPlan({ steps: [] }, context(), order, survey).problems, [
 			'Give 1 step or more in "steps".',
 			'The task T1 "A cycle limit" has no step. Each task of the plan needs 1 step or more.',
@@ -347,7 +350,7 @@ suite('Plan', () => {
 		store.setLevel('S1', 4);
 		assert.deepStrictEqual(levels(), [4, 2]);
 		store.passGate('build-done');
-		assert.throws(() => store.setLevel('S1', 3), /only in stage 4, the plan, in stage 5, the build, and for the steps of the issues in stage 6/);
+		assert.throws(() => store.setLevel('S1', 3), /only in stage 4, the plan, in stage 5, the build, and for the steps of the fixes in stage 6/);
 		await assert.rejects(call('submit_plan', PLAN), /The user accepted the plan already/);
 		await assert.rejects(call('submit_task_survey', { task: 'T1', text: 'A cycle limit', hooks: ['H1'], needs: [] }), /The user accepted the plan already/);
 	});

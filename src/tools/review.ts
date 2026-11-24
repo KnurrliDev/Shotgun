@@ -6,9 +6,10 @@ import type { TaskFile } from '../session/files';
 import { isWalked } from '../session/ledger';
 import { hashLine, LineStore } from '../session/lines';
 import { absolutePath, IS_CASE_SENSITIVE, projectPath } from '../session/paths';
-import { levelOf } from '../session/plan';
+import { checkFixPlan, levelOf, placeName } from '../session/plan';
 import {
-	AREA_INFO, capOf, checkReview, DEFAULT_OPTIONS, EFFORT_INFO, issuesOf, issueSteps, issuesToCheck, MAX_ISSUES, ReviewFile, ReviewIssue, roundOf,
+	AREA_INFO, capOf, checkReview, currentFixPlan, DEFAULT_OPTIONS, EFFORT_INFO, firstFixNumber, FixItem, issuesOf, issuesToCheck, MAX_FIX_STEPS, MAX_ISSUES,
+	ReviewFile, ReviewIssue, reviewPhase, roundOf, toFix,
 } from '../session/review';
 import { STAGE_INFO, stageText } from '../session/stages';
 import { Snapshot, workPlan } from '../session/store';
@@ -142,6 +143,38 @@ function issueData(issue: ReviewIssue): Record<string, unknown> {
 	};
 }
 
+// An issue to fix for the plan of the fixes (decision 43): the issue of the review with its scenario and the hints of the
+// review, or the issue of the user. userNote: the note of the user for the plan
+function fixItemData(item: FixItem, notes: Readonly<Record<string, string>> | undefined): Record<string, unknown> {
+	const note = notes?.[item.issue.id];
+	if (item.kind === 'user') {
+		return { id: item.issue.id, byUser: true, text: item.issue.text, ...(note ? { userNote: note } : {}) };
+	}
+	const i = item.issue;
+	return {
+		id: i.id, title: i.title, summary: i.summary, scenario: i.scenario, severity: i.severity, category: i.category,
+		place: `${i.place.file}:${i.place.lines[0]}-${i.place.lines[1]}`,
+		...(i.fixPlaces ? { fixPlacesOfTheReview: i.fixPlaces.map((p) => `${p.file}:${p.lines[0]}-${p.lines[1]}`) } : {}),
+		...(i.decisions.length > 0 ? { decisionsOfTheReview: i.decisions.map((d) => d.question) } : {}),
+		...(note ? { userNote: note } : {}),
+	};
+}
+
+// The next work for Claude in each part of the round (decision 43)
+const REVIEW_NEXT = {
+	review: 'Follow the skill shotgun-review: find the candidates for each area of the focus, check each candidate in a verify pass, and give the '
+		+ 'issues with submit_review. Change no file.',
+	issues: 'The user puts the issues to fix in sequence on the issues page of Shotgun now, and then selects "Accept the issues". Then the user asks '
+		+ 'for the plan of the fixes. A new review of this round replaces its issues: follow the skill shotgun-review only on the request of the user. '
+		+ 'Change no file.',
+	plan: 'Plan the fixes, as the plan of stage 4. Read the code of each issue of "issuesToFix" with the read tools of DataFlow. Then give the steps '
+		+ 'with submit_fix_plan, in the sequence of "issuesToFix". Each step names the issues that it fixes in "fixes". Its places are all places that '
+		+ 'its fix changes, also a file that the issue does not name. Give the open decisions of each fix, and keep to the note of the user. Change no '
+		+ 'file.',
+	fixes: 'The steps of the fixes go in sequence, as the steps of the build. Call get_step for the current step. Change files only in an open step '
+		+ 'of Claude.',
+} as const;
+
 // The result of get_review
 export async function reviewData(deps: ReviewDeps): Promise<Record<string, unknown>> {
 	const snapshot = deps.store.snapshot;
@@ -171,14 +204,22 @@ export async function reviewData(deps: ReviewDeps): Promise<Record<string, unkno
 	const closedCallouts = closedCalloutsOf(snapshot, root, deps.readText).map(({ step, callout: c, line }) => ({
 		step, title: c.title, place: `${c.file}:${line ?? c.line}`, reason: c.closed!.reason,
 	}));
-	const round = roundOf(review);
+	const { phase, round } = reviewPhase(review);
 	// a new round (P23): the hunks that the last round did not have, and the fixed issues to check
 	const last = review!.rounds[review!.rounds.length - 1];
 	const lastHunks = last && round > last.n ? new Set(last.hunks) : undefined;
 	const toCheck = lastHunks ? issuesToCheck(review) : [];
+	const fixPlan = currentFixPlan(review);
 	return {
 		task: { id: task.id, title: task.title, stage: STAGE_INFO[task.stage].number },
 		round,
+		phase,
+		// the issues to fix in the sequence of the user, for the plan of the fixes (decision 43)
+		...(phase !== 'review' ? { issuesToFix: toFix(review).map((x) => fixItemData(x, review?.notes)) } : {}),
+		...(fixPlan ? {
+			fixPlan: { steps: fixPlan.steps.map((s) => ({ id: s.id, title: s.title, fixes: s.fixes, places: s.places.map(placeName) })) },
+		} : {}),
+		...(phase === 'plan' ? { firstStepId: `F${firstFixNumber(review, round)}` } : {}),
 		...(lastHunks ? {
 			roundNote: `Round ${round} reviews the fixes. Review the hunks with "isChangedSinceLastRound": true and their ripple, and check each `
 				+ 'issue of "fixedIssues". If a fix is not correct, give its issue again with "repeats" and a summary of the problem that stays. '
@@ -232,8 +273,7 @@ export async function reviewData(deps: ReviewDeps): Promise<Record<string, unkno
 		} : {}),
 		tools: `For the text of the diff, call get_diff of DataFlow with "base": "${base.commit}" and "paths". For the ripple, call get_ripple `
 			+ `with the same base.`,
-		next: 'Follow the skill shotgun-review: find the candidates for each area of the focus, check each candidate in a verify pass, and give the '
-			+ 'issues with submit_review. Change no file.',
+		next: REVIEW_NEXT[phase],
 	};
 }
 
@@ -278,32 +318,59 @@ export async function submitReview(deps: ReviewDeps, args: Record<string, unknow
 		n: round, effort: options.effort, areas: options.areas, ...(options.text ? { text: options.text } : {}), changedLines: diff.changedLines,
 		hunks: diff.hashes, ...(checked.note ? { note: checked.note } : {}),
 	}, checked.issues);
-	// a started step of an issue that left the list of steps loses its base
-	const marks = deps.base?.();
-	for (const r of result.removed.filter((x) => x.step.base)) {
-		await marks?.deleteMark(r.step.base!).catch((error: unknown) => deps.log?.(`DataFlow did not delete the base ${r.step.base}: ${messageOf(error)}`));
-	}
-	// the heat of the places of the steps of the issues: only a hint, because the level of such a step is 4 (P22)
-	const fixes = issueSteps(result.review);
-	if (fixes.length > 0) {
-		try {
-			const risk = await planRisk(engine, root, { steps: fixes }, (file) => deps.readText(file)?.split(/\r?\n/));
-			store.writeRisk({ scan: risk.scan, steps: { ...(store.snapshot.risk?.steps ?? {}), ...risk.steps } });
-		} catch (error) {
-			deps.log?.(`Shotgun did not get the heat of the steps of the issues: ${messageOf(error)}`);
-		}
-	}
 	const steps = issuesOf(result.review, 'steps').filter((i) => i.lastRound === round && i.state === 'open');
 	const second = issuesOf(result.review, 'second').filter((i) => i.lastRound === round && i.state === 'open');
 	return {
 		round,
 		cap: result.review.rounds.find((r) => r.n === round)?.cap ?? capOf(diff.changedLines),
-		steps: steps.map(issueData),
-		second: second.map(issueData),
+		toFix: steps.map(issueData),
+		forLater: second.map(issueData),
 		...(result.repeated > 0 ? { repeated: result.repeated } : {}),
 		next: checked.issues.length === 0
 			? 'The review has no issue. Tell the user. The user can select "The task is done", or ask for a review with a different effort or focus.'
-			: 'The panel and the page of Shotgun show the 2 lists. Tell the user in a short summary. The user works through the list of steps, and '
-				+ 'can close an issue with "Not a problem". Change no file.',
+			: 'The issues page of Shotgun shows the issues to fix and the issues for later. Tell the user in a short summary. The user puts the issues '
+				+ 'to fix in sequence, can close an issue with "Not a problem", and then selects "Accept the issues". Then the user asks for the plan of '
+				+ 'the fixes. Do not plan the fixes in this session, and change no file.',
+	};
+}
+
+// The result of submit_fix_plan (decision 43): the steps of the fixes of the round. Each step names the issues that it
+// fixes, and each issue to fix needs a step. The rules of stage 4 give the levels from the heat of DataFlow
+export async function submitFixPlan(deps: ReviewDeps, args: Record<string, unknown>): Promise<Record<string, unknown>> {
+	const store = deps.store;
+	const snapshot = store.snapshot;
+	const { root } = requireReview(snapshot);
+	const review = snapshot.review;
+	const { phase, round } = reviewPhase(review);
+	if (phase !== 'plan') {
+		throw new Error(phase === 'review' ? 'The round has no review yet. Tell the user: a new session of Claude Code reviews the task first.'
+			: phase === 'issues' ? 'The user did not accept the issues of this round yet. Tell the user: put the issues to fix in sequence, and select '
+				+ '"Accept the issues" first.'
+				: 'The user accepted the plan of the fixes of this round, so the plan stays. Tell the user.');
+	}
+	const items = toFix(review);
+	const readLines = (file: string) => deps.readText(file)?.split(/\r?\n/);
+	const checked = checkFixPlan(args, { root, folders: deps.folders(), isCaseSensitive: IS_CASE_SENSITIVE, readLines, tools: [] },
+		items.map((x) => x.issue.id), firstFixNumber(review, round), MAX_FIX_STEPS);
+	if (checked.problems.length > 0) {
+		throw new Error(`Shotgun did not take the plan of the fixes. Correct these problems, and call the tool again:\n${checked.problems.map((p) => `- ${p}`).join('\n')}`);
+	}
+	const plan = store.writeFixPlan(checked.steps);
+	// the levels of the rules from the heat of DataFlow, as in stage 4
+	try {
+		const risk = await planRisk(deps.engine(), root, { steps: plan.steps }, readLines);
+		store.writeRisk({ scan: risk.scan, steps: { ...(store.snapshot.risk?.steps ?? {}), ...risk.steps } });
+	} catch (error) {
+		deps.log?.(`Shotgun did not get the heat of the steps of the fixes: ${messageOf(error)}`);
+	}
+	const after = store.snapshot;
+	return {
+		round,
+		steps: plan.steps.map((s) => ({
+			id: s.id, title: s.title, fixes: s.fixes, places: s.places.map(placeName), level: levelOf(s, after.risk, after.levels).level,
+			decisions: (s.decisions ?? []).map((d) => d.question),
+		})),
+		next: 'The page of Shotgun shows the plan of the fixes with the level of each step. Tell the user in a short summary. The user checks the plan, '
+			+ 'can answer a decision or change a level or a writer, and then selects "Accept the fix plan". Change no file.',
 	};
 }

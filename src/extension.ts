@@ -11,7 +11,7 @@ import { HookDecorations } from './editor/hooks';
 import { ClaudeLines } from './editor/lines';
 import { StepDecorations } from './editor/steps';
 import { commitMessage, headOf } from './git/message';
-import { addedLines, buildNext, ChangeMark, CurrentStep, markName, receiptCounts, refOf, scopeOf, stateOf } from './session/build';
+import { addedLines, buildNext, BuildWriter, ChangeMark, CurrentStep, markName, receiptCounts, refOf, scopeOf, stateOf } from './session/build';
 import {
 	CALLOUTS_FILE, DEFAULT_PAUSE_SECONDS, DEFAULT_VOICE, factKeys, isVoice, keepUserState, LENS_OF, revealCallouts, updateCallouts, Voice, VOICE_TEXT, VOICES,
 } from './session/callouts';
@@ -21,9 +21,11 @@ import { LINES_FILE, LineStore } from './session/lines';
 import { claudeEnds, LooseFind } from './session/loose';
 import { orderWarnings } from './session/order';
 import { absolutePath, IS_CASE_SENSITIVE, isCppFile, isInside, projectPath } from './session/paths';
-import { levelOf, openDecisions, PlanPlace, PlanStep, writerOf } from './session/plan';
+import { levelOf, openDecisions, PlanPlace, PlanStep, stepWriterOf } from './session/plan';
 import { Level, LEVEL_INFO, LEVELS } from './session/risk';
-import { Area, DEFAULT_OPTIONS, Effort, issueSteps, MAX_ISSUE_REASON, MAX_ROUNDS, reviewPrompt, roundOf } from './session/review';
+import {
+	Area, currentFixPlan, DEFAULT_OPTIONS, Effort, fixSteps, MAX_ISSUE_REASON, MAX_ROUNDS, ReviewFile, reviewPhase, reviewPrompt, roundOf, toFix,
+} from './session/review';
 import { GATE_LABEL, isStage, returnStages, STAGE_INFO, stageText } from './session/stages';
 import { isStepStage, messageOf, SessionStore, Snapshot, workPlan } from './session/store';
 import { findHook, MAX_ANSWER, movedHook } from './session/survey';
@@ -82,6 +84,9 @@ const ACCEPT_RECEIPT = 'Accept the Receipt';
 // The button of the modal message before a review after 3 rounds (P23)
 const COPY_PROMPT = 'Copy the Prompt';
 const FILL_HOLE = 'Fill the Hole';
+// The buttons of the modal messages of the issues page of stage 6 (decision 43)
+const REMOVE = 'Remove';
+const ACCEPT_ISSUES = 'Accept the Issues';
 
 // The folders that the watcher of the files outside of the scope ignores: the folders of tools and of builds
 const IGNORED_FOLDERS = /(^|[\\/])(\.git|\.shotgun|\.claude|\.vs|\.vscode|\.cache|node_modules|out|build|bin|obj|dist|target|cmake-build-[^\\/]*)([\\/]|$)/i;
@@ -89,6 +94,13 @@ const IGNORED_FOLDERS = /(^|[\\/])(\.git|\.shotgun|\.claude|\.vs|\.vscode|\.cach
 // The kind of the change of a file while a step of Claude is open. transient: a file that came and went again, for
 // example a temporary file of a tool
 type FileChange = 'created' | 'changed' | 'deleted' | 'transient';
+
+// The steps of the fixes in stage 6 whose level the user can see: the steps of the accepted plans of the fixes, and the
+// plan of the current round before its gate (decision 43)
+function fixStepsOf(review: ReviewFile | undefined): PlanStep[] {
+	const plan = reviewPhase(review).phase === 'plan' ? currentFixPlan(review) : undefined;
+	return [...fixSteps(review), ...(plan?.steps ?? [])];
+}
 
 class Shotgun implements vscode.Disposable {
 	private readonly log = vscode.window.createOutputChannel('Shotgun', { log: true });
@@ -409,6 +421,11 @@ class Shotgun implements vscode.Disposable {
 		if (!task || task.isDone || task.stage !== 'review') {
 			throw new Error('The review prompt is only for a task in stage 6, the review.');
 		}
+		// after the gate "Accept the issues", the next review comes after the fixes (decision 43)
+		const { phase } = reviewPhase(review);
+		if (phase === 'plan' || phase === 'fixes') {
+			throw new Error('You accepted the issues of this round. The next review comes after the gate "The fixes are done".');
+		}
 		// after 3 rounds, the user thinks about the approach again first (P23)
 		const round = roundOf(review);
 		if (round > MAX_ROUNDS) {
@@ -440,22 +457,20 @@ class Shotgun implements vscode.Disposable {
 				: 'Give your reason.'),
 		});
 		if (reason !== undefined) {
-			const removed = this.store.setIssueClosed(id, reason);
-			await this.deleteBase(removed?.step.base);
+			this.store.setIssueClosed(id, reason);
 		}
 	}
 
-	// "Make it a step" for an issue of the second list, or "Back to the second list" (P22)
-	private async setIssueStep(id: string, isStep: boolean): Promise<void> {
-		const isBlocked = this.isOpeningStep;
-		this.isOpeningStep = true;
-		try {
-			const removed = this.store.setIssueStep(id, isStep);
-			await this.deleteBase(removed?.step.base);
-		} finally {
-			this.isOpeningStep = isBlocked;
+	// "Remove" for an issue of the user on the issues page (decision 43). A modal message asks first
+	private async removeUserIssue(id: string): Promise<void> {
+		const issue = this.store.snapshot.review?.userIssues?.find((u) => u.id === id);
+		if (!issue) {
+			return;
 		}
-		await this.openUserStep();
+		const pick = await vscode.window.showWarningMessage(`Do you want to remove your issue ${issue.id}?`, { modal: true, detail: issue.text }, REMOVE);
+		if (pick === REMOVE) {
+			this.store.removeUserIssue(id);
+		}
 	}
 
 	// "Not a problem": the reason of the user goes into the ledger
@@ -1178,21 +1193,22 @@ class Shotgun implements vscode.Disposable {
 	}
 
 	// The level of the user for a step, with the keyboard. The page has the same buttons. In the stages 5 and 6, only the
-	// steps that Claude did not start (decision 17). In stage 6, only the steps of the issues
+	// steps that Claude did not start (decision 17). In stage 6, only the steps of the fixes (decision 43)
 	private async setLevel(): Promise<void> {
 		const snapshot = this.store.snapshot;
 		const { task, risk, levels, build } = snapshot;
 		const plan = workPlan(snapshot);
 		if (!task || task.isDone || (task.stage !== 'plan' && task.stage !== 'build' && task.stage !== 'review') || !plan) {
-			void vscode.window.showInformationMessage('Shotgun: the active task has no plan in stage 4 or 5, and no step of an issue in stage 6.');
+			void vscode.window.showInformationMessage('Shotgun: the active task has no plan in stage 4 or 5, and no step of the fixes in stage 6.');
 			return;
 		}
-		const isEditable = (s: PlanStep) => task.stage === 'plan' || ((task.stage === 'build' || !!s.issue) && (stateOf(build, s.id) === 'todo'
-			|| (stateOf(build, s.id) === 'open' && build?.steps[s.id]?.writer === 'user')));
-		const items = plan.steps.filter(isEditable).map((s) => {
+		const steps = task.stage === 'review' ? fixStepsOf(snapshot.review) : plan.steps;
+		const isEditable = (s: PlanStep) => task.stage === 'plan' || stateOf(build, s.id) === 'todo'
+			|| (stateOf(build, s.id) === 'open' && build?.steps[s.id]?.writer === 'user');
+		const items = steps.filter(isEditable).map((s) => {
 			const l = levelOf(s, risk, levels);
 			return {
-				label: `${refOf(s, plan.steps.indexOf(s) + 1)}. ${s.title}`,
+				label: `${refOf(s, steps.indexOf(s) + 1)}. ${s.title}`,
 				description: l.level ? `level ${l.level}${l.user ? `, the rules gave ${l.rule ?? 'no level'}` : ''}` : 'no level yet',
 				id: s.id,
 			};
@@ -1258,6 +1274,22 @@ class Shotgun implements vscode.Disposable {
 		const old = this.store.requestFrame(id ?? current.step.id);
 		await this.deleteBase(old?.base);
 		vscode.window.setStatusBarMessage(`Shotgun: tell Claude "Give me a frame for step ${current.ref}."`, 8000);
+	}
+
+	// The writer that the user selects for a step at each level (decision 44). A step of the user opens at once, and for a
+	// step of Claude the status bar gives the request for Claude Code
+	private async setWriter(id: string, writer: BuildWriter | undefined): Promise<void> {
+		const old = this.store.setWriter(id, writer);
+		await this.deleteBase(old?.base);
+		await this.openUserStep();
+		const current = this.store.current;
+		if (current?.step.id === id && current.state === 'todo') {
+			if (current.writer === 'frame') {
+				vscode.window.setStatusBarMessage(`Shotgun: tell Claude "Give me a frame for step ${current.ref}."`, 8000);
+			} else if (current.writer === 'claude') {
+				vscode.window.setStatusBarMessage(`Shotgun: tell Claude "Do step ${current.ref}."`, 8000);
+			}
+		}
 	}
 
 	// Tab and Shift+Tab in a frame: the next open hole, or the hole before it. With no open hole, the keys indent as usual
@@ -1430,18 +1462,92 @@ class Shotgun implements vscode.Disposable {
 		}
 	}
 
-	// The gate of stage 6, "The task is done" (P16). It never waits: with no review or with open issues in the list of steps,
-	// a modal message asks first, and the ledger keeps the issues as open
+	// The gate of stage 6 for the part of the round (decision 43): "Accept the issues", "Accept the fix plan" and "The fixes
+	// are done". Before a review, and with no issue to fix, it is "The task is done"
 	private async passReviewGate(task: NonNullable<Snapshot['task']>): Promise<void> {
 		const review = this.store.snapshot.review;
-		const open = (review?.issues ?? []).filter((i) => i.list === 'steps' && i.state === 'open');
+		const { phase, round } = reviewPhase(review);
+		switch (phase) {
+			case 'issues':
+				if (toFix(review).length > 0) {
+					return this.acceptIssues(task, review!, round);
+				}
+				break;
+			case 'plan':
+				return this.acceptFixPlan(task, review!, round);
+			case 'fixes': {
+				const steps = this.store.finishFixes();
+				this.log.info(`The task ${task.id} passed the gate "The fixes are done" of round ${round} with ${steps === 1 ? '1 step' : `${steps} steps`}.`);
+				void vscode.window.showInformationMessage(`Shotgun: the fixes of round ${round} are done. Copy the review prompt for round ${round + 1}, `
+					+ 'or select "The task is done".');
+				return;
+			}
+			default:
+				break;
+		}
+		await this.passTaskDone(task);
+	}
+
+	// The gate "Accept the issues" (decision 43). An important new issue that the review confirmed, in the list for later,
+	// gets a modal message first
+	private async acceptIssues(task: NonNullable<Snapshot['task']>, review: ReviewFile, round: number): Promise<void> {
+		const later = review.issues.filter((i) => i.state === 'open' && i.secondReason === 'later' && i.severity === 'important' && i.verdict === 'confirmed'
+			&& i.origin === 'new');
+		if (later.length > 0) {
+			const pick = await vscode.window.showWarningMessage(
+				`${later.length === 1 ? '1 important issue' : `${later.length} important issues`} that the review confirmed ${later.length === 1 ? 'is' : 'are'} in the list for later. Do you want to accept the issues?`,
+				{ modal: true, detail: `${later.slice(0, 10).map((i) => `${i.id}: ${i.title}`).join('\n')}\n\nThe ledger keeps ${later.length === 1 ? 'it' : 'them'} as open.` },
+				ACCEPT_ISSUES);
+			if (pick !== ACCEPT_ISSUES) {
+				return;
+			}
+		}
+		const count = this.store.acceptIssues();
+		this.log.info(`The task ${task.id} passed the gate "Accept the issues" of round ${round} with ${count === 1 ? '1 issue' : `${count} issues`} to fix.`);
+		vscode.window.setStatusBarMessage('Shotgun: tell Claude "Plan the fixes."', 8000);
+	}
+
+	// The gate "Accept the fix plan" (decision 43). Each step needs a level. An open decision in a step of Claude is a
+	// decision of Claude in its errand, so a modal message names these decisions first, as at the gate of stage 4 (P31)
+	private async acceptFixPlan(task: NonNullable<Snapshot['task']>, review: ReviewFile, round: number): Promise<void> {
+		const { risk, levels } = this.store.snapshot;
+		const plan = currentFixPlan(review);
+		if (!plan) {
+			throw new Error('The round has no plan of the fixes. Tell Claude "Plan the fixes." first.');
+		}
+		const waiting = plan.steps.filter((s) => levelOf(s, risk, levels).level === null).map((s) => s.id);
+		if (waiting.length > 0) {
+			throw new Error(`The steps ${waiting.join(', ')} have no level yet. Wait for the end of the scan of the call graph, or set their levels.`);
+		}
+		const ofClaude = plan.steps.flatMap((s) => (stepWriterOf(s, risk, levels) === 'claude'
+			? openDecisions(s, levels).map((d) => `Step ${s.id}, ${s.title}: ${d.question}`) : []));
+		if (ofClaude.length > 0) {
+			const count = ofClaude.length === 1 ? '1 open decision is' : `${ofClaude.length} open decisions are`;
+			const pick = await vscode.window.showWarningMessage(
+				`${count} in steps of Claude. Claude decides ${ofClaude.length === 1 ? 'it' : 'them'} in its errands. Do you want to accept the fix plan?`,
+				{ modal: true, detail: `${ofClaude.join('\n')}\n\nYou can answer a decision on the page first, or select a different writer. The receipt shows each choice of Claude.` },
+				PASS_GATE);
+			if (pick !== PASS_GATE) {
+				return;
+			}
+		}
+		const steps = this.store.acceptFixPlan();
+		this.log.info(`The task ${task.id} passed the gate "Accept the fix plan" of round ${round} with ${steps === 1 ? '1 step' : `${steps} steps`}.`);
+		await this.openUserStep();
+	}
+
+	// The gate "The task is done" of stage 6 (P16). It never waits: with no review or with open issues to fix, a modal
+	// message asks first, and the ledger keeps the issues as open
+	private async passTaskDone(task: NonNullable<Snapshot['task']>): Promise<void> {
+		const review = this.store.snapshot.review;
+		const open = toFix(review).map((x) => (x.kind === 'review' ? `${x.issue.id}: ${x.issue.title}` : `${x.issue.id}: ${x.issue.text}`));
 		const warning = !review || review.rounds.length === 0 ? 'Claude did not review the task.'
-			: open.length > 0 ? `${open.length === 1 ? '1 issue' : `${open.length} issues`} of the list of steps ${open.length === 1 ? 'is' : 'are'} open.` : undefined;
+			: open.length > 0 ? `${open.length === 1 ? '1 issue' : `${open.length} issues`} to fix ${open.length === 1 ? 'is' : 'are'} open.` : undefined;
 		if (warning) {
 			const pick = await vscode.window.showWarningMessage(`${warning} Do you want to pass the gate "${GATE_LABEL['task-done']}"?`, {
 				modal: true,
-				detail: open.length > 0 ? `${open.slice(0, 10).map((i) => `${i.id}: ${i.title}`).join('\n')}\n\nThe ledger keeps them as open.`
-					: `Tell Claude "${STAGE_INFO.review.request}" for a review with your effort and focus.`,
+				detail: open.length > 0 ? `${open.slice(0, 10).join('\n')}\n\nThe ledger keeps them as open.`
+					: 'Copy the review prompt into a new session of Claude Code for a review with your effort and focus.',
 			}, PASS_GATE);
 			if (pick !== PASS_GATE) {
 				return;
@@ -1463,7 +1569,7 @@ class Shotgun implements vscode.Disposable {
 		await this.passStepGate(task, current);
 	}
 
-	// The gate of the current step, from its own button: in stage 5, and in stage 6 for the step of an issue (P22)
+	// The gate of the current step, from its own button: in stage 5, and in stage 6 for a step of the fixes (decision 43)
 	private async passCurrentStepGate(): Promise<void> {
 		const task = this.store.snapshot.task;
 		const current = this.store.current;
@@ -1718,7 +1824,7 @@ class Shotgun implements vscode.Disposable {
 		if (waiting.length > 0) {
 			throw new Error(`The steps ${waiting.join(', ')} have no level yet. Wait for the end of the scan of the call graph, or set their levels.`);
 		}
-		const ofClaude = plan.steps.flatMap((s, i) => (writerOf(levelOf(s, risk, levels).level) === 'claude'
+		const ofClaude = plan.steps.flatMap((s, i) => (stepWriterOf(s, risk, levels) === 'claude'
 			? openDecisions(s, levels).map((d) => `Step ${i + 1}, ${s.title}: ${d.question}`) : []));
 		if (ofClaude.length > 0) {
 			const count = ofClaude.length === 1 ? '1 open decision is' : `${ofClaude.length} open decisions are`;
@@ -1877,6 +1983,9 @@ class Shotgun implements vscode.Disposable {
 				case 'requestFrame':
 					await this.requestFrame(message.step);
 					break;
+				case 'setWriter':
+					await this.setWriter(message.step, message.writer ?? undefined);
+					break;
 				case 'setVoice':
 					await this.setVoice(message.voice);
 					break;
@@ -1930,8 +2039,32 @@ class Shotgun implements vscode.Disposable {
 					this.store.setIssueClosed(message.id, undefined);
 					break;
 				case 'setIssueStep':
-					await this.setIssueStep(message.id, message.isStep);
+					this.store.setIssueStep(message.id, message.isStep);
 					break;
+				case 'moveIssue':
+					this.store.moveIssue(message.id, message.step);
+					break;
+				case 'setIssueNote':
+					this.store.setIssueNote(message.id, message.note);
+					vscode.window.setStatusBarMessage(`Shotgun: the note for ${message.id} is saved.`, 3000);
+					break;
+				case 'addUserIssue':
+					this.store.addUserIssue(message.text);
+					break;
+				case 'removeUserIssue':
+					await this.removeUserIssue(message.id);
+					break;
+				case 'reopenIssues':
+					this.store.reopenIssues();
+					break;
+				case 'taskDone': {
+					const task = this.store.snapshot.task;
+					if (!task || task.isDone || task.stage !== 'review') {
+						throw new Error('The gate "The task is done" is only for a task in stage 6, the review.');
+					}
+					await this.passTaskDone(task);
+					break;
+				}
 				case 'stepGate':
 					await this.passCurrentStepGate();
 					break;
@@ -2028,9 +2161,10 @@ class Shotgun implements vscode.Disposable {
 		void this.ensureCalloutStart();
 		// decision 17: in the stages 5 and 6, the user changes the level of a step that Claude did not start
 		void vscode.commands.executeCommand('setContext', 'shotgun.canSetLevel', !!task && !task.isDone && !!snapshot.plan
-			&& (task.stage === 'plan' || task.stage === 'build' || (task.stage === 'review' && issueSteps(snapshot.review).length > 0)));
-		void vscode.commands.executeCommand('setContext', 'shotgun.canRequestFrame', current?.writer === 'user' && current.level === 4
-			&& (current.state === 'todo' || current.state === 'open'));
+			&& (task.stage === 'plan' || task.stage === 'build' || (task.stage === 'review' && fixStepsOf(snapshot.review).length > 0)));
+		// decision 44: a frame on request at each level, for a step that Claude did not start
+		void vscode.commands.executeCommand('setContext', 'shotgun.canRequestFrame', !!task && !task.isDone && current?.writer !== 'frame'
+			&& (current?.state === 'todo' || (current?.state === 'open' && current.writer === 'user')));
 		void this.openUserStep();
 	}
 }

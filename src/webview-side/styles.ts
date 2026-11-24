@@ -307,8 +307,8 @@ progress.walk-track::-webkit-progress-value { border-radius: 2px; background: va
 .hint-btn:disabled { opacity: 1; cursor: default; }
 .hint-btn.on { border-color: var(--vscode-focusBorder); background: var(--vscode-list-inactiveSelectionBackground, transparent); }
 .hint-btn.answer.on { border-color: var(--sg-claude); color: var(--sg-claude); }
-.frame-request { margin: 8px 0 0; }
-.frame-request .btn { margin-bottom: 4px; }
+.writer-choice { margin: 8px 0 0; }
+.writer-choice .pills { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
 
 /* stage 5: the navigator. A callout is a fact of the engine: a problem, a warning or an other fact */
 .navigator { margin: 12px 0 0; padding-top: 6px; border-top: 1px solid color-mix(in srgb, var(--sg-border) 60%, transparent); }
@@ -366,20 +366,25 @@ progress.walk-track::-webkit-progress-value { border-radius: 2px; background: va
 .ledger-table td.warn { color: var(--sg-warn); font-weight: 600; }
 .hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
-/* stage 6: the review. The options of the next review, and the issues of the 2 lists */
+/* stage 6: the review. The options of the next review, the parts of the round, and the issues to fix, for later and closed
+   (decision 43) */
+.round-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 4px 0 8px; }
+.round-bar ol { display: flex; flex-wrap: wrap; gap: 3px; margin: 0; padding: 0; list-style: none; }
+.round-part { padding: 0 7px; border: 1px solid var(--sg-border); border-radius: 4px; font-size: 12px; color: var(--vscode-descriptionForeground); }
+.round-part.current { border-color: var(--vscode-focusBorder); color: var(--vscode-foreground); background: var(--vscode-list-inactiveSelectionBackground, transparent); }
+.round-part.done { color: var(--vscode-foreground); }
+.fix-row .issue-facts, .fix-row .note-field, .fix-row > p, .fix-row > .order-note { margin-left: 2.9em; }
+.issue-facts p { margin: 3px 0; overflow-wrap: anywhere; }
+.issue-more { margin: 4px 0 0 2.9em; }
+.issue-more > summary { font-size: 12px; color: var(--vscode-descriptionForeground); }
+.order-row > p { margin: 4px 0 0 2.9em; }
+.secondary-gate { margin-top: 10px; }
 .review-options { margin: 6px 0 10px; }
 .review-options .chips { margin: 2px 0 6px; }
 .field { display: flex; flex-direction: column; gap: 2px; margin: 6px 0; }
 .field select, .field input { padding: 2px 6px; border: 1px solid var(--vscode-input-border, var(--sg-border)); border-radius: 2px;
   background: var(--vscode-input-background); color: var(--vscode-input-foreground); font: inherit; }
 .field select:focus, .field input:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
-.issues { margin: 4px 0 0; padding: 0; list-style: none; }
-.issue { padding: 8px 0; }
-.issue + .issue { border-top: 1px solid color-mix(in srgb, var(--sg-border) 50%, transparent); }
-.issue.s-closed, .issue.s-fixed { opacity: 0.7; }
-.issue.current { padding-left: 8px; border-left: 3px solid var(--vscode-focusBorder, var(--sg-border)); background: var(--vscode-list-inactiveSelectionBackground, transparent); }
-.issue .row-head { margin-top: 0; }
-.issue p { margin: 3px 0; overflow-wrap: anywhere; }
 .scenario { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 10px; margin: 6px 0; }
 .scenario dt { color: var(--vscode-descriptionForeground); }
 .scenario dd { margin: 0; overflow-wrap: anywhere; }

@@ -3,7 +3,7 @@ import {
 	addedLines, buildWriterOf, checkChoices, checkErrand, CurrentStep, FileHunk, findStep, hunkKey, keepMarks, markName, Receipt, receiptChanges,
 	receiptCounts, scopeOf, stateOf, walkText,
 } from '../session/build';
-import { checkFrame, findMarkers, Hole, holeNow } from '../session/frame';
+import { checkFrame, findMarkers, Hole, holeNow, MAX_FREE_HOLES } from '../session/frame';
 import type { LineStore } from '../session/lines';
 import { hashLines } from '../session/lines';
 import { absolutePath, IS_CASE_SENSITIVE, isCppFile, isInside, projectPath } from '../session/paths';
@@ -54,7 +54,7 @@ const MAX_OUTSIDE = 50;
 const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 const linesOfText = (text: string): string[] => text.split(/\r?\n/);
 
-// The active task in stage 5, or in stage 6 for the steps of the issues, else an error for Claude
+// The active task in stage 5, or in stage 6 for the steps of the fixes, else an error for Claude
 function requireBuild(snapshot: Snapshot): { root: string } {
 	const { task, root, isPaused } = snapshot;
 	if (!task || !root) {
@@ -96,7 +96,7 @@ export function stepData(snapshot: Snapshot, ref: { step: PlanStep; n: number },
 	const { step, n } = ref;
 	const b = build?.steps[step.id];
 	const level = b?.level ?? levelOf(step, risk, levels).level;
-	const writer = b?.writer ?? buildWriterOf(level);
+	const writer = b?.writer ?? buildWriterOf(level, levels?.levels[step.id]?.writer);
 	const receipt = b?.receipt;
 	const marked = (mark: string) => (receipt?.changes ?? []).filter((c) => c.mark === mark).map((c) => ({
 		change: c.id, title: c.title, place: placeName({ file: c.file, lines: c.lines }), ...(c.userNote ? { userNote: c.userNote } : {}),
@@ -107,6 +107,7 @@ export function stepData(snapshot: Snapshot, ref: { step: PlanStep; n: number },
 		total: plan?.steps.length ?? 0,
 		id: step.id,
 		...(step.issue ? { issue: step.issue } : {}),
+		...(step.fixes ? { fixes: step.fixes } : {}),
 		title: step.title,
 		task: step.task,
 		text: step.text,
@@ -153,7 +154,7 @@ export function getStep(deps: BuildDeps, args: Record<string, unknown>): Record<
 	const ref = args.step === undefined || args.step === '' ? (current ? { step: current.step, n: current.n } : undefined) : findStep(plan, args.step);
 	if (!ref) {
 		throw new Error(args.step === undefined ? 'Each step is done.'
-			: `The plan has no step ${String(args.step)}. Give the id of a step, for example S5 or I3 for the step of an issue, or its number.`);
+			: `The plan has no step ${String(args.step)}. Give the id of a step, for example S5, or F2 for a step of the fixes, or its number.`);
 	}
 	const readLines = (file: string) => deps.readText(file)?.split(/\r?\n/);
 	const next = stepNext(snapshot, current)?.next ?? STAGE_INFO[task.stage].next;
@@ -173,7 +174,7 @@ export async function startStep(deps: BuildDeps, args: Record<string, unknown>):
 	}
 	const found = findStep(plan, args.step);
 	if (!found) {
-		throw new Error(`The plan has no step ${String(args.step ?? '')}. Give the id of a step, for example S5 or I3 for the step of an issue, or its number. `
+		throw new Error(`The plan has no step ${String(args.step ?? '')}. Give the id of a step, for example S5, or F2 for a step of the fixes, or its number. `
 			+ 'Call shotgun_get_plan for the steps.');
 	}
 	const current = store.current;
@@ -185,23 +186,20 @@ export async function startStep(deps: BuildDeps, args: Record<string, unknown>):
 			+ `and ${writerText(current)}. Tell the user.`);
 	}
 	if (current.writer === 'user') {
-		const frame = current.level === 4 ? ' For a frame of Claude, the user selects "I want a frame" in the panel of Shotgun first, and then asks you.' : '';
-		throw new Error(`Step ${current.ref} has risk level ${current.level ?? '?'}, so the user writes it.${frame} Do not change its files. Tell the user, and `
-			+ 'answer the questions of the user in the chat.');
+		throw new Error(`The user writes step ${current.ref}, at risk level ${current.level ?? '?'}. Do not change its files. Tell the user: at each level, the `
+			+ 'user can select "Frame" or "Claude writes it" for the step in the panel of Shotgun, and then ask you. Answer the questions of the user in the chat.');
 	}
 	const isFrame = current.writer === 'frame';
 	if (kind && kind !== (isFrame ? 'frame' : 'errand')) {
 		throw new Error(isFrame
-			? `Step ${current.ref} is a frame: write only the lines with no decision, and a hole for each decision of the user. Give "kind": "frame".`
-			: `Step ${current.ref} has risk level ${current.level ?? '?'}, so it is an errand with no holes. Give "kind": "errand".`);
+			? `Step ${current.ref} is a frame: write only the lines with no decision, and the holes for the user. Give "kind": "frame".`
+			: `Step ${current.ref} is an errand of Claude with no holes. For a frame, the user selects "Frame" for the step in the panel of Shotgun `
+				+ 'first. Tell the user. Give "kind": "errand" only if the user asked you to do the step.');
 	}
-	// each open decision is a hole of the frame (decision 32), so a frame needs an open decision
+	// each open decision is a hole of the frame (decision 32). A step with no open decision gets 1 to 3 holes in its logic
+	// (decision 44)
 	const levels = store.snapshot.levels;
 	const open = openDecisions(found.step, levels);
-	if (isFrame && decisionsOf(found.step, levels) && open.length === 0) {
-		throw new Error(`Step ${current.ref} has no open decision, so a frame has no hole. Do not change its files. Tell the user: the user can add a `
-			+ 'decision on the plan page, or change the level of the step.');
-	}
 	const submitTool = isFrame ? SUBMIT_FRAME_TOOL : SUBMIT_ERRAND_TOOL;
 	const readLines = (file: string) => deps.readText(file)?.split(/\r?\n/);
 	if (current.state === 'open') {
@@ -240,12 +238,16 @@ export async function startStep(deps: BuildDeps, args: Record<string, unknown>):
 		const holes = open.length > 0
 			? `Each open decision of the step is exactly 1 hole: ${open.map((d) => `${d.id} "${d.question}"`).join(', ')}. The hole holds the whole code of `
 				+ 'its decision, for example a condition with its branch. Write all other lines, also the code of each decision with an answer of the user. '
-			: 'Write only the lines with no decision. ';
+			: decisionsOf(found.step, levels)
+				? `The step has no open decision, and the user asked for a frame. Give 1 to ${MAX_FREE_HOLES} holes in the logic of the step, where the `
+					+ 'user learns the most, for example a condition with its branch or a loop. A hole decides no decision, so give no "decision". Write all '
+					+ 'other lines. '
+				: 'Write only the lines with no decision. ';
 		return {
 			...stepData(store.snapshot, found, store.current, readLines),
 			next: `The step is open${isAgain ? ' again for a different frame' : ''}. Change only the files of its scope, with the file tools, not with Bash. `
-				+ `${holes}In the place of each hole, write a marker /*@hole N: question */. Then call ${SUBMIT_FRAME_TOOL} with the decision and the 4 hints `
-				+ 'of each hole: the nudge, the pointer, the example and 1 possible answer.',
+				+ `${holes}In the place of each hole, write a marker /*@hole N: question */. Then call ${SUBMIT_FRAME_TOOL} with the 4 hints of each hole: the `
+				+ 'nudge, the pointer, the example and 1 possible answer. Give the decision of each hole that decides an open decision.',
 		};
 	}
 	const choices = open.length > 0

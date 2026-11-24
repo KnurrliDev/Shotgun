@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { BuildView, PlanHeatView, PlanStepView, PlanView, StepDecisionView, TaskView, ToView, ViewModel } from '../views/protocol';
 import { StateChip } from './build';
-import { CommandButton, GateBlock, linesOf, PlaceLink, StageBar, TellClaude, timeText, WriterBadges } from './common';
+import { CommandButton, GateBlock, linesOf, PlaceLink, StageBar, TellClaude, timeText, WriterBadges, WriterChoice } from './common';
 import { post } from './vscode';
 
 // Stage 4: the plan of Claude with a risk level for each step (decisions 4, 8, 9 and 14). The badge Model marks the
@@ -15,7 +15,7 @@ const count = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const bandClass = (band: string) => `band-${band.replace(' ', '-')}`;
 
 // 5 segments with the color of the level up to the level
-function RiskBar({ level }: { level: number | null }) {
+export function RiskBar({ level }: { level: number | null }) {
 	return (
 		<span class={`risk-bar lv-${level ?? 0}`} role="img" aria-label={level ? `Risk level ${level} of 5` : 'No risk level yet'}>
 			{LEVEL_NUMBERS.map((n) => <span class={n <= (level ?? 0) ? 'seg on' : 'seg'} />)}
@@ -24,7 +24,7 @@ function RiskBar({ level }: { level: number | null }) {
 }
 
 // The writer of a step: Claude, a frame of Claude with holes for you, or you
-function WriterMark({ writer }: { writer?: string }) {
+export function WriterMark({ writer }: { writer?: string }) {
 	const title = writer === 'user' ? 'You write' : writer === 'frame' ? 'Frame: Claude writes, and you write each decision' : writer ? 'Claude writes' : 'No writer yet';
 	return (
 		<span class="dots writer" title={title}>
@@ -136,7 +136,7 @@ function TextEntry({ value, maxLength, placeholder, label, onSave, onCancel }: {
 	);
 }
 
-// The parts of a step and of the limits for the decisions, for a step of the plan or for the step of an issue
+// The parts of a step and of the limits for the decisions, for a step of the plan or of the plan of the fixes
 type DecisionStep = Pick<PlanStepView, 'id' | 'decisions' | 'isLevelEditable'>;
 type DecisionLimits = Pick<PlanView, 'maxAnswer' | 'maxQuestion' | 'maxUserDecisions'>;
 
@@ -175,9 +175,9 @@ function DecisionRow({ step, decision, isEditable, maxAnswer }: { step: Decision
 }
 
 // The decisions of a step (decision 31). Each open decision is a choice of the user: a hole of the frame, or code of the
-// user. A step with no open decision gets at most level 2, so Claude writes it. A step of a plan of version 0.1.0 has no
-// decisions (P34). isIssue: the step of an issue in stage 6 keeps level 4 with no open decision (decision 37)
-export function DecisionsBlock({ step, view, isIssue = false }: { step: DecisionStep; view: DecisionLimits; isIssue?: boolean }) {
+// user. A step with no open decision gets at most level 2, so the level gives Claude as the writer. A step of a plan of
+// version 0.1.0 has no decisions (P34)
+function DecisionsBlock({ step, view }: { step: DecisionStep; view: DecisionLimits }) {
 	const [isAdding, setAdding] = useState(false);
 	useEffect(() => setAdding(false), [step.id]);
 	const decisions = step.decisions;
@@ -194,7 +194,7 @@ export function DecisionsBlock({ step, view, isIssue = false }: { step: Decision
 			</div>
 			<p class="muted small">
 				{decisions.length === 0 ? 'Claude found no open decision in this step. ' : 'An open decision is your choice: a hole of the frame, or code that you write. '}
-				{isIssue ? '' : 'A step with no open decision gets at most level 2, so Claude writes it. '}Answer a decision in words, and Claude writes its code.
+				A step with no open decision gets at most level 2, so the level gives Claude as the writer. Answer a decision in words, and Claude writes its code.
 			</p>
 			{decisions.length > 0 && (
 				<ul class="decisions">
@@ -216,13 +216,14 @@ export function DecisionsBlock({ step, view, isIssue = false }: { step: Decision
 	);
 }
 
-// The state of a step in the build, in stage 5
-function BuildState({ build, id }: { build?: BuildView; id: string }) {
+// The state of a step in the build, in stage 5, and of a step of the fixes in stage 6
+export function BuildState({ build, id }: { build?: BuildView; id: string }) {
 	const s = build?.steps.find((b) => b.id === id);
 	return s ? <StateChip state={s.state} writer={s.writer} /> : null;
 }
 
-function StepDetail({ step, view, build }: { step: PlanStepView; view: PlanView; build?: BuildView }) {
+// The selected step of the plan, or of the plan of the fixes in stage 6 (decision 43)
+export function StepDetail({ step, view, build }: { step: PlanStepView; view: PlanView; build?: BuildView }) {
 	const setLevel = (level: number | null) => post({ type: 'setLevel', step: step.id, level });
 	let setBy = '';
 	if (step.level !== null) {
@@ -233,16 +234,16 @@ function StepDetail({ step, view, build }: { step: PlanStepView; view: PlanView;
 		<section class="card">
 			<div class="row-head">
 				<span class="name">Step</span>
-				<span class="step-num">{step.n}</span>
+				<span class="step-num">{step.ref}</span>
 				<span class="step-title">{step.title}</span>
 				<BuildState build={build} id={step.id} />
 			</div>
 			{build && <p class="muted small">{build.steps.find((b) => b.id === step.id)?.writerText}{build.steps.find((b) => b.id === step.id)?.walked
 				? `. Receipt: ${build.steps.find((b) => b.id === step.id)?.walked}.` : ''}</p>}
-			<p class="muted small">For task {step.task}: {step.taskText}</p>
+			<p class="muted small">{step.fixes ? `${step.taskText}.` : `For task ${step.task}: ${step.taskText}`}</p>
 			<p class="places">
 				{step.places.map((p) => (p.isNew ? <span class="mono small">{p.name}</span> : (
-					<PlaceLink place={p} note={`Step ${step.n} · ${step.title}`} />
+					<PlaceLink place={p} note={`Step ${step.ref} · ${step.title}`} />
 				)))}
 				{step.hooks.map((h) => <span class="chip tool">{h}</span>)}
 			</p>
@@ -276,6 +277,12 @@ function StepDetail({ step, view, build }: { step: PlanStepView; view: PlanView;
 					)}
 				</div>
 			)}
+			{step.isLevelEditable && step.writer && (
+				<>
+					<div class="row-head"><span class="name">Writer</span><span class="hint">{step.isWriterChosen ? 'set by you' : 'the writer of the level'}</span></div>
+					<WriterChoice step={step.id} writer={step.writer} first={step.firstWriter} />
+				</>
+			)}
 			{step.isLevelEditable ? <NoteField step={step} maxNote={view.maxNote} />
 				: step.userNote && <p><span class="badge user">You</span> {step.userNote}</p>}
 		</section>
@@ -283,7 +290,7 @@ function StepDetail({ step, view, build }: { step: PlanStepView; view: PlanView;
 }
 
 // The place of the selected step: the code of its first place with lines
-function PlaceCard({ step }: { step: PlanStepView }) {
+export function PlaceCard({ step }: { step: PlanStepView }) {
 	const place = step.places.find((p) => p.excerpt) ?? step.places[0];
 	return (
 		<section class="card">
@@ -294,7 +301,7 @@ function PlaceCard({ step }: { step: PlanStepView }) {
 					{place.isLost && <p class="notice">The code of the place is not in the file now.</p>}
 					<div class="buttons">
 						<button type="button" class="btn primary small" disabled={place.isLost}
-							onClick={() => post({ type: 'showPlace', path: place.path, lines: linesOf(place.name, place.line), note: `Step ${step.n} · ${step.title}` })}>
+							onClick={() => post({ type: 'showPlace', path: place.path, lines: linesOf(place.name, place.line), note: `Step ${step.ref} · ${step.title}` })}>
 							Show in DataFlow
 						</button>
 						<button type="button" class="btn secondary small" onClick={() => post({ type: 'openPlace', path: place.path, line: place.line })}>
@@ -302,7 +309,7 @@ function PlaceCard({ step }: { step: PlanStepView }) {
 						</button>
 					</div>
 					{place.excerpt && (
-						<div class="code" role="region" aria-label={`The code of step ${step.n}`}>
+						<div class="code" role="region" aria-label={`The code of step ${step.ref}`}>
 							{place.excerpt.lines.map((l) => (
 								<div class={l.isHook ? 'code-line hook' : 'code-line'}>
 									<span class="ln">{l.line}</span>
@@ -319,7 +326,7 @@ function PlaceCard({ step }: { step: PlanStepView }) {
 }
 
 // The writers of the steps: a bar with the color of the level of each step, and the numbers
-function Writers({ view }: { view: PlanView }) {
+export function Writers({ view }: { view: PlanView }) {
 	const w = view.writers;
 	return (
 		<>

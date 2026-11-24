@@ -70,14 +70,16 @@ The window uses the DataFlow extension of VS Code. To use DataFlow from its repo
 - On the order page, the test changes the order. Claude surveys the changed tasks, and task 1 goes to stage 4.
 - Claude makes the plan, the test changes the levels, and task 1 goes to stage 5.
 - In the build, a run of Claude Code with no plugins stands in for the user, and writes step 1. Claude does step 2 and gives a receipt. The test puts an issue on a change, Claude fixes it, and the test accepts the receipt.
-- The test sets step 3 to level 4, and asks for a frame. Claude gives the frame, and the test fills the holes with Tab and the hints.
+- The test sets step 3 to level 4, and selects the writer "Frame". Claude gives the frame, and the test fills the holes with Tab and the hints.
 - In step 4, the test writes a line with a race. The race shows as a callout, and Claude explains it and answers a question about a line.
 - The test ends step 4, hands a loose end to Claude, and writes a commit message. Claude checks the message.
 - The test passes "The build is done", selects the effort and the focus of the review, and copies the review prompt. A new run of Claude Code reviews the task with subagents. The test checks a refusal of Shotgun through the bridge.
-- The issues are steps. A run of Claude Code with no plugins writes the fix of the first step for the user. For Claude, the test takes a step with no line near the lines of the first step, because 1 fix can remove 2 issues. The test lowers this step to level 2, and Claude fixes it with a receipt. "Not a problem" closes 1 issue.
+- On the issues page, the test adds an issue of the user, writes a note for the plan, moves an issue, and closes 1 issue with "Not a problem". Then it accepts the issues.
+- Claude plans the fixes. On the page of the fix plan, the test selects the user as the writer of the first step, and Claude as the writer of the second step. Then it accepts the fix plan.
+- A run of Claude Code with no plugins writes the first step of the fixes for the user. Claude does the second step with a receipt. The other steps end with no code, and the test passes "The fixes are done".
 - Round 2 reviews the fixes, and checks each fixed issue in a subagent. A correct fix stays fixed. An issue with a wrong fix comes again with its id. The closed issue does not come again. The test ends the task, and Claude checks the commit message again.
 
-NOTE: `scripts/test-claude.mjs` uses the Claude subscription of the user for 17 runs of Claude Code. It does not change the settings of the user.
+NOTE: `scripts/test-claude.mjs` uses the Claude subscription of the user for 18 runs of Claude Code. It does not change the settings of the user.
 
 `scripts/measure-review.mjs` measures the review skill on the 22 cases of `scripts/review-cases.mjs` and `scripts/review-cases-hard.mjs` in a copy of the fixture `battery`. The group `basic` has 8 cases with 1 known bug each, and 4 cases with no bug. The group `hard` has 7 cases with known bugs, and 3 clean cases that look wrong. For each case, effort and run, it makes a task in stage 6 and runs the review prompt in a new run of Claude Code.
 

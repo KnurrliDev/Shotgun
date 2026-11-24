@@ -1,11 +1,12 @@
 import type { FactSource } from './callouts';
-import { decisionList, Plan, PlanDecision, PlanStep } from './plan';
+import { decisionList, isPlanStep, Plan, PlanDecision, PlanStep } from './plan';
 import { itemChecks, Lines, SurveyContext } from './survey';
 
 // The review of stage 6 (the decisions 35 to 38, and the proposals P16 to P25 of the plan). review.json keeps the base of
 // the task from the gate "Accept the plan", the effort and the focus of the user, and the issues of each round of the
-// review of Claude. Claude gives its issues with submit_review. Shotgun checks them, and puts each issue into the list of
-// steps or into the second list. These functions use no VS Code API, so the unit tests can call them directly.
+// review of Claude. Claude gives its issues with submit_review. Shotgun checks them, and puts each issue into the list to
+// fix or into the list for later. The user puts the issues to fix in sequence, Claude plans the fixes, and the steps of the
+// fixes go in sequence (decision 43). These functions use no VS Code API, so the unit tests can call them directly.
 
 export const REVIEW_FILE = 'review.json';
 
@@ -186,9 +187,11 @@ export interface IssueScenario {
 	readonly interleave?: string;
 }
 
-// steps: the list of steps. second: the second list, for an issue that is plausible, pre-existing or above the cap
+// steps: the list to fix. second: the list for later, for an issue that is plausible, pre-existing, above the cap, or that
+// the user keeps for later
 export type IssueList = 'steps' | 'second';
-export type SecondReason = 'plausible' | 'pre-existing' | 'cap';
+// later: the user keeps the issue for later on the issues page (decision 43)
+export type SecondReason = 'plausible' | 'pre-existing' | 'cap' | 'later';
 export type IssueState = 'open' | 'fixed' | 'closed';
 
 // An issue of Claude, as Claude gives it, before Shotgun gives it an id and a list
@@ -234,6 +237,29 @@ export interface ReviewRound {
 	readonly cap: number;
 	readonly hunks: readonly string[];
 	readonly note?: string; // a short note of Claude, for example the parts that it did not review
+	// the gates of the flow of the round (decision 43): "Accept the issues", "Accept the fix plan" and "The fixes are done"
+	readonly accepted?: string;
+	readonly planAccepted?: string;
+	readonly fixesDone?: string;
+}
+
+// An issue that the user adds on the issues page (decision 43). It has no place: Claude finds the place in the plan of
+// the fixes
+export interface UserIssue {
+	readonly id: string; // U1, U2 and so on
+	readonly text: string;
+	readonly round: number;
+	readonly list: IssueList; // steps: to fix. second: for later
+	readonly state: 'open' | 'fixed';
+	readonly fixed?: string;
+}
+
+// The plan of the fixes of a round (decision 43): the steps F1, F2 and so on. Each step names the issues that it fixes.
+// The numbers of the steps go on from the earlier rounds
+export interface FixPlan {
+	readonly round: number;
+	readonly time: string;
+	readonly steps: readonly PlanStep[];
 }
 
 export interface ReviewFile {
@@ -243,7 +269,67 @@ export interface ReviewFile {
 	readonly rounds: readonly ReviewRound[];
 	readonly issues: readonly ReviewIssue[];
 	readonly nextId: number;
+	readonly sequence?: readonly string[]; // the ids of the issues to fix in the sequence of the user (decision 43)
+	readonly notes?: Readonly<Record<string, string>>; // the notes of the user for the plan of the fixes, by the id of the issue
+	readonly userIssues?: readonly UserIssue[];
+	readonly nextUserId?: number;
+	readonly fixPlans?: readonly FixPlan[];
 }
+
+export const MAX_ISSUE_NOTE = 500;
+export const MAX_USER_ISSUE = 300;
+export const MAX_USER_ISSUES = 10;
+export const MAX_FIX_STEPS = 12;
+
+// The parts of a round (decision 43): review (a new session of Claude reviews), issues (the user puts the issues to fix
+// in sequence), plan (Claude writes the plan of the fixes), fixes (the steps of the fixes go in sequence)
+export type ReviewPhase = 'review' | 'issues' | 'plan' | 'fixes';
+
+// The part of the current round. After the gate "The fixes are done", the next round starts with a review
+export function reviewPhase(review: ReviewFile | undefined): { readonly phase: ReviewPhase; readonly round: number } {
+	const last = review?.rounds[review.rounds.length - 1];
+	if (!last) {
+		return { phase: 'review', round: 1 };
+	}
+	if (last.fixesDone) {
+		return { phase: 'review', round: last.n + 1 };
+	}
+	if (!last.accepted) {
+		return { phase: 'issues', round: last.n };
+	}
+	return { phase: last.planAccepted ? 'fixes' : 'plan', round: last.n };
+}
+
+// An issue to fix: an issue of the review, or an issue of the user
+export type FixItem = { readonly kind: 'review'; readonly issue: ReviewIssue } | { readonly kind: 'user'; readonly issue: UserIssue };
+
+// The open issues to fix in the sequence of the user. An issue of the list of steps that is not in the sequence comes at
+// the end, in the sequence of the review
+export function toFix(review: ReviewFile | undefined): FixItem[] {
+	const items: FixItem[] = [
+		...(review?.issues ?? []).filter((i) => i.list === 'steps' && i.state === 'open').map((issue) => ({ kind: 'review' as const, issue })),
+		...(review?.userIssues ?? []).filter((u) => u.list === 'steps' && u.state === 'open').map((issue) => ({ kind: 'user' as const, issue })),
+	];
+	const order = review?.sequence ?? [];
+	const rank = (id: string) => (order.includes(id) ? order.indexOf(id) : order.length);
+	return items.map((item, i) => ({ item, i })).sort((a, b) => rank(a.item.issue.id) - rank(b.item.issue.id) || a.i - b.i).map((x) => x.item);
+}
+
+// The plan of the fixes of the current round, also before its gate
+export function currentFixPlan(review: ReviewFile | undefined): FixPlan | undefined {
+	const { round } = reviewPhase(review);
+	return review?.fixPlans?.find((p) => p.round === round);
+}
+
+// The steps of the fixes of each round with an accepted plan of the fixes (decision 43)
+export function fixSteps(review: ReviewFile | undefined): PlanStep[] {
+	const accepted = new Set((review?.rounds ?? []).filter((r) => r.planAccepted).map((r) => r.n));
+	return (review?.fixPlans ?? []).filter((p) => accepted.has(p.round)).flatMap((p) => p.steps);
+}
+
+// The number of the first step of the plan of the fixes of a round: the numbers go on from the earlier rounds
+export const firstFixNumber = (review: ReviewFile | undefined, round: number): number =>
+	1 + (review?.fixPlans ?? []).filter((p) => p.round < round).reduce((n, p) => n + p.steps.length, 0);
 
 export const EMPTY_REVIEW: ReviewFile = { version: 1, rounds: [], issues: [], nextId: 1 };
 
@@ -252,16 +338,9 @@ export const capOf = (changedLines: number): number => Math.min(CAP_MAX, CAP_BAS
 
 const SEVERITY_RANK: Readonly<Record<Severity, number>> = { important: 0, minor: 1 };
 
-// The round that a new review writes: 1 for the first review. The same round again while no issue of the last round is
-// fixed, else the next round (P23)
-export function roundOf(review: ReviewFile | undefined): number {
-	const last = review?.rounds[review.rounds.length - 1];
-	if (!last) {
-		return 1;
-	}
-	const isFixed = review!.issues.some((i) => i.lastRound === last.n && i.state === 'fixed');
-	return isFixed ? last.n + 1 : last.n;
-}
+// The round that a new review writes: 1 for the first review. Before the gate "Accept the issues", a new review replaces
+// the review of its round. After the gate "The fixes are done", the next round starts (P23, decision 43)
+export const roundOf = (review: ReviewFile | undefined): number => reviewPhase(review).round;
 
 // The list of each issue (P22). The list of steps has the confirmed new issues that are open, the important issues first,
 // up to the cap. The second list has the plausible issues, the pre-existing issues and the issues above the cap. A closed
@@ -507,11 +586,10 @@ export function checkReview(raw: Json, ctx: ReviewContext): { issues: IssueInput
 
 // The review after a new review of Claude. A new review of the same round replaces the open issues of that round. An issue
 // that repeats an earlier issue keeps its id and its state, and a repeated closed or fixed issue opens again. The issues
-// that the user decided stay. time: the time of the review. started: the issues with a step that the user started. They
-// stay. capLimit: the cap from the feedback of the user (P35)
+// that the user decided stay. time: the time of the review. capLimit: the cap from the feedback of the user (P35)
 export function applyReview(
 	review: ReviewFile, round: Omit<ReviewRound, 'time' | 'cap'>, inputs: readonly IssueInput[], time: string,
-	{ started = new Set<string>(), capLimit }: { started?: ReadonlySet<string>; capLimit?: number } = {},
+	{ capLimit }: { capLimit?: number } = {},
 ): { review: ReviewFile; added: number; repeated: number } {
 	const repeats = new Map(inputs.filter((i) => i.repeats).map((i) => [i.repeats!, i]));
 	let nextId = review.nextId;
@@ -523,7 +601,7 @@ export function applyReview(
 			const { repeats: _r, ...fields } = input;
 			const { closed: _c, secondReason: _s, fixed: _f, ...rest } = old;
 			current.push({ ...rest, ...fields, id: old.id, round: old.round, lastRound: round.n, list: 'steps', state: 'open' });
-		} else if (!(old.lastRound === round.n && old.state === 'open') || started.has(old.id)) {
+		} else if (!(old.lastRound === round.n && old.state === 'open')) {
 			others.push(old);
 		}
 		// an open issue of an earlier review of this round goes away: the new review replaces it
@@ -533,34 +611,26 @@ export function applyReview(
 	}
 	const cap = Math.min(capOf(round.changedLines), capLimit ?? CAP_MAX);
 	const rounds = [...review.rounds.filter((r) => r.n !== round.n), { ...round, cap, time }].sort((a, b) => a.n - b.n);
-	return { review: { ...review, rounds, issues: [...others, ...assignLists(current, cap)], nextId }, added: inputs.length - repeats.size, repeated: repeats.size };
+	const issues = [...others, ...assignLists(current, cap)];
+	// the sequence of the user keeps its issues to fix, and the new issues to fix come after them (decision 43)
+	const isToFix = (id: string) => issues.some((i) => i.id === id && i.list === 'steps' && i.state === 'open')
+		|| (review.userIssues ?? []).some((u) => u.id === id && u.list === 'steps' && u.state === 'open');
+	const kept = (review.sequence ?? []).filter(isToFix);
+	const sequence = [...kept, ...issues.filter((i) => i.list === 'steps' && i.state === 'open' && !kept.includes(i.id)).map((i) => i.id)];
+	return {
+		review: { ...review, rounds, issues, nextId, sequence },
+		added: inputs.length - repeats.size, repeated: repeats.size,
+	};
 }
 
-// The steps of the issues (P22): each issue of the list of steps that the user did not close, in the sequence of the
-// list. The id of a step is the id of its issue. Its places are the place of the issue and the places of the fix. Its text
-// gives the failure scenario, and its open decisions are the decisions of the fix
-export function issueSteps(review: ReviewFile | undefined): PlanStep[] {
-	return (review?.issues ?? []).filter((i) => i.list === 'steps' && i.state !== 'closed').map((i) => ({
-		id: i.id,
-		title: i.title,
-		task: 'review',
-		hooks: [],
-		places: [i.place, ...(i.fixPlaces ?? [])].map((p) => ({ file: p.file, lines: p.lines, code: p.code, codeLine: p.codeLine })),
-		text: `${i.summary} Trigger: ${i.scenario.trigger} Path: ${i.scenario.path} Result: ${i.scenario.result}`
-			+ `${i.scenario.interleave ? ` Interleave: ${i.scenario.interleave}` : ''}`,
-		checks: [`The failure scenario of ${i.id} cannot occur.`],
-		decisions: i.decisions,
-		issue: i.id,
-	}));
-}
-
-// The steps that the build tools work with: the steps of the plan, and in stage 6 also the steps of the issues after
-// them. The steps of the plan are done in stage 6, so the steps of the issues go in sequence
+// The steps that the build tools work with: the steps of the plan, and in stage 6 also the steps of the fixes of each
+// round with an accepted plan of the fixes (decision 43). The steps of the plan are done in stage 6, so the steps of the
+// fixes go in sequence
 export function workPlanOf(plan: Plan | undefined, review: ReviewFile | undefined, stage: string | undefined): Plan | undefined {
 	if (stage !== 'review') {
 		return plan;
 	}
-	const steps = [...(plan?.steps ?? []), ...issueSteps(review)];
+	const steps = [...(plan?.steps ?? []), ...fixSteps(review)];
 	return plan || steps.length > 0 ? { steps } : undefined;
 }
 
@@ -655,7 +725,7 @@ function parseIssue(value: unknown): ReviewIssue | undefined {
 		category: value.category, severity: value.severity, origin: value.origin, verdict: value.verdict, source: value.source, place,
 		...(fixPlaces && fixPlaces.length > 0 ? { fixPlaces: fixPlaces as IssuePlace[] } : {}), decisions, tools: value.tools,
 		...(typeof value.repeats === 'string' ? { repeats: value.repeats } : {}), ...(typeof value.evidence === 'string' ? { evidence: value.evidence } : {}),
-		list: value.list, ...(isIn(value.secondReason, ['plausible', 'pre-existing', 'cap'] as const) ? { secondReason: value.secondReason } : {}),
+		list: value.list, ...(isIn(value.secondReason, ['plausible', 'pre-existing', 'cap', 'later'] as const) ? { secondReason: value.secondReason } : {}),
 		...(value.isUserStep === true ? { isUserStep: true as const } : {}), ...(Number.isInteger(value.rank) ? { rank: value.rank as number } : {}),
 		state: value.state, ...(closed ? { closed } : {}), ...(typeof value.fixed === 'string' ? { fixed: value.fixed } : {}),
 	};
@@ -678,7 +748,28 @@ function parseRound(value: unknown): ReviewRound | undefined {
 		n: value.n as number, time: value.time, effort: value.effort, areas: value.areas.filter((a): a is Area => isIn(a, AREAS)),
 		...(typeof value.text === 'string' && value.text ? { text: value.text } : {}), changedLines: value.changedLines as number, cap: value.cap as number,
 		hunks: value.hunks, ...(typeof value.note === 'string' && value.note ? { note: value.note } : {}),
+		...(typeof value.accepted === 'string' ? { accepted: value.accepted } : {}),
+		...(typeof value.planAccepted === 'string' ? { planAccepted: value.planAccepted } : {}),
+		...(typeof value.fixesDone === 'string' ? { fixesDone: value.fixesDone } : {}),
 	};
+}
+
+function parseUserIssue(value: unknown): UserIssue | undefined {
+	if (!isObject(value) || typeof value.id !== 'string' || typeof value.text !== 'string' || !Number.isInteger(value.round)
+		|| !isIn(value.list, ['steps', 'second'] as const) || !isIn(value.state, ['open', 'fixed'] as const)) {
+		return undefined;
+	}
+	return {
+		id: value.id, text: value.text, round: value.round as number, list: value.list, state: value.state,
+		...(typeof value.fixed === 'string' ? { fixed: value.fixed } : {}),
+	};
+}
+
+function parseFixPlan(value: unknown): FixPlan | undefined {
+	if (!isObject(value) || !Number.isInteger(value.round) || typeof value.time !== 'string' || !Array.isArray(value.steps) || !value.steps.every(isPlanStep)) {
+		return undefined;
+	}
+	return { round: value.round as number, time: value.time, steps: value.steps };
 }
 
 function parseBase(value: unknown): TaskBase | undefined {
@@ -711,8 +802,19 @@ export function parseReview(text: string, id: string): ReviewFile {
 	}
 	const base = value.base === undefined ? undefined : parseBase(value.base);
 	const options = value.options === undefined ? undefined : parseOptions(value.options);
+	const userIssues = Array.isArray(value.userIssues) ? value.userIssues.map(parseUserIssue) : [];
+	const fixPlans = Array.isArray(value.fixPlans) ? value.fixPlans.map(parseFixPlan) : [];
+	if (userIssues.some((u) => !u) || fixPlans.some((p) => !p)) {
+		throw new Error(`An issue of the user or a plan of the fixes of ${name} does not have its fields.`);
+	}
+	const notes = isObject(value.notes) ? Object.fromEntries(Object.entries(value.notes).filter((e): e is [string, string] => typeof e[1] === 'string')) : {};
 	return {
 		version: 1, ...(base ? { base } : {}), ...(options ? { options } : {}), rounds: rounds as ReviewRound[], issues: issues as ReviewIssue[],
 		nextId: value.nextId as number,
+		...(isStrings(value.sequence) ? { sequence: value.sequence } : {}),
+		...(Object.keys(notes).length > 0 ? { notes } : {}),
+		...(userIssues.length > 0 ? { userIssues: userIssues as UserIssue[] } : {}),
+		...(Number.isInteger(value.nextUserId) ? { nextUserId: value.nextUserId as number } : {}),
+		...(fixPlans.length > 0 ? { fixPlans: fixPlans as FixPlan[] } : {}),
 	};
 }
